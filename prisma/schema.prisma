@@ -1,0 +1,499 @@
+// Prisma schema for the alumni portal.
+//
+// IMPORTANT: this maps the tables defined in
+// prisma/migrations/0001_init/migration.sql. That SQL file is the source
+// of truth for row-level security policies, generated columns, trigram
+// indexes and the rollover function — Prisma cannot express any of them.
+//
+// When changing the schema: edit the SQL migration, then mirror it here.
+// Never let `prisma migrate dev` regenerate the initial migration, or the
+// RLS policies are silently dropped and tenant isolation disappears.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MemberStatus {
+  unclaimed
+  invited
+  pending
+  active_student
+  active_alumni
+  rejected
+  lapsed
+  deceased
+}
+
+enum MemberRole {
+  student
+  alumni
+  faculty
+  alumni_cell_operator
+  placement_officer
+  hod
+  finance
+  college_admin
+  platform_admin
+}
+
+enum VerificationMethod {
+  auto_roll_match
+  admin_manual
+  hod_manual
+  bulk_import
+  placement_cell_import
+}
+
+enum ConnectionState {
+  pending
+  accepted
+  declined
+  expired
+  withdrawn
+  blocked
+}
+
+enum ConnectionKind {
+  mentorship
+  referral
+  introduction
+  speaking
+}
+
+enum JobState {
+  draft
+  pending_moderation
+  live
+  rejected
+  closed
+}
+
+enum DonationState {
+  initiated
+  succeeded
+  failed
+  refunded
+}
+
+enum ContactVisibility {
+  private
+  on_accept
+  alumni_only
+  all_members
+}
+
+model Tenant {
+  id             String   @id @default(uuid()) @db.Uuid
+  name           String
+  shortName      String   @map("short_name")
+  subdomain      String   @unique
+  established    Int?
+  fcraRegistered Boolean  @default(false) @map("fcra_registered")
+  fcraNumber     String?  @map("fcra_number")
+  reg80g         String?  @map("reg_80g")
+  settings       Json     @default("{}")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  departments Department[]
+  members     Member[]
+  branding    TenantBranding?
+
+  @@map("tenants")
+}
+
+model TenantBranding {
+  tenantId       String   @id @map("tenant_id") @db.Uuid
+  portalName     String   @map("portal_name")
+  tagline        String?
+  primaryHex     String   @map("primary_hex") @db.Char(7)
+  accentHex      String?  @map("accent_hex") @db.Char(7)
+  surfaceHex     String   @default("#ffffff") @map("surface_hex") @db.Char(7)
+  surfaceDarkHex String   @default("#0f1115") @map("surface_dark_hex") @db.Char(7)
+  logoPrimary    String?  @map("logo_primary")
+  logoInverse    String?  @map("logo_inverse")
+  logoMark       String?  @map("logo_mark")
+  crest          String?
+  ogImage        String?  @map("og_image")
+  heroImage      String?  @map("hero_image")
+  fontDisplay    String   @default("Fraunces") @map("font_display")
+  fontBody       String   @default("Inter") @map("font_body")
+  radius         String   @default("subtle")
+  supportEmail   String?  @map("support_email")
+  published      Boolean  @default(false)
+  updatedAt      DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_branding")
+}
+
+model Department {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  code     String
+  name     String
+
+  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  members Member[]
+
+  @@unique([tenantId, code])
+  @@map("departments")
+}
+
+/// The college's authoritative record, loaded from the examinations
+/// branch. Exists for every graduate whether or not they ever sign up.
+/// Verification is a match between this and a self-registration.
+model DegreeRegister {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  rollNumber     String   @map("roll_number")
+  name           String
+  departmentId   String?  @map("department_id") @db.Uuid
+  programme      String?
+  admissionYear  Int?     @map("admission_year")
+  yearOfPassing  Int?     @map("year_of_passing")
+  sourceFile     String?  @map("source_file")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  members Member[]
+
+  @@unique([tenantId, rollNumber])
+  @@map("degree_register")
+}
+
+/// One row per person. Students and alumni alike — status transitions,
+/// records do not move between tables. See CLAUDE.md.
+model Member {
+  id                 String              @id @default(uuid()) @db.Uuid
+  tenantId           String              @map("tenant_id") @db.Uuid
+  rollNumber         String?             @map("roll_number")
+  status             MemberStatus        @default(unclaimed)
+
+  fullName           String              @map("full_name")
+  preferredName      String?             @map("preferred_name")
+  photoUrl           String?             @map("photo_url")
+  bio                String?
+
+  departmentId       String?             @map("department_id") @db.Uuid
+  admissionYear      Int?                @map("admission_year")
+  batchYear          Int?                @map("batch_year")
+  programme          String?
+
+  currentCompany     String?             @map("current_company")
+  designation        String?
+  industry           String?
+  city               String?
+  state              String?
+  country            String?
+  skills             String[]            @default([])
+
+  openToMentoring    Boolean             @default(false) @map("open_to_mentoring")
+  openToReferrals    Boolean             @default(false) @map("open_to_referrals")
+  openToSpeaking     Boolean             @default(false) @map("open_to_speaking")
+
+  /// Placement-side only. Never projected to alumni.
+  cgpa               Decimal?            @db.Decimal(4, 2)
+  placementStatus    String?             @map("placement_status")
+
+  verifiedAt         DateTime?           @map("verified_at") @db.Timestamptz
+  verifiedBy         String?             @map("verified_by") @db.Uuid
+  verificationMethod VerificationMethod? @map("verification_method")
+  degreeRegisterId   String?             @map("degree_register_id") @db.Uuid
+
+  legacyHoopstrId    String?             @map("legacy_hoopstr_id")
+  lastLoginAt        DateTime?           @map("last_login_at") @db.Timestamptz
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime            @default(now()) @map("updated_at") @db.Timestamptz
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department     Department?     @relation(fields: [departmentId], references: [id])
+  degreeRecord   DegreeRegister? @relation(fields: [degreeRegisterId], references: [id])
+  contact        MemberContact?
+  roles          MemberRoleGrant[]
+  employment     EmploymentHistory[]
+  education      EducationHistory[]
+  sentRequests     ConnectionRequest[] @relation("from")
+  receivedRequests ConnectionRequest[] @relation("to")
+  consents       ConsentRecord[]
+
+  @@unique([tenantId, rollNumber])
+  @@index([tenantId, status, batchYear, departmentId])
+  @@map("members")
+}
+
+/// Contact data lives apart from the profile so field-level access
+/// control is "which table did you join", not "did you remember to
+/// strip columns in this serializer".
+model MemberContact {
+  memberId       String            @id @map("member_id") @db.Uuid
+  tenantId       String            @map("tenant_id") @db.Uuid
+  email          String?
+  emailVerified  Boolean           @default(false) @map("email_verified")
+  mobile         String?
+  mobileVerified Boolean           @default(false) @map("mobile_verified")
+  altEmail       String?           @map("alt_email")
+  linkedin       String?
+  github         String?
+  portfolio      String?
+  address        String?
+  visibility     ContactVisibility @default(on_accept)
+  whatsappOptIn  Boolean           @default(false) @map("whatsapp_opt_in")
+  emailOptIn     Boolean           @default(true) @map("email_opt_in")
+  updatedAt      DateTime          @default(now()) @map("updated_at") @db.Timestamptz
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@map("member_contacts")
+}
+
+/// Roles are additive and independent of status. A person can be
+/// alumni + faculty + hod of one department simultaneously.
+model MemberRoleGrant {
+  id           String     @id @default(uuid()) @db.Uuid
+  tenantId     String     @map("tenant_id") @db.Uuid
+  memberId     String     @map("member_id") @db.Uuid
+  role         MemberRole
+  departmentId String?    @map("department_id") @db.Uuid
+  grantedBy    String?    @map("granted_by") @db.Uuid
+  grantedAt    DateTime   @default(now()) @map("granted_at") @db.Timestamptz
+  revokedAt    DateTime?  @map("revoked_at") @db.Timestamptz
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, role, departmentId])
+  @@map("member_roles")
+}
+
+model EmploymentHistory {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  memberId    String    @map("member_id") @db.Uuid
+  company     String
+  designation String?
+  industry    String?
+  location    String?
+  startedOn   DateTime? @map("started_on") @db.Date
+  endedOn     DateTime? @map("ended_on") @db.Date
+  isCurrent   Boolean   @default(false) @map("is_current")
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@map("employment_history")
+}
+
+model EducationHistory {
+  id            String    @id @default(uuid()) @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  memberId      String    @map("member_id") @db.Uuid
+  institution   String
+  qualification String?
+  field         String?
+  startedOn     DateTime? @map("started_on") @db.Date
+  endedOn       DateTime? @map("ended_on") @db.Date
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@map("education_history")
+}
+
+/// The student-to-alumni valve. Every contact attempt is a row:
+/// rate limiting, audit trail, and responsiveness analytics.
+model ConnectionRequest {
+  id           String          @id @default(uuid()) @db.Uuid
+  tenantId     String          @map("tenant_id") @db.Uuid
+  fromMemberId String          @map("from_member_id") @db.Uuid
+  toMemberId   String          @map("to_member_id") @db.Uuid
+  kind         ConnectionKind
+  state        ConnectionState @default(pending)
+  message      String?
+  respondedAt  DateTime?       @map("responded_at") @db.Timestamptz
+  expiresAt    DateTime?       @map("expires_at") @db.Timestamptz
+  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz
+
+  from Member @relation("from", fields: [fromMemberId], references: [id], onDelete: Cascade)
+  to   Member @relation("to", fields: [toMemberId], references: [id], onDelete: Cascade)
+
+  @@index([toMemberId, state, createdAt])
+  @@index([fromMemberId, createdAt])
+  @@map("connection_requests")
+}
+
+model Event {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  title           String
+  slug            String
+  description     String?
+  venue           String?
+  startsAt        DateTime @map("starts_at") @db.Timestamptz
+  endsAt          DateTime? @map("ends_at") @db.Timestamptz
+  departmentId    String?  @map("department_id") @db.Uuid
+  studentEligible Boolean  @default(false) @map("student_eligible")
+  alumniOnly      Boolean  @default(false) @map("alumni_only")
+  capacity        Int?
+  ticketPrice     Decimal  @default(0) @map("ticket_price") @db.Decimal(10, 2)
+  published       Boolean  @default(false)
+  createdBy       String?  @map("created_by") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  registrations EventRegistration[]
+
+  @@unique([tenantId, slug])
+  @@map("events")
+}
+
+model EventRegistration {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  eventId     String    @map("event_id") @db.Uuid
+  memberId    String    @map("member_id") @db.Uuid
+  guests      Int       @default(0)
+  amountPaid  Decimal   @default(0) @map("amount_paid") @db.Decimal(10, 2)
+  paymentRef  String?   @map("payment_ref")
+  checkedInAt DateTime? @map("checked_in_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, memberId])
+  @@map("event_registrations")
+}
+
+model JobPosting {
+  id           String    @id @default(uuid()) @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  postedBy     String    @map("posted_by") @db.Uuid
+  title        String
+  company      String
+  location     String?
+  isInternship Boolean   @default(false) @map("is_internship")
+  description  String?
+  applyUrl     String?   @map("apply_url")
+  state        JobState  @default(pending_moderation)
+  moderatedBy  String?   @map("moderated_by") @db.Uuid
+  moderatedAt  DateTime? @map("moderated_at") @db.Timestamptz
+  closesOn     DateTime? @map("closes_on") @db.Date
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  applications JobApplication[]
+
+  @@index([tenantId, state, createdAt])
+  @@map("job_postings")
+}
+
+model JobApplication {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  jobId     String   @map("job_id") @db.Uuid
+  memberId  String   @map("member_id") @db.Uuid
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  job JobPosting @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, memberId])
+  @@map("job_applications")
+}
+
+model DonationCampaign {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  title       String
+  slug        String
+  description String?
+  target      Decimal?  @db.Decimal(12, 2)
+  startsOn    DateTime? @map("starts_on") @db.Date
+  endsOn      DateTime? @map("ends_on") @db.Date
+  active      Boolean   @default(true)
+  createdBy   String?   @map("created_by") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  donations Donation[]
+
+  @@unique([tenantId, slug])
+  @@map("donation_campaigns")
+}
+
+/// FCRA segregation is structural. Do not build the donations UI until
+/// the college confirms FCRA registration status.
+model Donation {
+  id                    String        @id @default(uuid()) @db.Uuid
+  tenantId              String        @map("tenant_id") @db.Uuid
+  campaignId            String?       @map("campaign_id") @db.Uuid
+  memberId              String?       @map("member_id") @db.Uuid
+  donorName             String        @map("donor_name")
+  donorPan              String?       @map("donor_pan")
+  amount                Decimal       @db.Decimal(12, 2)
+  currency              String        @default("INR") @db.Char(3)
+  sourceCountry         String?       @map("source_country") @db.Char(2)
+  isForeignContribution Boolean       @default(false) @map("is_foreign_contribution")
+  state                 DonationState @default(initiated)
+  gateway               String?
+  gatewayRef            String?       @map("gateway_ref")
+  receipt80gNo          String?       @map("receipt_80g_no")
+  reconciledBy          String?       @map("reconciled_by") @db.Uuid
+  reconciledAt          DateTime?     @map("reconciled_at") @db.Timestamptz
+  createdAt             DateTime      @default(now()) @map("created_at") @db.Timestamptz
+
+  campaign DonationCampaign? @relation(fields: [campaignId], references: [id])
+
+  @@index([tenantId, isForeignContribution, createdAt])
+  @@map("donations")
+}
+
+/// Append-only. The DPDP audit trail — never update or delete a row.
+model ConsentRecord {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  memberId      String   @map("member_id") @db.Uuid
+  purpose       String
+  noticeVersion String   @map("notice_version")
+  granted       Boolean
+  ip            String?  @db.Inet
+  userAgent     String?  @map("user_agent")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId, purpose, createdAt])
+  @@map("consent_records")
+}
+
+model DataRequest {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  memberId    String    @map("member_id") @db.Uuid
+  kind        String
+  state       String    @default("received")
+  fulfilledAt DateTime? @map("fulfilled_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("data_requests")
+}
+
+/// Every admin mutation, with before/after snapshots.
+model AuditLog {
+  id         BigInt      @id @default(autoincrement())
+  tenantId   String      @map("tenant_id") @db.Uuid
+  actorId    String?     @map("actor_id") @db.Uuid
+  actorEmail String?     @map("actor_email")
+  actorRole  MemberRole? @map("actor_role")
+  action     String
+  resource   String
+  resourceId String?     @map("resource_id")
+  before     Json?
+  after      Json?
+  reason     String?
+  ip         String?     @db.Inet
+  createdAt  DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([tenantId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([tenantId, action, createdAt])
+  @@map("audit_log")
+}

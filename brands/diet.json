@@ -1,0 +1,88 @@
+{
+  "$comment": [
+    "Dhanekula Institute of Engineering & Technology — the first customer tenant.",
+    "",
+    "PROVISIONAL. The colour seeds and crest below are placeholders chosen to",
+    "look plausible for a JNTUK-affiliated institution; they are NOT the",
+    "college's official values. CLAUDE.md lists 'brand assets: DIET crest in",
+    "vector, official colour hex values' as blocked on the college. When those",
+    "arrive, edit this file and nothing else — no component, no stylesheet, no",
+    "rebuild of the design system.",
+    "",
+    "Donations stay off until the college confirms FCRA registration status.",
+    "That is a legal gate, not a rollout preference: foreign contributions must",
+    "be segregated at the point of collection or not collected at all."
+  ],
+
+  "id": "diet",
+  "version": 1,
+
+  "color": {
+    "primary": "#1F3864",
+    "accent": "#B98A2E",
+    "surface": "#FBFAF8",
+    "surfaceDark": "#101317",
+    "neutralChroma": 0.01,
+    "marker": "#B98A2E",
+    "overrides": {}
+  },
+
+  "type": {
+    "display": "Fraunces",
+    "body": "Inter",
+    "mono": "IBM Plex Mono",
+    "source": "google",
+    "displayTracking": "-0.015em",
+    "scale": 1
+  },
+
+  "shape": {
+    "radius": "subtle",
+    "density": "comfortable",
+    "borderWidth": "hairline",
+    "elevation": "soft"
+  },
+
+  "assets": {
+    "$comment": "Awaiting the crest in vector. The Logo component falls back to the portal name in the display face, which always renders.",
+    "ogImage": "/brand/diet/og-card.png"
+  },
+
+  "copy": {
+    "portalName": "DIET Connect",
+    "institutionName": "Dhanekula Institute of Engineering & Technology",
+    "shortName": "DIET",
+    "tagline": "Ganguru, Vijayawada · Since 2009",
+    "heroHeadline": "Every DIET graduate, still reachable.",
+    "heroEmphasis": "still reachable",
+    "heroSubhead": "Find the batch you graduated with, mentor the students coming up behind you, and hear about campus events before they happen. Verified against the college's own degree records.",
+    "supportEmail": "alumni@diet.ac.in",
+    "addressLines": [
+      "Dhanekula Institute of Engineering & Technology",
+      "Ganguru, Vijayawada — 521139",
+      "Andhra Pradesh, India"
+    ],
+    "poweredBy": "ifBash",
+    "poweredByUrl": "https://ifbash.com"
+  },
+
+  "features": {
+    "directory": true,
+    "connections": true,
+    "events": true,
+    "jobs": true,
+    "mentorship": true,
+    "donations": false,
+    "gallery": true,
+    "news": true,
+    "whatsapp": false,
+    "publicLanding": true
+  },
+
+  "locale": {
+    "locale": "en-IN",
+    "currency": "INR",
+    "timeZone": "Asia/Kolkata",
+    "dateFormat": "dd-MM-yyyy"
+  }
+}

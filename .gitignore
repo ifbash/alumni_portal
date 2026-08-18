@@ -1,0 +1,42 @@
+# Dependencies and build output
+node_modules/
+.next/
+out/
+build/
+next-env.d.ts
+*.tsbuildinfo
+
+# Environment.
+#
+# The broad `.env.*` rule is the one that matters: the previous list
+# covered .env and .env.local but not .env.production, which is the file
+# most likely to hold a real DATABASE_URL and a real SESSION_SECRET.
+# .env.example is the only one that is meant to be committed.
+.env
+.env.*
+!.env.example
+
+# Test and tooling output
+coverage/
+playwright-report/
+test-results/
+.turbo/
+
+# Playwright's per-run state: traces, screenshots and the storage-state
+# files holding signed session cookies for every demo role. Small, and
+# regenerated on each run — but they are credentials, and a trace captures
+# whole page bodies including a directory response.
+e2e/.state/
+
+# Local scratch. Anything a script writes for a human to read once.
+*.log
+scripts/_tmp-*
+
+# Platform
+.vercel
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

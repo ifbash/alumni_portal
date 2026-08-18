@@ -1,0 +1,79 @@
+{
+  "$comment": [
+    "Northgate Polytechnic — a demonstration pack, not a real customer.",
+    "",
+    "Deliberately the least ornamental configuration the system supports:",
+    "square corners, flat elevation, compact density, a single cool hue and",
+    "no second accent. It is the shape a government polytechnic or an",
+    "engineering college with an institutional style guide asks for, and it",
+    "is the honest test of whether the design system holds up when every",
+    "decorative affordance is switched off.",
+    "",
+    "Also the pack that proves a monochrome scheme still reads as designed:",
+    "accent is omitted, so it falls back to the primary."
+  ],
+
+  "id": "northgate",
+  "version": 1,
+
+  "color": {
+    "primary": "#14584C",
+    "surface": "#FFFFFF",
+    "surfaceDark": "#0C1210",
+    "neutralChroma": 0.006,
+    "marker": "#B45309",
+    "overrides": {},
+    "darkOverrides": {}
+  },
+
+  "type": {
+    "display": "IBM Plex Sans",
+    "body": "IBM Plex Sans",
+    "mono": "IBM Plex Mono",
+    "source": "google",
+    "displayTracking": "-0.02em",
+    "scale": 0.96
+  },
+
+  "shape": {
+    "radius": "none",
+    "density": "compact",
+    "borderWidth": "standard",
+    "elevation": "flat"
+  },
+
+  "assets": {},
+
+  "copy": {
+    "portalName": "Northgate Alumni",
+    "institutionName": "Northgate Polytechnic",
+    "shortName": "NGP",
+    "tagline": "Diploma and degree programmes since 1978",
+    "heroHeadline": "Where our diploma holders ended up.",
+    "heroEmphasis": "ended up",
+    "heroSubhead": "Trace every batch since 1978, verified against the examination records. Current students can reach the people already doing the work they are training for.",
+    "supportEmail": "alumni@northgate.example.ac.in",
+    "poweredBy": "ifBash",
+    "poweredByUrl": "https://ifbash.com"
+  },
+
+  "features": {
+    "directory": true,
+    "connections": true,
+    "events": true,
+    "jobs": true,
+    "mentorship": true,
+    "donations": false,
+    "gallery": false,
+    "news": false,
+    "whatsapp": false,
+    "publicLanding": false
+  },
+
+  "locale": {
+    "locale": "en-IN",
+    "currency": "INR",
+    "timeZone": "Asia/Kolkata",
+    "dateFormat": "dd-MM-yyyy"
+  }
+}

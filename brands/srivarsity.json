@@ -1,0 +1,79 @@
+{
+  "$comment": [
+    "Sri Vydehi University — a demonstration pack, not a real customer.",
+    "",
+    "It exists to prove the derivation engine on a hue nothing else in the",
+    "registry uses. A deep maroon with a gold accent is the most common",
+    "identity in South Indian higher education, and it is the palette most",
+    "likely to be pasted into the branding studio on a first sales call.",
+    "Rounded corners and a serif display face are the other axis: this pack",
+    "should feel like a different product from ifbash.json, using the same",
+    "components and one JSON file of difference."
+  ],
+
+  "id": "srivarsity",
+  "version": 1,
+
+  "color": {
+    "primary": "#7B1E23",
+    "accent": "#B98A2E",
+    "surface": "#FCFAF7",
+    "surfaceDark": "#161113",
+    "neutralChroma": 0.014,
+    "marker": "#B98A2E",
+    "overrides": {},
+    "darkOverrides": {}
+  },
+
+  "type": {
+    "display": "Fraunces",
+    "body": "Inter",
+    "mono": "IBM Plex Mono",
+    "source": "google",
+    "displayTracking": "-0.01em",
+    "scale": 1.02
+  },
+
+  "shape": {
+    "radius": "rounded",
+    "density": "comfortable",
+    "borderWidth": "hairline",
+    "elevation": "lifted"
+  },
+
+  "assets": {},
+
+  "copy": {
+    "portalName": "Vydehi Connect",
+    "institutionName": "Sri Vydehi University",
+    "shortName": "SVU",
+    "tagline": "Bengaluru · Since 1994",
+    "heroHeadline": "Thirty years of graduates, in one place.",
+    "heroEmphasis": "one place",
+    "heroSubhead": "A verified directory of every Vydehi graduate since 1994, a mentoring channel between final-years and alumni, and events you hear about before they happen.",
+    "supportEmail": "alumni@svu.example.ac.in",
+    "addressLines": ["Sri Vydehi University", "Whitefield, Bengaluru — 560066", "Karnataka, India"],
+    "poweredBy": "ifBash",
+    "poweredByUrl": "https://ifbash.com"
+  },
+
+  "features": {
+    "directory": true,
+    "connections": true,
+    "events": true,
+    "jobs": true,
+    "mentorship": true,
+    "donations": false,
+    "gallery": true,
+    "news": true,
+    "whatsapp": true,
+    "publicLanding": true
+  },
+
+  "locale": {
+    "locale": "en-IN",
+    "currency": "INR",
+    "timeZone": "Asia/Kolkata",
+    "dateFormat": "dd-MM-yyyy"
+  }
+}

@@ -1,0 +1,109 @@
+{
+  "$comment": [
+    "The house brand. This is what the product wears when it is selling itself:",
+    "the marketing site, the platform-admin console, the demo tenant, and the",
+    "'powered by' line in every customer's footer.",
+    "",
+    "Sourced from ifBash Brand Guidelines, Brick & Charcoal edition, 2026-07-27.",
+    "Section references below point at that document. Do not drift the accent",
+    "colours without a client decision — six directions have already been",
+    "rejected and are listed in section 9 of the guidelines."
+  ],
+
+  "id": "ifbash",
+  "version": 1,
+
+  "color": {
+    "$comment": "Guidelines section 3. 'sea' is the brick red, 'sky' the azure AI layer.",
+    "primary": "#B23A2B",
+    "accent": "#2563EB",
+    "surface": "#F8F5F1",
+    "surfaceDark": "#151110",
+    "ink": "#181312",
+    "marker": "#D97706",
+    "neutralChroma": 0.022,
+
+    "success": "#15803D",
+    "warning": "#B45309",
+    "danger": "#B42318",
+    "info": "#2563EB",
+
+    "$overrides_note": "Values sections 3.1 of the guidelines pin exactly, so they are not left to derivation. Light mode only — the dark equivalents are derived, because an ink fixed for paper is ink on ink against a dark ground.",
+    "overrides": {
+      "--surface-raised": "#FFFFFF",
+      "--surface-sunken": "#F1E9E1",
+      "--border": "#E5DCD2",
+      "--text-primary": "#181312",
+      "--text-secondary": "#3A2A26",
+      "--text-muted": "#6E5B52"
+    },
+    "darkOverrides": {}
+  },
+
+  "type": {
+    "$comment": "Guidelines section 4. One superfamily; hierarchy by weight and size only.",
+    "display": "IBM Plex Sans",
+    "body": "IBM Plex Sans",
+    "mono": "IBM Plex Mono",
+    "source": "local",
+    "displayTracking": "-0.025em",
+    "scale": 1,
+    "fontFaces": [
+      { "family": "IBM Plex Sans", "src": "/fonts/IBMPlexSans-Regular.ttf", "weight": "400" },
+      { "family": "IBM Plex Sans", "src": "/fonts/IBMPlexSans-SemiBold.ttf", "weight": "600" },
+      { "family": "IBM Plex Sans", "src": "/fonts/IBMPlexSans-Bold.ttf", "weight": "700" },
+      { "family": "IBM Plex Sans", "src": "/fonts/IBMPlexSans-Italic.ttf", "weight": "400", "style": "italic" },
+      { "family": "IBM Plex Mono", "src": "/fonts/IBMPlexMono-Regular.ttf", "weight": "400" }
+    ]
+  },
+
+  "shape": {
+    "radius": "subtle",
+    "density": "comfortable",
+    "borderWidth": "hairline",
+    "elevation": "soft"
+  },
+
+  "assets": {
+    "$comment": "Guidelines section 2.2. Never recolour or redraw these.",
+    "logoPrimary": "/brand/ifbash/logo/logo-primary.png",
+    "logoInverse": "/brand/ifbash/logo/logo-reversed.png",
+    "logoMark": "/brand/ifbash/logo/mark-color.png",
+    "favicon": "/brand/ifbash/icons/icon-512.png",
+    "ogImage": "/brand/ifbash/og-card.png"
+  },
+
+  "copy": {
+    "portalName": "ifBash Alumni",
+    "institutionName": "ifBash",
+    "shortName": "ifBash",
+    "tagline": "The alumni network your college actually owns.",
+    "heroHeadline": "Your alumni are not a mailing list.",
+    "heroEmphasis": "not a mailing list",
+    "heroSubhead": "A verified directory, a working referral channel between final-years and graduates, and a records layer that survives the person who set it up. Built for Indian engineering colleges, on infrastructure that stays in India.",
+    "supportEmail": "hello@ifbash.com",
+    "websiteUrl": "https://ifbash.com",
+    "poweredBy": "ifBash",
+    "poweredByUrl": "https://ifbash.com"
+  },
+
+  "features": {
+    "directory": true,
+    "connections": true,
+    "events": true,
+    "jobs": true,
+    "mentorship": true,
+    "donations": false,
+    "gallery": true,
+    "news": true,
+    "whatsapp": false,
+    "publicLanding": true
+  },
+
+  "locale": {
+    "locale": "en-IN",
+    "currency": "INR",
+    "timeZone": "Asia/Kolkata",
+    "dateFormat": "dd-MM-yyyy"
+  }
+}

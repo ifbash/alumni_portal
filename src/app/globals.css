@@ -1,0 +1,244 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Tenant tokens are injected into <head> by the root layout, before first
+ * paint. The values below are only the floor that applies if a tenant
+ * fails to resolve — unstyled text looks like an outage, neutral defaults
+ * look like a portal.
+ */
+:root {
+  --brand-50: #f2f5fa; --brand-100: #e2e9f3; --brand-200: #c4d1e6;
+  --brand-300: #9db2d3; --brand-400: #7690bd; --brand-500: #536fa4;
+  --brand-600: #1f3864; --brand-700: #1a2f54; --brand-800: #142442;
+  --brand-900: #0d182d;
+  --accent-500: #536fa4; --accent-600: #1f3864;
+  --neutral-50: #fafafa; --neutral-100: #f4f4f5; --neutral-200: #e4e4e7;
+  --neutral-300: #d4d4d8; --neutral-400: #a1a1aa; --neutral-500: #71717a;
+  --neutral-600: #52525b; --neutral-700: #3f3f46; --neutral-800: #27272a;
+  --neutral-900: #18181b;
+
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f6f7f9;
+  --surface-inverse: #18181b;
+
+  --text-primary: #18181b;
+  --text-secondary: #52525b;
+  --text-muted: #71717a;
+  --text-on-inverse: #fafafa;
+
+  --border: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --focus-ring: #1f3864;
+
+  --brand-fg: #1f3864;
+  --brand-soft: #eef2f8;
+  --brand-soft-fg: #1a2f54;
+  --accent-fg: #1f3864;
+  --accent-soft: #eef2f8;
+  --accent-soft-fg: #1a2f54;
+  --marker: #d97706;
+
+  --button-primary-bg: #1f3864;
+  --button-primary-hover: #1a2f54;
+  --button-primary-fg: #ffffff;
+
+  --success: #15803d; --success-fg: #15803d; --success-soft: #eaf4ed; --success-on: #ffffff;
+  --warning: #b45309; --warning-fg: #b45309; --warning-soft: #fbf1e6; --warning-on: #ffffff;
+  --danger: #b42318;  --danger-fg: #b42318;  --danger-soft: #fbeceb;  --danger-on: #ffffff;
+  --info: #1d4ed8;    --info-fg: #1d4ed8;    --info-soft: #eaeefb;    --info-on: #ffffff;
+
+  --shadow-color: rgb(24 24 27 / 0.1);
+  --overlay: rgb(24 24 27 / 0.55);
+  --shadow-sm: 0 1px 2px var(--shadow-color);
+  --shadow-md: 0 2px 8px -2px var(--shadow-color), 0 1px 3px var(--shadow-color);
+  --shadow-lg: 0 12px 32px -8px var(--shadow-color), 0 4px 12px -4px var(--shadow-color);
+  --shadow-glow: 0 0 0 1px var(--brand-soft), 0 8px 28px -8px var(--brand-500);
+
+  --radius-sm: 4px; --radius: 8px; --radius-lg: 12px; --radius-xl: 18px; --radius-full: 9999px;
+  --border-width: 1px;
+
+  --font-display: ui-sans-serif, system-ui, Georgia, serif;
+  --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --tracking-display: -0.02em;
+
+  --text-xs: 0.75rem; --text-sm: 0.875rem; --text-base: 1rem;
+  --text-md: 1.0625rem; --text-lg: 1.125rem; --text-xl: 1.25rem;
+  --display-xs: 1.5rem; --display-sm: 1.85rem; --display-md: 2.4rem;
+  --display-lg: 3rem; --display-xl: 3.6rem;
+
+  --control-h-sm: 32px; --control-h: 40px; --control-h-lg: 48px;
+  --gutter: 24px; --section-y: 72px; --card-p: 20px; --row-h: 52px;
+  --page-max: 1200px; --prose-max: 68ch;
+
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur-fast: 120ms; --dur: 200ms; --dur-slow: 380ms;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background: var(--surface);
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    font-size: var(--text-base);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: var(--tracking-display);
+    color: var(--text-primary);
+    text-wrap: balance;
+  }
+
+  p { text-wrap: pretty; }
+
+  /*
+   * A visible focus ring is not decoration. Keyboard navigation is how
+   * screen-reader users and anyone on a low-end Android with a flaky
+   * touchscreen operates this portal, and an invisible ring makes it
+   * unusable.
+   */
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  ::selection {
+    background: var(--brand-soft);
+    color: var(--brand-soft-fg);
+  }
+
+  /* Native controls should inherit the tenant's hue, not the OS accent. */
+  :root {
+    accent-color: var(--brand-600);
+    color-scheme: light;
+  }
+  [data-theme='dark'] { color-scheme: dark; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) { color-scheme: dark; }
+  }
+
+  input, textarea, select, button { font: inherit; color: inherit; }
+
+  /* Firefox */
+  * { scrollbar-color: var(--border-strong) transparent; scrollbar-width: thin; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: var(--radius-full);
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  /* Consistent page gutter. Wide tables opt out with `.bleed`. */
+  .page-shell {
+    width: 100%;
+    max-width: var(--page-max);
+    margin-inline: auto;
+    padding-inline: clamp(16px, 4vw, 32px);
+  }
+
+  /*
+   * Hand-drawn marker layer. One or two per viewport, never more — the
+   * mark has to read as a deliberate annotation of something that matters,
+   * and a page covered in them reads as a texture instead.
+   */
+  .marker-underline {
+    position: relative;
+    display: inline;
+    background-image: linear-gradient(transparent 62%, var(--marker) 62%, var(--marker) 92%, transparent 92%);
+    background-repeat: no-repeat;
+    background-size: 100% 100%;
+    padding-inline: 0.08em;
+    /* The stroke is decoration; only the words underneath carry meaning. */
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+
+  .link-quiet {
+    color: inherit;
+    text-decoration: none;
+  }
+  .link-quiet:hover { color: var(--brand-fg); }
+
+  .link {
+    color: var(--brand-fg);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
+    text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  }
+  .link:hover { text-decoration-color: currentColor; }
+
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--surface-sunken) 25%,
+      color-mix(in srgb, var(--surface-sunken) 60%, var(--surface-raised)) 37%,
+      var(--surface-sunken) 63%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s linear infinite;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Sent to screen readers only — skip links, table captions, live regions. */
+  .sr-only-focusable:not(:focus):not(:focus-within) {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+}
+
+@layer utilities {
+  .text-gradient-brand {
+    background-image: linear-gradient(100deg, var(--brand-fg), var(--brand-500));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .grid-fade {
+    mask-image: linear-gradient(to bottom, black 55%, transparent 100%);
+  }
+
+  .tabular { font-variant-numeric: tabular-nums; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media print {
+  .no-print { display: none !important; }
+  body { background: #fff; color: #000; }
+}
