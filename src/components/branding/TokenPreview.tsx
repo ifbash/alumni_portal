@@ -1,10 +1,5 @@
 import * as React from 'react';
 import {
-  Card,
-  CardBody,
-  CardDescription,
-  CardHeader,
-  CardTitle,
   Table,
   TableWrap,
   TBody,
@@ -159,27 +154,24 @@ const TYPE_ROWS: Array<{ token: string; purpose: string }> = [
 
 // ---------------------------------------------------------------
 
+/**
+ * Rendered inside the studio's "For designers" disclosure, which supplies
+ * the heading, so this is the body alone.
+ */
 export function TokenPreview({ tokens, className }: { tokens: TokenMaps; className?: string }) {
   return (
-    <Card className={className}>
-      <CardHeader>
-        <div className="min-w-0">
-          <CardTitle as="h2">Everything derived from those seeds</CardTitle>
-          <CardDescription>
-            Three colours went to the server. This came back. Ramps, hover states, tinted fills and
-            text pairings are computed against contrast targets, which is why the result is accessible
-            by construction rather than by review.
-          </CardDescription>
-        </div>
-      </CardHeader>
-
-      <CardBody className="space-y-8">
+    <div className={className}>
+      <p className="mb-6 max-w-prose text-sm text-secondary">
+        The colours you supplied went to the server; this came back. Ramps, hover states, tinted fills and text
+        pairings are computed against contrast targets.
+      </p>
+      <div className="space-y-8">
         <section className="space-y-4">
           <div className="space-y-1">
             <h3 className="font-display text-md font-semibold">The ramps</h3>
             <p className="text-sm text-secondary">
               Ten stops per hue, generated in OKLCH so the steps stay perceptually even whether the
-              college's colour is a deep blue or a bright saffron. Stops are absolute — stop 600 is
+              college&rsquo;s colour is a deep blue or a bright saffron. Stops are absolute — stop 600 is
               the same colour in dark mode, and components reach for semantics instead.
             </p>
           </div>
@@ -224,7 +216,7 @@ export function TokenPreview({ tokens, className }: { tokens: TokenMaps; classNa
                         <span className="text-xs font-semibold uppercase tracking-wide text-secondary">
                           {group.title}
                         </span>
-                        <span className="ml-2 text-xs text-muted">{group.note}</span>
+                        <span className="ml-2 text-xs text-secondary">{group.note}</span>
                       </TD>
                     </TR>
                     {group.rows.map((row) => (
@@ -260,8 +252,8 @@ export function TokenPreview({ tokens, className }: { tokens: TokenMaps; classNa
             tokens={tokens.light}
           />
         </section>
-      </CardBody>
-    </Card>
+      </div>
+    </div>
   );
 }
 
@@ -286,7 +278,7 @@ function Ramp({
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h4 className="text-sm font-semibold">{label}</h4>
-        {note ? <p className="max-w-prose text-xs text-muted">{note}</p> : null}
+        {note ? <p className="max-w-prose text-xs text-secondary">{note}</p> : null}
       </div>
 
       <div
@@ -347,7 +339,7 @@ function ValueList({
           <div key={row.token} className="grid gap-0.5 px-3 py-2.5">
             <dt className="flex flex-wrap items-baseline gap-x-2">
               <span className="font-mono text-xs">{row.token}</span>
-              <span className="text-xs text-muted">{row.purpose}</span>
+              <span className="text-xs text-secondary">{row.purpose}</span>
             </dt>
             <dd className="truncate font-mono text-xs text-secondary">{tokens[row.token] ?? '—'}</dd>
           </div>

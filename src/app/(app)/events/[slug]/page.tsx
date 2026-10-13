@@ -1,39 +1,31 @@
 import type { Metadata } from 'next';
-import type { ReactNode } from 'react';
+import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import {
-  Building2,
-  CalendarDays,
-  CircleCheck,
-  Clock,
-  GraduationCap,
-  History,
-  Lock,
-  MapPin,
-  ShieldCheck,
-  Ticket,
-  Users,
-  Video,
-} from 'lucide-react';
+import { Clock, Images, MapPin, Ticket, Video } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap, can } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
 import { getDepartments, getEventBySlug, getEvents } from '@/lib/data/repo';
+import { getAlbumPhotos, getAlbums } from '@/lib/data/content';
 import {
-  Alert,
-  Badge,
   Breadcrumbs,
   ButtonLink,
   Card,
   CardBody,
-  CardTitle,
-  DetailRow,
-  PageHeader,
-  Progress,
+  MediaFrame,
   Section,
+  ShareActions,
+  StickyActionBar,
 } from '@/components/ui';
-import { formatCurrency, formatDate, formatDateRange, formatNumber, formatRelative } from '@/lib/format';
-import type { EventItem } from '@/lib/data/types';
+import { AlbumCard, SeatBadge } from '@/components/content';
+import { BandChip } from '@/components/brand/PageBand';
+import { formatCurrency, formatDate } from '@/lib/format';
+import { isOnlineVenue, seatStatus } from '@/lib/event-status';
+import { directionsUrl } from '@/lib/maps';
+import { eventShareText } from '@/lib/share-text';
+import { siteOrigin, whatsappShareUrl } from '@/lib/share';
+import { BandDate } from '../EventCard';
+import { calendarLinks, whenLine } from '../calendar';
 import { RegisterForm, type GuestOption } from './RegisterForm';
 
 /**
@@ -42,8 +34,12 @@ import { RegisterForm, type GuestOption } from './RegisterForm';
  * Eligibility is decided by `getEventBySlug()` — an alumni-only event is
  * not addressable by a student and an unpublished draft needs
  * `event.create.any`, both enforced in the repo. When it returns null this
- * page 404s rather than explaining which rule caught you; the not-found
- * screen lists the possibilities without confirming any of them.
+ * page 404s rather than explaining which rule caught you.
+ *
+ * The page is one hero and one action. The hero says what, when and for
+ * whom; the action card holds the single thing the viewer can do next
+ * (register, show their ticket, ask for a seat, see the photos), pinned
+ * in the rail on a desktop and to the bottom of the screen on a phone.
  */
 
 const MAX_GUESTS = 3;
@@ -92,14 +88,17 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
   const timeZone = pack.locale.timeZone;
   const currency = pack.locale.currency;
   const money = (n: number) => formatCurrency(n, { locale, currency });
+  const office = pack.copy.officeName;
 
   const department = event.departmentCode
     ? getDepartments().find((d) => d.code === event.departmentCode)
     : null;
 
-  const seats = seatState(event);
-  const online = Boolean(event.venue && /online|zoom|meet|webinar|link/i.test(event.venue));
+  const seats = seatStatus(event);
+  const online = isOnlineVenue(event.venue);
   const paragraphs = (event.description ?? '').split(/\n{2,}/).filter(Boolean);
+  const when = whenLine(event, locale, timeZone);
+  const where = event.venue ?? 'Venue to be announced';
 
   const guestOptions: GuestOption[] = Array.from({ length: MAX_GUESTS + 1 }, (_, g) => ({
     value: g,
@@ -109,6 +108,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
 
   const registration = event.viewerRegistration
     ? {
+        id: event.viewerRegistration.id,
         guests: event.viewerRegistration.guests,
         checkedIn: event.viewerRegistration.checkedIn,
         amountLabel:
@@ -118,355 +118,331 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
       }
     : null;
 
-  return (
-    <div className="space-y-6">
-      <PageHeader
-        breadcrumbs={
-          <Breadcrumbs items={[{ label: 'Events', href: '/events' }, { label: event.title }]} />
-        }
-        eyebrow={department ? department.name : 'Open to every branch'}
-        title={event.title}
-        description={
-          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="inline-flex items-center gap-1.5">
-              <CalendarDays className="size-3.5 text-muted" aria-hidden="true" />
-              {formatDateRange(event.startsAt, event.endsAt, { locale, timeZone })}
-            </span>
-            {event.venue ? (
-              <span className="inline-flex items-center gap-1.5">
-                {online ? (
-                  <Video className="size-3.5 text-muted" aria-hidden="true" />
-                ) : (
-                  <MapPin className="size-3.5 text-muted" aria-hidden="true" />
-                )}
-                {event.venue}
-              </span>
-            ) : null}
-          </span>
-        }
-        actions={
-          canManage ? (
-            <ButtonLink href="/admin/events" variant="secondary" size="sm">
-              Manage in admin
-            </ButtonLink>
-          ) : null
+  const origin = await siteOrigin();
+  const url = `${origin}/events/${event.slug}`;
+  const ticketHref = `/events/${event.slug}/ticket`;
+  const calendar = calendarLinks(event, { url, addressLines: pack.copy.addressLines, timeZone });
+  const directions = isPast ? null : directionsUrl(event.venue, pack.copy.addressLines);
+
+  // The album from the day, when the college has filed one. Its cover is
+  // the only photo a past event page shows; an upcoming one shows only the
+  // event's own cover. Never a campus photo.
+  const album = pack.features.gallery ? (getAlbums().find((a) => a.eventSlug === event.slug) ?? null) : null;
+  const albumPhotos = album ? getAlbumPhotos(album.id).filter((p) => p.url) : [];
+  const albumCover = album ? (album.coverImage ?? albumPhotos[0]?.url ?? null) : null;
+  const heroImage = isPast ? (albumCover ?? event.coverImage) : event.coverImage;
+
+  type State = 'past' | 'draft' | 'organiser' | 'registered' | 'full' | 'open';
+  const state: State = isPast
+    ? 'past'
+    : !event.published
+      ? 'draft'
+      : !canRegister
+        ? 'organiser'
+        : registration
+          ? 'registered'
+          : seats.full
+            ? 'full'
+            : 'open';
+
+  const attendee = `/admin/events/${event.id}`;
+  const pastLine = event.viewerRegistration?.checkedIn
+    ? 'You attended'
+    : event.viewerRegistration
+      ? 'You registered. No check-in was recorded.'
+      : 'You were not registered';
+
+  // ---------------------------------------------------------------
+  // Hero
+  // ---------------------------------------------------------------
+
+  const eyebrow = department ? department.name : 'All branches';
+  const chips = (
+    <>
+      {isPast ? null : event.alumniOnly ? (
+        <BandChip>Alumni only</BandChip>
+      ) : (
+        <BandChip>{event.studentEligible ? 'Alumni and final-year students' : 'Alumni and faculty'}</BandChip>
+      )}
+      {isPast ? null : <BandChip>{event.ticketPrice > 0 ? `${money(event.ticketPrice)} per person` : 'Free'}</BandChip>}
+      {online ? <BandChip>Online</BandChip> : null}
+    </>
+  );
+
+  const hero = heroImage ? (
+    <section aria-labelledby="event-title" className="band-surface -mx-4 overflow-hidden sm:mx-0 sm:rounded-xl">
+      <MediaFrame
+        src={heroImage}
+        alt=""
+        aspect="16/9"
+        loading="eager"
+        rounded={false}
+        className="[&>div]:border-0 lg:[&>div]:aspect-[21/9]"
+        overlay={
+          <div className="space-y-1">
+            <p className="text-sm font-semibold">{eyebrow}</p>
+            <h1 id="event-title" className="font-display text-display-sm font-bold text-band-fg">
+              {event.title}
+            </h1>
+          </div>
         }
       />
-
-      {!event.published ? (
-        <Alert tone="warning" title="Draft — no member can see this yet" icon={<Lock className="size-4" />}>
-          <p>
-            You are looking at it because you hold event.create.any. Nothing is registrable and no
-            one has been told it exists. Publish it from the admin console when the date and venue
-            are fixed.
+      <div className="space-y-3 px-5 py-4 sm:px-8">
+        <p className="text-md text-band-muted">
+          {when} · {where}
+        </p>
+        <div className="flex flex-wrap gap-2">{chips}</div>
+      </div>
+    </section>
+  ) : (
+    <section
+      aria-labelledby="event-title"
+      className="band-surface -mx-4 px-5 py-6 sm:mx-0 sm:rounded-xl sm:px-8 lg:py-8"
+    >
+      <div className="flex items-start gap-4 sm:gap-5">
+        <BandDate iso={event.startsAt} locale={locale} timeZone={timeZone} />
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-band-accent">{eyebrow}</p>
+          <h1 id="event-title" className="mt-1 font-display text-display-sm font-bold text-band-fg">
+            {event.title}
+          </h1>
+          <p className="mt-2 text-md text-band-muted">
+            {when} · {where}
           </p>
-        </Alert>
-      ) : null}
+          <div className="mt-3 flex flex-wrap gap-2">{chips}</div>
+        </div>
+      </div>
+    </section>
+  );
 
-      {isPast ? (
-        <Alert tone="neutral" title="This event has already taken place" icon={<History className="size-4" />}>
-          <p>
-            Held {formatRelative(event.startsAt, { locale })} —{' '}
-            {formatDate(event.startsAt, { locale, timeZone })}.{' '}
-            {formatNumber(event.registeredCount, { locale })} people registered.
-            {event.viewerRegistration?.checkedIn
-              ? ' You were checked in at the gate.'
-              : event.viewerRegistration
-                ? ' Your registration is on record, though no check-in was scanned for you.'
-                : ''}
+  // ---------------------------------------------------------------
+  // The one action
+  // ---------------------------------------------------------------
+
+  const cardTitle: Record<State, string> = {
+    past: pastLine,
+    draft: 'Draft',
+    organiser: 'Organiser view',
+    registered: 'You are going',
+    full: 'Register',
+    open: 'Register',
+  };
+
+  const actionCard = (
+    <Card id="register" className="scroll-mt-20">
+      <CardBody className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-display text-lg font-semibold">{cardTitle[state]}</h2>
+          {state === 'open' || state === 'full' ? <SeatBadge event={event} audience="member" /> : null}
+          {state === 'organiser' || state === 'draft' ? <SeatBadge event={event} audience="organiser" /> : null}
+        </div>
+
+        {state === 'open' ? (
+          <p className="text-sm text-secondary">
+            <span className="font-semibold tabular text-primary">
+              {event.ticketPrice > 0 ? money(event.ticketPrice) : 'Free'}
+            </span>
+            {event.ticketPrice > 0 ? ' per person. Guests pay the same ticket price.' : '. Guests are welcome.'}
           </p>
-        </Alert>
-      ) : null}
+        ) : null}
 
-      <div className="grid gap-gutter lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <div className="min-w-0 space-y-6">
-          <Section title="About this event">
-            {paragraphs.length ? (
+        {state === 'past' ? (
+          album ? (
+            <ButtonLink href={`/gallery/${album.slug}`} className="min-h-11 w-full">
+              <Images className="size-4" aria-hidden="true" />
+              See photos
+            </ButtonLink>
+          ) : (
+            <p className="text-sm text-secondary">
+              Photos from the day appear here when the {office} files them.
+            </p>
+          )
+        ) : state === 'draft' ? (
+          <div className="space-y-3">
+            <p className="text-sm text-secondary">Draft — only organisers can see this. Publish it from Manage events.</p>
+            <ButtonLink href={attendee} variant="secondary" className="min-h-11 w-full">
+              Open in Manage events
+            </ButtonLink>
+          </div>
+        ) : state === 'organiser' ? (
+          <div className="space-y-3">
+            <p className="text-sm text-secondary">You are viewing as an organiser.</p>
+            <ButtonLink href={attendee} variant="secondary" className="min-h-11 w-full">
+              Open the attendee list
+            </ButtonLink>
+          </div>
+        ) : (
+          <RegisterForm
+            eventTitle={event.title}
+            mode={registration ? 'registered' : seats.full ? 'full' : 'register'}
+            isPaid={event.ticketPrice > 0}
+            priceLabel={event.ticketPrice > 0 ? money(event.ticketPrice) : 'Free'}
+            guestOptions={guestOptions}
+            registration={registration}
+            seatsLeft={seats.left}
+            capacity={event.capacity}
+            supportEmail={pack.copy.supportEmail ?? null}
+            officeName={office}
+            ticketHref={ticketHref}
+            calendar={calendar}
+          />
+        )}
+      </CardBody>
+    </Card>
+  );
+
+  const sticky =
+    state === 'open' ? (
+      <ButtonLink href="#register">{event.ticketPrice > 0 ? 'Hold my seat' : 'Register'}</ButtonLink>
+    ) : state === 'full' ? (
+      <ButtonLink href="#register" variant="secondary">
+        Full — ask for a seat
+      </ButtonLink>
+    ) : state === 'registered' ? (
+      <ButtonLink href={ticketHref}>
+        <Ticket className="size-4" aria-hidden="true" />
+        Show my ticket
+      </ButtonLink>
+    ) : state === 'past' && album ? (
+      <ButtonLink href={`/gallery/${album.slug}`}>
+        <Images className="size-4" aria-hidden="true" />
+        See photos
+      </ButtonLink>
+    ) : state === 'organiser' ? (
+      <ButtonLink href={attendee} variant="secondary">
+        Open the attendee list
+      </ButtonLink>
+    ) : null;
+
+  return (
+    <div className="space-y-6">
+      <Breadcrumbs items={[{ label: 'Events', href: '/events' }, { label: event.title }]} />
+
+      {hero}
+
+      <div className="grid grid-cols-1 gap-gutter lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <aside
+          aria-label={state === 'past' ? 'After the event' : 'Registration'}
+          className="order-first min-w-0 space-y-4 lg:order-none lg:col-start-2 lg:row-start-1 lg:sticky lg:top-20 lg:self-start"
+        >
+          {actionCard}
+
+          {canManage && state !== 'organiser' && state !== 'draft' ? (
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-lg border border-line bg-surface-sunken px-4 py-2 text-sm">
+              <span className="text-secondary">You are viewing as an organiser.</span>
+              <Link href={attendee} className="link inline-flex min-h-11 items-center">
+                Open the attendee list
+              </Link>
+            </div>
+          ) : null}
+
+          {isPast ? null : (
+            <p className="flex items-start gap-2 px-1 text-xs text-secondary">
+              <Clock className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden="true" />
+              <span>
+                All times are IST. Registration lists are visible to the {office} and to the department organising the
+                event, and to nobody else.
+              </span>
+            </p>
+          )}
+        </aside>
+
+        <div className="min-w-0 space-y-8 lg:col-start-1 lg:row-start-1">
+          {paragraphs.length ? (
+            <Section title="About this event">
               <div className="max-w-prose space-y-3 text-md leading-relaxed text-secondary">
                 {paragraphs.map((p, i) => (
                   <p key={i}>{p}</p>
                 ))}
               </div>
-            ) : (
-              <p className="text-sm text-muted">
-                The organisers have not written a description yet. The date, venue and ticket on the
-                right are confirmed.
-              </p>
-            )}
-          </Section>
+            </Section>
+          ) : null}
 
-          <Section title="Who can attend">
-            <Card>
-              <CardBody>
-                <ul className="space-y-3 text-sm">
-                  <Eligibility
-                    icon={<GraduationCap className="size-4" />}
-                    title={
-                      event.alumniOnly
-                        ? 'Alumni only'
-                        : event.studentEligible
-                          ? 'Alumni and final-year students'
-                          : 'Alumni and faculty'
-                    }
-                    body={
-                      event.alumniOnly
-                        ? 'A batch event. Final-year students do not see it in their portal at all — it is not hidden from them so much as not addressed to them.'
-                        : event.studentEligible
-                          ? 'Students in their final year can register alongside alumni. Most of the value of a session like this is the questions they ask.'
-                          : 'Not open to the student cohort. Registration is limited to alumni and faculty.'
-                    }
-                  />
-
-                  <Eligibility
-                    icon={<Building2 className="size-4" />}
-                    title={department ? `Organised by ${department.name}` : 'Open to every branch'}
-                    body={
-                      department
-                        ? `Run by the ${department.code} department. Alumni and students from other branches are welcome unless the seat count says otherwise.`
-                        : 'Not tied to a single branch — everyone from every department is invited.'
-                    }
-                  />
-
-                  <Eligibility
-                    icon={<Ticket className="size-4" />}
-                    title={event.ticketPrice > 0 ? `${money(event.ticketPrice)} per person` : 'Free to attend'}
-                    body={
-                      event.ticketPrice > 0
-                        ? 'Guests are charged the same as you. The ticket covers the venue and catering; the alumni cell publishes the account after the event.'
-                        : 'No ticket. Register anyway — the desk works from the list, and the count decides how many chairs are put out.'
-                    }
-                  />
-
-                  <Eligibility
-                    icon={<ShieldCheck className="size-4" />}
-                    title="Verified members only"
-                    body="Registration is tied to your verified record against the college's degree register. That is what keeps a public reunion from turning into an open guest list."
-                  />
+          {isPast && album ? (
+            <Section
+              title="Photos from the day"
+              actions={
+                <Link href={`/gallery/${album.slug}`} className="link inline-flex min-h-11 items-center text-sm">
+                  See all {album.photoCount.toLocaleString('en-IN')}
+                </Link>
+              }
+            >
+              {albumPhotos.length > 0 ? (
+                <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {albumPhotos.slice(0, 6).map((p) => (
+                    <li key={p.id} className="min-w-0">
+                      <Link href={`/gallery/${album.slug}`} aria-label={p.caption ?? `Photo from ${album.title}`}>
+                        <MediaFrame src={p.url} alt={p.caption ?? ''} aspect="1/1" />
+                      </Link>
+                    </li>
+                  ))}
                 </ul>
-              </CardBody>
-            </Card>
-          </Section>
-        </div>
-
-        <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
-          <Card>
-            <CardBody className="space-y-1">
-              <CardTitle as="h2" className="text-md">
-                When and where
-              </CardTitle>
-              <dl className="divide-y divide-line">
-                <DetailRow label="Date">
-                  {formatDateRange(event.startsAt, event.endsAt, { locale, timeZone })}
-                </DetailRow>
-                <DetailRow label={online ? 'Joining' : 'Venue'}>
-                  {event.venue ?? 'To be announced'}
-                </DetailRow>
-                <DetailRow label="Format">{online ? 'Online' : 'In person, on campus or at the listed venue'}</DetailRow>
-                <DetailRow label="Ticket">
-                  {event.ticketPrice > 0 ? (
-                    <span className="tabular">{money(event.ticketPrice)}</span>
-                  ) : (
-                    <Badge tone="success">Free</Badge>
-                  )}
-                </DetailRow>
-              </dl>
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardBody className="space-y-2.5">
-              <CardTitle as="h2" className="text-md">
-                Seats
-              </CardTitle>
-
-              <p className={seats.full ? 'text-sm font-semibold text-warning-fg' : 'text-sm font-semibold'}>
-                {seats.headline}
-              </p>
-
-              {seats.max !== null ? (
-                <Progress
-                  value={seats.taken}
-                  max={seats.max}
-                  tone={seats.tone}
-                  label={`${seats.taken} of ${seats.max} seats taken`}
-                />
-              ) : null}
-
-              <p className="flex items-start gap-2 text-xs text-muted">
-                <Users className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                <span>{seats.detail}</span>
-              </p>
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardBody className="space-y-3">
-              <CardTitle as="h2" className="text-md">
-                {isPast ? 'Your record' : registration ? 'Your registration' : 'Register'}
-              </CardTitle>
-
-              {isPast ? (
-                <PastRecord event={event} locale={locale} timeZone={timeZone} />
-              ) : !event.published ? (
-                <p className="text-sm text-secondary">
-                  Registration opens when this draft is published. Nothing on this page is live for
-                  members yet.
-                </p>
-              ) : !canRegister ? (
-                <div className="space-y-2 text-sm text-secondary">
-                  <p>
-                    You are here as an organiser. Registration is a member action — your roles carry
-                    event.create.any and event.checkin, not event.register.
-                  </p>
-                  <ButtonLink href="/admin/events" variant="secondary" size="sm">
-                    Open the attendee list
-                  </ButtonLink>
-                </div>
               ) : (
-                <RegisterForm
-                  eventTitle={event.title}
-                  mode={registration ? 'registered' : seats.full ? 'waitlist' : 'register'}
-                  isPaid={event.ticketPrice > 0}
-                  priceLabel={event.ticketPrice > 0 ? money(event.ticketPrice) : 'Free'}
-                  guestOptions={guestOptions}
-                  registration={registration}
-                  seatsLeft={seats.max === null ? null : Math.max(0, seats.max - seats.taken)}
-                  supportEmail={pack.copy.supportEmail ?? null}
-                />
+                <div className="max-w-md">
+                  <AlbumCard
+                    album={album}
+                    coverSrc={albumCover}
+                    href={`/gallery/${album.slug}`}
+                    locale={pack.locale}
+                    credit={`Taken ${formatDate(album.takenOn, { locale, timeZone })}`}
+                  />
+                </div>
               )}
-            </CardBody>
-          </Card>
+            </Section>
+          ) : null}
 
-          <p className="flex items-start gap-2 px-1 text-xs text-muted">
-            <Clock className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span>
-              All times are {timeZone.replace('_', ' ')}. Registration lists are visible to the
-              alumni cell and to the department organising the event, and to nobody else.
-            </span>
-          </p>
-        </aside>
+          {isPast ? null : (
+            <Section title="Getting there">
+              <Card>
+                <CardBody className="space-y-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="flex min-w-0 items-start gap-2 text-sm">
+                      {online ? (
+                        <Video className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
+                      ) : (
+                        <MapPin className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
+                      )}
+                      <span className="min-w-0">
+                        <span className="block font-medium">{where}</span>
+                        {!online && directions && pack.copy.addressLines.length > 0 && !where.includes(',') ? (
+                          <span className="block text-secondary">{pack.copy.addressLines.join(', ')}</span>
+                        ) : null}
+                      </span>
+                    </p>
+                    {directions ? (
+                      <ButtonLink
+                        href={directions}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        variant="secondary"
+                        className="min-h-11"
+                      >
+                        Get directions
+                        <span className="sr-only"> (opens Google Maps in a new tab)</span>
+                      </ButtonLink>
+                    ) : null}
+                  </div>
+
+                  {event.published ? (
+                    <div className="space-y-2 border-t border-line pt-4">
+                      <p className="text-sm font-medium">Tell your batch</p>
+                      <ShareActions
+                        url={url}
+                        whatsappHref={whatsappShareUrl(eventShareText(pack, event), url)}
+                        title={event.title}
+                        size="sm"
+                      />
+                    </div>
+                  ) : null}
+                </CardBody>
+              </Card>
+            </Section>
+          )}
+        </div>
       </div>
+
+      {sticky ? <StickyActionBar label="Event action">{sticky}</StickyActionBar> : null}
     </div>
   );
 }
 
-// ---------------------------------------------------------------
-// Pieces
-// ---------------------------------------------------------------
-
-function Eligibility({
-  icon,
-  title,
-  body,
-}: {
-  icon: ReactNode;
-  title: string;
-  body: string;
-}) {
-  return (
-    <li className="flex gap-3">
-      <span className="mt-0.5 shrink-0 text-muted" aria-hidden="true">
-        {icon}
-      </span>
-      <div className="min-w-0 space-y-0.5">
-        <p className="font-medium">{title}</p>
-        <p className="text-secondary">{body}</p>
-      </div>
-    </li>
-  );
-}
-
-function PastRecord({
-  event,
-  locale,
-  timeZone,
-}: {
-  event: EventItem;
-  locale: string;
-  timeZone: string;
-}) {
-  if (!event.viewerRegistration) {
-    return (
-      <div className="space-y-2 text-sm text-secondary">
-        <p>
-          You were not registered for this one. It ran on{' '}
-          {formatDate(event.startsAt, { locale, timeZone })} with{' '}
-          {formatNumber(event.registeredCount, { locale })} people on the list.
-        </p>
-        <ButtonLink href="/events?when=upcoming" variant="secondary" size="sm">
-          What is coming up
-        </ButtonLink>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-2 text-sm">
-      <p className="flex items-center gap-2 font-medium">
-        <CircleCheck className="size-4 text-success-fg" aria-hidden="true" />
-        {event.viewerRegistration.checkedIn ? 'You attended' : 'You registered'}
-      </p>
-      <p className="text-secondary">
-        {event.viewerRegistration.guests > 0
-          ? `You brought ${event.viewerRegistration.guests} guest${event.viewerRegistration.guests === 1 ? '' : 's'}. `
-          : ''}
-        {event.viewerRegistration.checkedIn
-          ? 'Your check-in was scanned at the desk.'
-          : 'No check-in was scanned against your name — if you did attend, tell the alumni cell so the record matches.'}
-      </p>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------
-// Seats
-// ---------------------------------------------------------------
-
-function seatState(event: EventItem) {
-  const taken = event.registeredCount;
-  const max = event.capacity;
-
-  if (max === null) {
-    return {
-      taken,
-      max: null as number | null,
-      full: false,
-      tone: 'brand' as const,
-      headline: `${taken} registered`,
-      detail: 'No seat limit on this one. Register anyway so the organisers know the numbers.',
-    };
-  }
-
-  const left = Math.max(0, max - taken);
-
-  if (left === 0) {
-    return {
-      taken,
-      max,
-      full: true,
-      tone: 'warning' as const,
-      headline: 'Full — join the waiting list',
-      detail: `All ${max} seats are taken. Cancellations are offered down the waiting list in the order people joined, so joining early is worth it.`,
-    };
-  }
-
-  if (left <= Math.max(3, Math.round(max * 0.05))) {
-    return {
-      taken,
-      max,
-      full: false,
-      tone: 'warning' as const,
-      headline: `Only ${left} ${left === 1 ? 'seat' : 'seats'} left`,
-      detail: `${taken} of ${max} seats are gone. Guests count against the same limit.`,
-    };
-  }
-
-  return {
-    taken,
-    max,
-    full: false,
-    tone: 'brand' as const,
-    headline: `${taken} of ${max} registered`,
-    detail: `${left} seats still open. Guests count against the same limit.`,
-  };
-}

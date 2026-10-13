@@ -1,12 +1,9 @@
-import { Card, CardBody, Skeleton, TableWrap } from '@/components/ui';
+import { Skeleton } from '@/components/ui';
 
 /**
- * The audit log, mid-load.
- *
- * Seven columns that do not fit a laptop, so the real table scrolls inside
- * its own container at `min-w-[62rem]` rather than widening the page — the
- * skeleton does the same, because a boundary that fits and then hands over
- * to something that scrolls is a boundary that lies about the layout.
+ * The audit log, mid-load, in its real shape: the header, the three
+ * linked counts, the toolbar and quick filters, then one bordered list of
+ * one-line entries under day headings.
  */
 export default function AuditLoading() {
   return (
@@ -15,103 +12,48 @@ export default function AuditLoading() {
 
       <div className="space-y-3">
         <Skeleton className="h-3 w-24" />
-        <Skeleton className="h-9 w-52" />
-        <Skeleton className="h-4 w-full max-w-prose" />
+        <Skeleton className="h-9 w-40" />
+        <Skeleton className="h-4 w-80 max-w-full" />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
-          <Card key={i} className="p-card">
-            <div className="flex items-start justify-between gap-3">
-              <Skeleton className="h-3.5 w-32" />
-              <Skeleton className="size-4 rounded-sm" />
+      <Skeleton className="h-4 w-96 max-w-full" />
+
+      <div className="space-y-3">
+        <div className="flex flex-wrap gap-2">
+          <Skeleton className="h-control min-w-0 flex-1 basis-60 rounded" />
+          <Skeleton className="h-control w-56 rounded" />
+          <Skeleton className="h-control w-20 rounded" />
+        </div>
+        <div className="flex gap-2">
+          {['w-24', 'w-20', 'w-28', 'w-20', 'w-24'].map((w, i) => (
+            <Skeleton key={i} className={`h-9 rounded-full ${w}`} />
+          ))}
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-lg border border-line bg-surface-raised">
+        {[5, 4, 6].map((rows, g) => (
+          <div key={g}>
+            <div className="border-b border-line bg-surface-sunken px-4 py-1.5">
+              <Skeleton className="h-3 w-20" />
             </div>
-            <Skeleton className="mt-3 h-8 w-14" />
-            <Skeleton className="mt-2 h-3 w-28" />
-          </Card>
+            <div className="divide-y divide-line border-b border-line">
+              {Array.from({ length: rows }, (_, i) => (
+                <div
+                  key={i}
+                  className="grid grid-cols-1 gap-2 px-4 py-2.5 md:grid-cols-[6rem_minmax(0,17rem)_minmax(0,17rem)_minmax(0,8rem)_minmax(0,1fr)] md:items-center md:gap-4"
+                >
+                  <Skeleton className="h-3.5 w-16" />
+                  <Skeleton className="h-3.5 w-44" />
+                  <Skeleton className="h-3.5 w-36" />
+                  <Skeleton className="hidden h-3.5 w-20 md:block" />
+                  <Skeleton className="h-3.5 w-full" />
+                </div>
+              ))}
+            </div>
+          </div>
         ))}
       </div>
-
-      {/* Narrow the log */}
-      <Card>
-        <CardBody className="space-y-4">
-          <div className="space-y-1">
-            <Skeleton className="h-5 w-36" />
-            <Skeleton className="h-3.5 w-full max-w-prose" />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,15rem)] sm:items-start">
-            <div className="space-y-2">
-              <Skeleton className="h-3.5 w-16" />
-              <Skeleton className="h-control w-full" />
-              <Skeleton className="h-3 w-3/5" />
-            </div>
-            <div className="space-y-2">
-              <Skeleton className="h-3.5 w-14" />
-              <Skeleton className="h-control w-full" />
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2 border-t border-line pt-4">
-            {[0, 1, 2, 3, 4].map((i) => (
-              <Skeleton key={i} className="h-6 w-28 rounded-full" />
-            ))}
-          </div>
-        </CardBody>
-      </Card>
-
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="space-y-1">
-            <Skeleton className="h-6 w-40" />
-            <Skeleton className="h-3.5 w-64" />
-          </div>
-          <Skeleton className="h-control-sm w-32 rounded" />
-        </div>
-
-        <TableWrap caption="Loading the audit log">
-          <div className="min-w-[62rem] divide-y divide-line">
-            <div className="flex items-center gap-4 bg-surface-sunken px-3 py-3">
-              <Skeleton className="h-3 w-28 shrink-0" />
-              <Skeleton className="h-3 w-32 shrink-0" />
-              <Skeleton className="h-3 w-36 shrink-0" />
-              <Skeleton className="h-3 w-28 shrink-0" />
-              <Skeleton className="ml-auto h-3 w-20 shrink-0" />
-            </div>
-            {Array.from({ length: 12 }, (_, i) => (
-              <div key={i} className="flex items-center gap-4 px-3 py-3.5">
-                <Skeleton className="h-3.5 w-32 shrink-0" />
-                <div className="w-40 shrink-0 space-y-1.5">
-                  <Skeleton className="h-3.5 w-32" />
-                  <Skeleton className="h-3 w-20" />
-                </div>
-                <Skeleton className="h-5 w-36 shrink-0 rounded-full" />
-                <Skeleton className="h-3.5 w-40 shrink-0" />
-                <Skeleton className="h-3.5 w-44 shrink-0" />
-                <Skeleton className="h-3.5 w-24 shrink-0" />
-                <Skeleton className="ml-auto h-3.5 w-16 shrink-0" />
-              </div>
-            ))}
-          </div>
-        </TableWrap>
-      </div>
-
-      {/* How to read this log */}
-      <Card>
-        <CardBody className="space-y-4">
-          <div className="space-y-1">
-            <Skeleton className="h-5 w-48" />
-            <Skeleton className="h-3.5 w-80 max-w-full" />
-          </div>
-          <div className="grid gap-5 md:grid-cols-3">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="space-y-2">
-                <Skeleton className="h-3.5 w-32" />
-                <Skeleton className="h-3 w-full" />
-                <Skeleton className="h-3 w-5/6" />
-              </div>
-            ))}
-          </div>
-        </CardBody>
-      </Card>
     </div>
   );
 }

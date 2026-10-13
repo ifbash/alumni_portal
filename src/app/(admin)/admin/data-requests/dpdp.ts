@@ -1,4 +1,5 @@
 import type { DataRequest } from '@/lib/data/types';
+import { displayNow } from '@/lib/format';
 
 /**
  * The statutory clock, and the words the queue uses for it.
@@ -9,16 +10,14 @@ import type { DataRequest } from '@/lib/data/types';
  */
 
 /**
- * The fixture instant, matching `SEED_NOW` in the data layer.
+ * "Now", from the one clock every screen reads (`displayNow()`), so this
+ * countdown and `formatRelative()` always measure against the same instant
+ * and a request can never read "Due in 4 days" beside an overdue badge.
  *
- * Duplicated rather than imported because a page must not reach into
- * `data/seed`. It has to be the *same* instant that `formatRelative()`
- * measures against, or a request could read “Due in 4 days” beside a badge
- * that says overdue. See the note in the final report: the right fix is a
- * reference clock exported from a module a page is allowed to import.
+ * Read on each call, never captured at import: a module-level constant is
+ * fixed for the life of the server process, and a statutory countdown that
+ * stops moving is worse than none.
  */
-const REFERENCE_NOW = new Date('2026-08-17T09:30:00+05:30').getTime();
-
 /** Days from receipt to the statutory deadline. */
 export const RESPONSE_WINDOW_DAYS = 30;
 
@@ -47,7 +46,7 @@ export interface DueStatus {
 }
 
 export function dueStatus(request: DataRequest): DueStatus {
-  const days = Math.ceil((new Date(request.dueAt).getTime() - REFERENCE_NOW) / DAY_MS);
+  const days = Math.ceil((new Date(request.dueAt).getTime() - displayNow().getTime()) / DAY_MS);
   const open = isOpen(request);
 
   if (!open) {
@@ -132,9 +131,14 @@ export const STATE_LABEL: Record<DataRequest['state'], string> = {
   refused: 'Refused',
 };
 
+/**
+ * Received is passive, in progress is normal work, fulfilled is done and
+ * refused is a refusal. Overdue is not a state: it is the clock, and
+ * `dueStatus()` gives it the danger tone.
+ */
 export const STATE_TONE: Record<DataRequest['state'], Tone> = {
-  received: 'info',
-  in_progress: 'warning',
+  received: 'neutral',
+  in_progress: 'brand',
   fulfilled: 'success',
-  refused: 'neutral',
+  refused: 'danger',
 };

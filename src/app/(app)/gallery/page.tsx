@@ -1,27 +1,17 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { CalendarDays, Camera, Images, ImageOff, Ticket, UserRound } from 'lucide-react';
+import { Camera, Images, Mail, MessageCircle } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
 import { isActive } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
 import { getDepartments } from '@/lib/data/repo';
-import { getAlbums, type GalleryAlbum } from '@/lib/data/content';
-import {
-  Avatar,
-  Badge,
-  Button,
-  ButtonLink,
-  Card,
-  CardBody,
-  EmptyState,
-  Field,
-  PageHeader,
-  Select,
-} from '@/components/ui';
-import { MarginNote } from '@/components/brand/Marks';
-import { formatDate, formatRelative } from '@/lib/format';
+import { getAlbumPhotos, getAlbums, type GalleryAlbum } from '@/lib/data/content';
+import { ButtonLink, Card, CardBody, ChipNav, EmptyState, PageHeader } from '@/components/ui';
+import { AlbumCard, parseContributor } from '@/components/content';
+import { viewerBatchYear, viewerBranch } from '@/lib/identity';
+import { mailto } from '@/lib/mailto';
+import { cn } from '@/lib/cn';
 
 /**
  * Photographs.
@@ -29,24 +19,27 @@ import { formatDate, formatRelative } from '@/lib/format';
  * Two things this page has to get right, and neither of them is the grid.
  *
  * First, the **credit**. An album of the CSE block as it stood in 2011
- * exists because one graduate went through a drawer and sent thirty-four
- * scans to the alumni cell. Their name on the card is the whole of what
- * they get for it, and it is the reason a second person does the same, so
- * the contributor is a first-class field here rather than a footnote on
- * the detail page.
+ * exists because one graduate went through a drawer and sent their scans
+ * to the office. Their name on the card is the whole of what they get for
+ * it, and it is the reason a second person does the same, so the
+ * contributor is a first-class line on every album rather than a footnote.
  *
- * Second, the **honest empty**. No photograph in this build carries an
- * image file, and a college's first month looks exactly the same — albums
- * created, files not yet uploaded. A layout that only works once the
- * pictures arrive is a layout nobody has tested, so a cover with no image
- * is drawn as a labelled tile instead of being left to the browser's
- * broken-image icon.
+ * Second, the **honest empty**. An album with no photo to show is drawn
+ * as an even, slim `CoverArt` strip carrying its year or branch, never as
+ * a large empty frame, and it states no photo count it cannot back. There
+ * is no broken-image icon and no "waiting on an upload" anywhere.
  */
 
 export const metadata: Metadata = {
-  title: 'Photographs',
-  description: 'Albums from campus events, reunions and batches, including photographs contributed by alumni.',
+  title: 'Photos',
+  description: 'Meets, convocations and batch memories, including photos sent in by graduates.',
 };
+
+/**
+ * An album with no photo of its own gets its `CoverArt` as a slim strip
+ * rather than a 3:2 picture slot: a label, not an empty frame.
+ */
+const SLIM_ART = '[&_figure>div]:aspect-[5/2]';
 
 const one = (v: string | string[] | undefined): string | undefined =>
   Array.isArray(v) ? v[0] : v;
@@ -84,247 +77,222 @@ export default async function GalleryPage({
   const everything = getAlbums();
   const albums = getAlbums({ departmentCode: branch || undefined }).filter((a) => inBatch(a, batch));
 
+  const office = pack.copy.officeName;
+  const locale = pack.locale;
+  const filtered = Boolean(branch || batch);
+
+  // Chips: All · My batch · My branch, then the years and branches that
+  // actually have an album. Each is a link, so a filtered view can be sent
+  // to a batch group as it stands.
+  const myBatch = viewerBatchYear(session);
+  const myBranch = viewerBranch(session);
   const years = [...new Set(everything.map((a) => a.batchYear).filter((y): y is number => y !== null))].sort(
     (a, b) => b - a,
   );
+  const branches = departments
+    .map((d) => d.code)
+    .filter((code) => everything.some((a) => a.departmentCode === code));
+  const href = (q: { branch?: string; batch?: string | number }) => {
+    const s = new URLSearchParams();
+    if (q.branch) s.set('branch', q.branch);
+    if (q.batch) s.set('batch', String(q.batch));
+    const qs = s.toString();
+    return qs ? `/gallery?${qs}` : '/gallery';
+  };
+  const chips = [
+    { label: 'All', href: '/gallery', active: !filtered },
+    ...(myBatch
+      ? [{ label: 'My batch', href: href({ batch: myBatch }), active: batch === String(myBatch) && !branch }]
+      : []),
+    ...(myBranch
+      ? [{ label: 'My branch', href: href({ branch: myBranch }), active: branch === myBranch && !batch }]
+      : []),
+    ...years
+      .filter((y) => y !== myBatch)
+      .map((y) => ({ label: String(y), href: href({ batch: y }), active: batch === String(y) && !branch })),
+    ...branches
+      .filter((code) => code !== myBranch)
+      .map((code) => ({ label: code, href: href({ branch: code }), active: branch === code && !batch })),
+  ];
 
-  const branchOptions = departments
-    .map((d) => ({
-      code: d.code,
-      name: d.name,
-      count: getAlbums({ departmentCode: d.code }).filter((a) => inBatch(a, batch)).length,
-    }))
-    .filter((d) => d.count > 0 || d.code === branch);
+  const coverOf = (album: GalleryAlbum): string | null =>
+    album.coverImage ?? getAlbumPhotos(album.id).find((p) => p.url)?.url ?? null;
+  // A photo count is only stated for an album that has a photo to show;
+  // otherwise the album page would promise what it cannot draw.
+  const hasPhotos = (album: GalleryAlbum): boolean => getAlbumPhotos(album.id).some((p) => p.url);
 
-  const batchOptions = years
-    .map((year) => ({
-      year,
-      count: getAlbums({ departmentCode: branch || undefined }).filter((a) => inBatch(a, String(year))).length,
-    }))
-    .filter((b) => b.count > 0 || String(b.year) === batch);
+  const creditOf = (album: GalleryAlbum): string => albumCredit(album.contributedBy, office);
 
-  const filtered = Boolean(branch || batch);
-  const photographs = albums.reduce((n, a) => n + a.photoCount, 0);
-  const contributed = everything.filter((a) => credit(a.contributedBy).byMember).length;
-  const support = pack.copy.supportEmail;
+  // The newest album leads the unfiltered page, and the next is drawn
+  // large, but only when each has a photo of its own. A large slot holding
+  // nothing but a year reads as a picture that failed to load, so an album
+  // without photos is always an even, slim tile.
+  const hero = !filtered && albums[0] && coverOf(albums[0]) ? albums[0] : null;
+  const mosaic = hero ? albums.slice(1) : albums;
+  const largeFirst = Boolean(mosaic[0] && coverOf(mosaic[0]));
+
+  const support = pack.copy.supportEmail ?? null;
+  const phoneDigits = pack.copy.supportPhone?.replace(/\D/g, '') ?? '';
+  const sendHref =
+    pack.features.whatsapp && phoneDigits
+      ? `https://wa.me/${phoneDigits}?text=${encodeURIComponent('I have photos to send in for the gallery.')}`
+      : support
+        ? mailto(support, 'Photos for the gallery', [
+            'Event or occasion:',
+            'Year:',
+            'Branch:',
+            'How I would like to be credited:',
+            '',
+          ])
+        : null;
+  const untagHref = support
+    ? mailto(support, 'Please untag me', ['Album:', 'Photo (a caption or a description):', ''])
+    : null;
+
+  const viaWhatsApp = Boolean(sendHref?.startsWith('https://'));
+  const contribute =
+    sendHref || untagHref ? (
+      <Card>
+        <CardBody className={cn('flex flex-col gap-4', !hero && 'sm:flex-row sm:items-center sm:justify-between')}>
+          <p className="flex items-start gap-3 text-md">
+            <Camera className="mt-1 size-5 shrink-0 text-muted" aria-hidden="true" />
+            <span>Have photos from your batch? Send them in and we will credit you.</span>
+          </p>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            {sendHref ? (
+              <ButtonLink
+                href={sendHref}
+                variant="secondary"
+                className="min-h-11"
+                {...(viaWhatsApp ? { target: '_blank', rel: 'noreferrer noopener' } : {})}
+              >
+                {viaWhatsApp ? (
+                  <MessageCircle className="size-4 shrink-0" aria-hidden="true" />
+                ) : (
+                  <Mail className="size-4 shrink-0" aria-hidden="true" />
+                )}
+                Send in photos
+                {viaWhatsApp ? <span className="sr-only"> (opens WhatsApp)</span> : null}
+              </ButtonLink>
+            ) : null}
+            {untagHref ? (
+              <a href={untagHref} className="link inline-flex min-h-11 items-center text-sm">
+                Ask to be untagged
+              </a>
+            ) : null}
+          </div>
+        </CardBody>
+      </Card>
+    ) : null;
 
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow={`${pack.copy.shortName} archive`}
-        title="Photographs"
-        description="Albums from meets, convocations, lab openings and sports days — and whatever graduates have sent in from their own drawers. Every album names who contributed it, because that credit is the only thing anybody gets for the trouble."
+        eyebrow="Gallery"
+        title="Photos"
+        description={`Meets, convocations and batch memories from ${pack.copy.shortName}, including photos sent in by graduates.`}
       />
 
-      <Card>
-        <CardBody>
-          <form
-            method="get"
-            action="/gallery"
-            className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end"
-          >
-            <Field
-              htmlFor="gal-branch"
-              label="Branch"
-              hint="College-wide albums stay in the list whichever branch you pick."
-            >
-              <Select id="gal-branch" name="branch" defaultValue={branch}>
-                <option value="">All branches</option>
-                {branchOptions.map((d) => (
-                  <option key={d.code} value={d.code}>
-                    {d.code} — {d.name} ({d.count})
-                  </option>
-                ))}
-              </Select>
-            </Field>
+      {/* With no photo to lead with, the way to add some leads instead. */}
+      {!hero && contribute ? contribute : null}
 
-            <Field
-              htmlFor="gal-batch"
-              label="Batch"
-              hint="Year of passing the album is about, where one has been recorded."
-            >
-              <Select id="gal-batch" name="batch" defaultValue={batch}>
-                <option value="">Every batch</option>
-                {batchOptions.map((b) => (
-                  <option key={b.year} value={String(b.year)}>
-                    {b.year} ({b.count})
-                  </option>
-                ))}
-              </Select>
-            </Field>
+      {hero ? (
+        <div className="grid grid-cols-1 gap-gutter lg:grid-cols-3 lg:items-start">
+          <AlbumCard
+            album={hero}
+            coverSrc={coverOf(hero)}
+            href={`/gallery/${hero.slug}`}
+            locale={locale}
+            credit={creditOf(hero)}
+            variant="hero"
+            showCount={hasPhotos(hero)}
+            className="lg:col-span-2"
+          />
+          {contribute ? <div className="hidden lg:block">{contribute}</div> : null}
+        </div>
+      ) : null}
 
-            <div className="flex items-center gap-2">
-              <Button type="submit">Apply</Button>
-              {filtered ? (
-                <ButtonLink href="/gallery" variant="ghost">
-                  Clear
-                </ButtonLink>
-              ) : null}
-            </div>
-          </form>
-        </CardBody>
-      </Card>
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-secondary">
-          {albums.length === 0 ? (
-            <>No albums match</>
-          ) : (
-            <>
-              <span className="tabular font-medium text-primary">{albums.length}</span>{' '}
-              {albums.length === 1 ? 'album' : 'albums'}
-              {filtered ? <> under {describeFilter(branch, batch, departments)}</> : null} ·{' '}
-              <span className="tabular">{photographs.toLocaleString('en-IN')}</span> photographs on record
-            </>
-          )}
-        </p>
-
-        {contributed > 0 ? (
-          <p className="flex items-center gap-1.5 text-xs text-muted">
-            <UserRound className="size-3.5" aria-hidden="true" />
-            {contributed} {contributed === 1 ? 'album was' : 'albums were'} sent in by graduates
-          </p>
-        ) : null}
-      </div>
+      {chips.length > 1 ? <ChipNav items={chips} ariaLabel="Filter albums" /> : null}
 
       {albums.length === 0 ? (
-        <EmptyState
-          icon={<Images className="size-5" />}
-          title={filtered ? 'Nothing filed under that yet' : 'The archive is empty so far'}
-          description={
-            filtered
-              ? 'Albums carry a branch and a batch only when the photographs are about one. Meets and convocations are filed college-wide, so widening the filter usually brings them back.'
-              : 'The alumni cell files photographs here after each meet, and graduates send in their own. Neither has happened for this college yet.'
-          }
-          action={
-            filtered ? (
-              <ButtonLink href="/gallery" variant="secondary">
+        filtered ? (
+          <EmptyState
+            variant="inline"
+            title="No albums are filed under that yet."
+            action={
+              <ButtonLink href="/gallery" variant="secondary" className="min-h-11">
                 Show every album
               </ButtonLink>
-            ) : null
-          }
-        />
-      ) : (
-        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {albums.map((album) => (
-            <li key={album.id} className="relative">
-              <AlbumCard album={album} />
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <Card>
-        <CardBody className="space-y-3">
-          <h2 className="flex items-center gap-2 font-display text-lg font-semibold">
-            <Camera className="size-4 text-muted" aria-hidden="true" />
-            Sending in your own
+            }
+          />
+        ) : (
+          <EmptyState
+            icon={<Images className="size-5" />}
+            title="No albums yet"
+            description={`The ${office} files photos here after each meet, and graduates send in their own.`}
+            action={
+              sendHref ? (
+                <ButtonLink href={sendHref} variant="secondary" className="min-h-11">
+                  Send in your photos
+                </ButtonLink>
+              ) : null
+            }
+          />
+        )
+      ) : mosaic.length > 0 ? (
+        <section aria-labelledby="albums-heading" className="space-y-3">
+          <h2 id="albums-heading" className={hero ? 'font-display text-xl font-semibold' : 'sr-only'}>
+            {hero ? 'More albums' : 'Albums'}
           </h2>
-          <p className="max-w-prose text-sm text-secondary">
-            Scans of a batch trip, a lab that has since been rebuilt, a hostel corridor at 2am before an exam — the
-            alumni cell will file them as an album under your name and your batch. Write to{' '}
-            {support ? (
-              <a href={`mailto:${support}`} className="link">
-                {support}
-              </a>
-            ) : (
-              <span className="font-medium text-primary">the alumni cell</span>
-            )}{' '}
-            with the year and the branch, and somebody will come back to you before anything goes live.
-          </p>
-          <MarginNote className="max-w-prose border-t border-line pt-3">
-            A contributed album is reviewed before it appears, and whoever reviews it tells you what was decided
-            either way. Tagging somebody in a photograph is a link to their profile and releases none of their
-            contact details; anyone can ask to be untagged, and it is done without an argument.
-          </MarginNote>
-        </CardBody>
-      </Card>
+          <ul className="grid grid-flow-row-dense grid-cols-2 gap-x-4 gap-y-6 lg:grid-cols-3 xl:grid-cols-4">
+            {mosaic.map((album, i) => {
+              const large = i === 0 && largeFirst;
+              return (
+                <li key={album.id} className={large ? 'col-span-2 min-w-0 lg:row-span-2' : 'min-w-0'}>
+                  <AlbumCard
+                    album={album}
+                    coverSrc={coverOf(album)}
+                    href={`/gallery/${album.slug}`}
+                    locale={locale}
+                    credit={creditOf(album)}
+                    variant={large ? 'large' : 'tile'}
+                    showCount={hasPhotos(album)}
+                    className={coverOf(album) ? undefined : SLIM_ART}
+                  />
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
+
+      {hero && contribute ? <div className="lg:hidden">{contribute}</div> : null}
     </div>
-  );
-}
-
-// ---------------------------------------------------------------
-// Card
-// ---------------------------------------------------------------
-
-function AlbumCard({ album }: { album: GalleryAlbum }) {
-  const by = credit(album.contributedBy);
-
-  return (
-    <Card as="article" interactive className="flex h-full flex-col overflow-hidden">
-      <div className="relative aspect-[3/2] border-b border-line bg-surface-sunken">
-        {album.coverImage ? (
-          // College- and member-supplied storage URLs; see next.config.ts on
-          // why brand and archive imagery bypasses the image optimiser.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={album.coverImage} alt="" className="size-full object-cover" loading="lazy" />
-        ) : (
-          <div className="flex size-full flex-col items-center justify-center gap-1.5 p-4 text-center">
-            <ImageOff className="size-6 text-muted" aria-hidden="true" />
-            <p className="text-xs font-medium text-secondary">No cover picked yet</p>
-            <p className="text-xs text-muted">
-              <span className="tabular">{album.photoCount.toLocaleString('en-IN')}</span> photographs waiting on
-              an upload
-            </p>
-          </div>
-        )}
-
-        <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
-          <Badge tone={album.departmentCode ? 'brand' : 'outline'}>{album.departmentCode ?? 'All branches'}</Badge>
-          {album.batchYear ? <Badge tone="neutral">Batch of {album.batchYear}</Badge> : null}
-        </div>
-      </div>
-
-      <CardBody className="flex min-w-0 flex-1 flex-col gap-2.5">
-        <h2 className="font-display text-lg font-semibold leading-snug">
-          <Link href={`/gallery/${album.slug}`} className="link-quiet after:absolute after:inset-0">
-            {album.title}
-          </Link>
-        </h2>
-
-        {album.description ? (
-          <p className="line-clamp-3 text-sm text-secondary">{album.description}</p>
-        ) : (
-          <p className="text-sm text-muted">
-            Nobody wrote a description for this one. The photographs are still there.
-          </p>
-        )}
-
-        <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-secondary">
-          <span className="inline-flex items-center gap-1.5">
-            <Images className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
-            <span className="tabular">{album.photoCount.toLocaleString('en-IN')}</span> photographs
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <CalendarDays className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
-            {formatDate(album.takenOn)}
-          </span>
-          {album.eventSlug ? (
-            <span className="inline-flex items-center gap-1.5">
-              <Ticket className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
-              Tied to an event
-            </span>
-          ) : null}
-        </p>
-
-        <div className="mt-auto flex items-center gap-2.5 border-t border-line pt-3">
-          <Avatar name={by.name} size="xs" />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-medium">{by.name}</p>
-            <p className="truncate text-xs text-muted">
-              {by.byMember ? by.line : 'College record'} · {formatRelative(album.takenOn)}
-            </p>
-          </div>
-          {by.byMember ? <Badge tone="accent">Contributed</Badge> : null}
-        </div>
-      </CardBody>
-    </Card>
   );
 }
 
 // ---------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------
+
+/**
+ * One line of credit. A graduate's own album reads "Sent in by Sandeep
+ * Kolli · CSE ’15"; the office's reads "Posted by the alumni cell"; any
+ * other college body is named as it named itself.
+ */
+function albumCredit(contributedBy: string | null, office: string): string {
+  const who = credit(contributedBy);
+  const member = parseContributor(contributedBy);
+  if (who.byMember && member) {
+    return `Sent in by ${member.name} · ${member.branch} ’${String(member.year).slice(-2)}`;
+  }
+  if (!contributedBy || contributedBy.trim().toLowerCase() === office.trim().toLowerCase()) {
+    return `Posted by the ${office}`;
+  }
+  const body = contributedBy.trim();
+  const needsThe = !/^the\b/i.test(body) && /\b(department|office|cell|club|committee|society|association|council)\b/i.test(body);
+  return `Posted by ${needsThe ? 'the ' : ''}${body}`;
+}
 
 /**
  * Who contributed an album, and whether that was a member.
@@ -359,15 +327,4 @@ function pickBranch(raw: string | undefined, codes: string[]): string {
 function pickBatch(raw: string | undefined): string {
   const value = raw?.trim() ?? '';
   return /^(19|20)\d{2}$/.test(value) ? value : '';
-}
-
-function describeFilter(
-  branch: string,
-  batch: string,
-  departments: Array<{ code: string; name: string }>,
-): string {
-  const parts: string[] = [];
-  if (branch) parts.push(departments.find((d) => d.code === branch)?.name ?? branch);
-  if (batch) parts.push(`the batch of ${batch}`);
-  return parts.join(' and ');
 }

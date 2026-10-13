@@ -1,6 +1,6 @@
 import { cache } from 'react';
 import { IS_FIXTURE } from '../config';
-import { BrandPack, type BrandPackInput, type DeepPartial } from './pack';
+import type { BrandPack, BrandPackInput, DeepPartial } from './pack';
 import { resolvePack, PACKS, housePack } from './registry';
 import {
   buildTokens,
@@ -42,13 +42,23 @@ export function invalidateBranding(tenantId?: string): void {
   else store.clear();
 }
 
+/**
+ * The schema already refuses every value that could close the element.
+ * This is the second lock, on the sink itself: the string goes into a
+ * `<style>` via `dangerouslySetInnerHTML`, and nothing that reaches it by
+ * a path nobody thought of may end that element early.
+ */
+export function safeForStyleElement(css: string): string {
+  return css.replace(/<\/(style)/gi, '<\\/$1').replace(/<!--/g, '<\\!--');
+}
+
 function assemble(tenantId: string, pack: BrandPack): ResolvedBrand {
   const tokens = buildTokens(pack);
   return {
     tenantId,
     pack,
     tokens,
-    css: fontFaceCss(pack) + tokensToCss(tokens),
+    css: safeForStyleElement(fontFaceCss(pack) + tokensToCss(tokens)),
     fontHref: googleFontsHref(pack),
   };
 }
@@ -56,17 +66,19 @@ function assemble(tenantId: string, pack: BrandPack): ResolvedBrand {
 /**
  * Read the saved overrides for a tenant.
  *
- * Branding is tenant *configuration*, not member data, so it is read
- * outside RLS: the tenant is already resolved from the request host by
- * this point, and the layout needs colours before any session exists.
+ * Branding is tenant *configuration*, not member data, but `tenant_branding`
+ * is still under row-level security like every other tenant table - so it
+ * is read through `withTenant`. The tenant is already resolved from the
+ * request host by this point, which is all the context that needs, and the
+ * layout can read it before any session exists.
  */
 async function savedOverrides(
   tenantId: string,
 ): Promise<{ packId: string | null; patch: DeepPartial<BrandPackInput> | null }> {
   if (IS_FIXTURE) return { packId: null, patch: null };
 
-  const { prisma } = await import('../db/client');
-  const row = await prisma.tenantBranding.findUnique({ where: { tenantId } });
+  const { withTenant } = await import('../db/client');
+  const row = await withTenant(tenantId, (tx) => tx.tenantBranding.findUnique({ where: { tenantId } }));
   if (!row) return { packId: null, patch: null };
 
   return {

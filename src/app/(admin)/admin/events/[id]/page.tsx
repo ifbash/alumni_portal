@@ -1,40 +1,44 @@
+import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
-import { CalendarDays, MapPin, Ticket, Users, UserCheck, IndianRupee, ScanLine } from 'lucide-react';
+import { ArrowLeft, DoorOpen, Eye, HandHeart, ImagePlus, Send } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
 import { can, canInDepartment, require as requireCap } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
 import { getEvents, getEventRegistrations, getDepartments, getMembersForAdmin } from '@/lib/data/repo';
+import { getAlbumPhotos, getAlbums } from '@/lib/data/content';
+import type { EventItem } from '@/lib/data/types';
 import {
-  PageHeader,
-  Breadcrumbs,
-  Alert,
   Badge,
+  Breadcrumbs,
+  ButtonLink,
   Card,
+  CardBody,
   CardHeader,
   CardTitle,
-  CardDescription,
-  CardBody,
-  Stat,
-  Progress,
+  CopyButton,
+  DateTile,
   DetailRow,
-  Section,
-  ButtonLink,
+  MediaFrame,
 } from '@/components/ui';
-import { ProportionBar } from '@/components/charts';
-import {
-  formatDateRange,
-  formatRelative,
-  formatCurrency,
-  formatCompactINR,
-  formatDate,
-  formatPercent,
-} from '@/lib/format';
-import { CheckInPanel } from './CheckInPanel';
+import { AlbumCard, SeatBadge, eventMetaLine, parseContributor } from '@/components/content';
+import { daysUntil, formatCompactINR, formatCurrency, formatDate, formatDateRange, formatPercent } from '@/lib/format';
+import { seatStatus } from '@/lib/event-status';
+import { eventShareText } from '@/lib/share-text';
+import { siteOrigin } from '@/lib/share';
+import { CheckInPanel, EventActionsMenu, type EventMenuItem } from './CheckInPanel';
 
-export const metadata = { title: 'Event roster' };
+export const metadata = { title: 'Event · Staff console' };
 
-export default async function AdminEventPage({ params }: { params: Promise<{ id: string }> }) {
+const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+
+export default async function AdminEventPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const session = await getSession();
   if (!session) redirect('/login');
 
@@ -54,7 +58,16 @@ export default async function AdminEventPage({ params }: { params: Promise<{ id:
 
   const isPast = getEvents(session, { when: 'past', includeDrafts: true }).some((e) => e.id === event.id);
   const manageable = wide || canInDepartment(session, 'event.create.department', event.departmentCode);
+  // The roster - names, batch years, what each person paid - belongs to the
+  // people who run the event. An HOD of another branch gets the same 404 as
+  // for an event that does not exist. A college-wide event (no department)
+  // stays open to every HOD, as before.
+  if (!manageable && event.departmentCode !== null) notFound();
   const checkInAllowed = can(session, 'event.checkin');
+
+  const pack = resolved.brand.pack;
+  const locale = pack.locale;
+  const timing = { locale: locale.locale, timeZone: locale.timeZone, currency: locale.currency };
 
   const departments = getDepartments();
   const deptName = event.departmentCode
@@ -80,280 +93,307 @@ export default async function AdminEventPage({ params }: { params: Promise<{ id:
     }
   }
 
+  // Dates are formatted here, on the server, in the college's time zone,
+  // so the client desk renders exactly the strings the server sent.
   const rows = registrations.map((r) => ({
     id: r.id,
     memberName: r.memberName,
     batchYear: r.batchYear,
     rollNumber: rollById.get(r.memberId) ?? null,
     guests: r.guests,
-    amountLabel: r.amountPaid > 0 ? formatCurrency(r.amountPaid) : 'Free',
+    amountLabel: r.amountPaid > 0 ? formatCurrency(r.amountPaid, timing) : 'Free',
     checkedIn: Boolean(r.checkedInAt),
-    checkedInLabel: r.checkedInAt ? formatDate(r.checkedInAt) : null,
-    registeredOn: formatDate(r.createdAt),
+    checkedInLabel: r.checkedInAt ? formatDate(r.checkedInAt, timing) : null,
+    registeredOn: formatDate(r.createdAt, timing),
   }));
+
+  const sp = await searchParams;
+  const upcoming = !isPast && event.published;
+  const door = upcoming && one(sp.mode) === 'door';
+
+  const origin = await siteOrigin();
+  const shareText = `${eventShareText(pack, event)} ${origin}/events/${event.slug}`;
+  const canInvite =
+    can(session, 'comms.send.all') || can(session, 'comms.send.segment') || can(session, 'comms.send.department');
+  const canAlbum = manageable && pack.features.gallery && can(session, 'event.create.any');
+  const officeName = pack.copy.officeName;
+
+  const rosterNote =
+    upcoming && registrations.length < event.registeredCount
+      ? `The roster lists ${registrations.length.toLocaleString('en-IN')} of ${event.registeredCount.toLocaleString('en-IN')} registrations.`
+      : null;
+
+  const desk = (
+    <CheckInPanel
+      eventTitle={event.title}
+      rows={rows}
+      canCheckIn={checkInAllowed}
+      showRoll={showRoll}
+      isPast={isPast}
+      door={door}
+      rosterNote={rosterNote}
+      officeName={officeName}
+      collapsed={isPast}
+    />
+  );
+
+  // ---------------------------------------------------------------
+  // Door mode: the desk and nothing else.
+  // ---------------------------------------------------------------
+
+  if (door) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="font-display text-xl font-semibold leading-snug">{event.title}</h1>
+            <p className="truncate text-sm text-secondary">{eventMetaLine(event, locale)}</p>
+          </div>
+          <ButtonLink href={`/admin/events/${event.id}`} variant="secondary" size="sm" className="min-h-11 shrink-0 sm:min-h-0">
+            <ArrowLeft className="size-4" aria-hidden="true" />
+            <span className="sr-only sm:not-sr-only">Leave door mode</span>
+            <span className="sm:hidden">Exit</span>
+          </ButtonLink>
+        </div>
+        {desk}
+      </div>
+    );
+  }
+
+  // ---------------------------------------------------------------
+  // The event page
+  // ---------------------------------------------------------------
+
+  const seats = seatStatus(event);
+  const days = daysUntil(event.startsAt, locale.timeZone);
+
+  const status = !event.published ? (
+    <Badge tone="neutral">Draft</Badge>
+  ) : isPast ? (
+    <Badge tone="neutral">Finished</Badge>
+  ) : seats.full ? (
+    <SeatBadge event={event} audience="organiser" />
+  ) : days === 0 ? (
+    <Badge tone="brand" dot>
+      Today
+    </Badge>
+  ) : (
+    <Badge tone="brand" dot>
+      Registration open
+    </Badge>
+  );
+
+  const seatLine = seats.capped
+    ? seats.full
+      ? null
+      : `${event.registeredCount.toLocaleString('en-IN')} of ${seats.capacity!.toLocaleString('en-IN')} seats taken`
+    : `${event.registeredCount.toLocaleString('en-IN')} registered · no seat limit`;
+
+  const inviteHref = inviteLink(event, can(session, 'directory.search.students'));
+  const album = getAlbums({ includeDrafts: true }).find((a) => a.eventSlug === event.slug) ?? null;
+
+  const menu: EventMenuItem[] = canAlbum && !album
+    ? [{ kind: 'link', label: 'Create album', href: `/admin/gallery/new?event=${event.slug}`, icon: 'album' }]
+    : [];
+  if (isPast && event.published) menu.push({ kind: 'copy', label: 'Copy for WhatsApp', text: shareText });
+
+  const money = (n: number) => formatCompactINR(n);
+
+  const details = (
+    <Card>
+      <CardHeader>
+        <CardTitle as="h2" className="text-md">
+          Details
+        </CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-3 pt-3">
+        {event.description ? <p className="text-sm leading-relaxed text-secondary">{event.description}</p> : null}
+        <dl className="divide-y divide-line">
+          <DetailRow className="grid-cols-[7rem_1fr]" label="When">
+            {formatDateRange(event.startsAt, event.endsAt, timing)}
+          </DetailRow>
+          <DetailRow className="grid-cols-[7rem_1fr]" label="Where">
+            {event.venue ?? 'Not set'}
+          </DetailRow>
+          <DetailRow className="grid-cols-[7rem_1fr]" label="Branch">
+            {deptName}
+          </DetailRow>
+          <DetailRow className="grid-cols-[7rem_1fr]" label="Audience">
+            {event.alumniOnly ? 'Alumni only' : event.studentEligible ? 'Alumni and final-year students' : 'Alumni'}
+          </DetailRow>
+          <DetailRow className="grid-cols-[7rem_1fr]" label="Ticket">
+            {event.ticketPrice > 0 ? formatCurrency(event.ticketPrice, timing) : 'Free'}
+          </DetailRow>
+          {guests > 0 ? (
+            <DetailRow className="grid-cols-[7rem_1fr]" label="Guests">
+              <span className="tabular">{guests.toLocaleString('en-IN')}</span> on the roster
+            </DetailRow>
+          ) : null}
+          {event.ticketPrice > 0 ? (
+            <>
+              <DetailRow className="grid-cols-[7rem_1fr]" label="Collected">
+                <span className="tabular">{money(collected)}</span>
+                <span className="block text-xs font-normal text-secondary">From the roster</span>
+              </DetailRow>
+              <DetailRow className="grid-cols-[7rem_1fr]" label="At full list">
+                <span className="tabular">{money(expected)}</span>
+                <span className="block text-xs font-normal text-secondary">
+                  {event.registeredCount.toLocaleString('en-IN')} registrations
+                </span>
+              </DetailRow>
+            </>
+          ) : null}
+        </dl>
+      </CardBody>
+    </Card>
+  );
+
+  const recap = isPast ? (
+    <Card>
+      <CardHeader>
+        <CardTitle as="h2">How it went</CardTitle>
+      </CardHeader>
+      <CardBody className={album ? 'grid gap-6 sm:grid-cols-[minmax(0,1fr)_13rem]' : 'space-y-6'}>
+        <div className="min-w-0 space-y-6">
+          {registrations.length ? (
+            <dl className="grid grid-cols-3 gap-4">
+              <div>
+                <dt className="text-sm text-secondary">Arrived</dt>
+                <dd className="mt-1">
+                  <span className="font-display text-display-xs font-bold tabular">{checkedIn}</span>{' '}
+                  <span className="text-sm text-secondary">
+                    of {registrations.length} · {formatPercent(checkedIn / registrations.length)}
+                  </span>
+                </dd>
+              </div>
+              <div>
+                <dt className="text-sm text-secondary">Did not arrive</dt>
+                <dd className="mt-1 font-display text-display-xs font-bold tabular">{registrations.length - checkedIn}</dd>
+              </div>
+              <div>
+                <dt className="text-sm text-secondary">Guests</dt>
+                <dd className="mt-1 font-display text-display-xs font-bold tabular">{guests}</dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="text-sm text-secondary">Nobody was on the roster for this event.</p>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            {canInvite ? (
+              <ButtonLink href={`/admin/comms/new?event=${event.slug}&channel=whatsapp-draft`}>
+                <HandHeart className="size-4" aria-hidden="true" />
+                Thank the people who came
+              </ButtonLink>
+            ) : null}
+            {!album && canAlbum ? (
+              <ButtonLink href={`/admin/gallery/new?event=${event.slug}`} variant="secondary">
+                <ImagePlus className="size-4" aria-hidden="true" />
+                Create the album for this event
+              </ButtonLink>
+            ) : null}
+          </div>
+        </div>
+        {album ? (
+          <div className="min-w-0">
+            <AlbumCard
+              album={album}
+              coverSrc={album.coverImage ?? getAlbumPhotos(album.id).find((p) => p.url)?.url ?? null}
+              href={album.published ? `/gallery/${album.slug}` : '/admin/gallery?view=review'}
+              locale={locale}
+              credit={albumCredit(album.contributedBy, officeName)}
+              state={album.published ? undefined : <Badge tone="neutral">Not published</Badge>}
+            />
+          </div>
+        ) : null}
+
+      </CardBody>
+    </Card>
+  ) : null;
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        breadcrumbs={
-          <Breadcrumbs
-            items={[
-              { label: 'Admin', href: '/admin' },
-              { label: 'Events', href: '/admin/events' },
-              { label: event.title },
-            ]}
-          />
-        }
-        eyebrow={event.published ? 'Published' : 'Draft'}
-        title={event.title}
-        description={event.description ?? 'No description was written for this event.'}
-        actions={
-          <ButtonLink href="/admin/events" variant="secondary">
-            All events
-          </ButtonLink>
-        }
-      />
-
-      {!event.published ? (
-        <Alert tone="warning" title="This is a draft">
-          <p>
-            Members cannot see it, cannot register for it and will not be reminded about it. Nothing below is a real
-            roster yet: registration opens only once the event is published, and the counters stay at nought until
-            then.
-          </p>
-        </Alert>
-      ) : null}
-
-      {!manageable ? (
-        <Alert tone="info" title="Read-only for you">
-          <p>
-            This event is scoped to {deptName}, which is outside your <code className="font-mono text-xs">event.create.department</code>{' '}
-            grant. You can read the roster; changing the event belongs to whoever owns that scope.
-          </p>
-        </Alert>
-      ) : null}
-
-      {event.published && registrations.length < event.registeredCount ? (
-        <Alert tone="warning" title="The roster is shorter than the registration counter">
-          <p>
-            The event records{' '}
-            <strong className="tabular">{event.registeredCount.toLocaleString('en-IN')}</strong> registrations, but{' '}
-            <strong className="tabular">{registrations.length.toLocaleString('en-IN')}</strong> rows are on file. The
-            check-in desk can only find the rows it has — reconcile before the doors open, or {event.registeredCount - registrations.length}{' '}
-            people arrive holding a confirmation nobody can match.
-          </p>
-        </Alert>
-      ) : null}
-
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <Stat
-              label="Registered"
-              value={event.registeredCount.toLocaleString('en-IN')}
-              hint={event.capacity ? `of ${event.capacity.toLocaleString('en-IN')} seats` : 'No capacity set'}
-              icon={<Users className="size-4" />}
-            />
-            <Stat
-              label="Guests on file"
-              value={guests.toLocaleString('en-IN')}
-              hint="Seats beyond the registrant"
-            />
-            <Stat
-              label="Collected"
-              value={formatCompactINR(collected)}
-              hint={
-                event.ticketPrice > 0
-                  ? `${formatCurrency(collected)} across ${registrations.length} rows`
-                  : 'Free event — nothing to collect'
-              }
-              icon={<IndianRupee className="size-4" />}
-            />
-            <Stat
-              label="Checked in"
-              value={`${checkedIn} / ${registrations.length}`}
-              hint={
-                registrations.length
-                  ? `${formatPercent(checkedIn / registrations.length)} of the roster`
-                  : 'Nobody has registered'
-              }
-              icon={<UserCheck className="size-4" />}
-            />
+      <header className="space-y-4">
+        <Breadcrumbs
+          items={[
+            { label: 'Staff console', href: '/admin' },
+            { label: 'Events', href: '/admin/events' },
+            { label: event.title },
+          ]}
+        />
+        {event.coverImage ? <MediaFrame src={event.coverImage} alt="" aspect="21/9" loading="eager" /> : null}
+        <div className="flex items-start gap-4">
+          {event.coverImage ? null : (
+            <DateTile iso={event.startsAt} locale={locale.locale} timeZone={locale.timeZone} size="lg" />
+          )}
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <p className="text-xs font-semibold uppercase tracking-wider text-brand-fg">Events</p>
+            <h1 className="font-display text-display-xs font-bold">{event.title}</h1>
+            <p className="text-sm text-secondary">{eventMetaLine(event, locale)}</p>
+            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+              {status}
+              {event.alumniOnly ? <Badge tone="accent">Alumni only</Badge> : null}
+              {seatLine && event.published ? <span className="text-sm text-secondary">{seatLine}</span> : null}
+            </div>
           </div>
-
-          <CheckInPanel
-            eventTitle={event.title}
-            rows={rows}
-            canCheckIn={checkInAllowed}
-            showRoll={showRoll}
-            isPast={isPast}
-          />
         </div>
 
-        <aside className="space-y-6">
-          <Card>
-            <CardHeader>
-              <div className="min-w-0 space-y-1">
-                <CardTitle as="h2">Event detail</CardTitle>
-                <CardDescription>{formatRelative(event.startsAt)}</CardDescription>
-              </div>
-              <Badge tone={event.published ? 'success' : 'warning'} dot>
-                {event.published ? 'Published' : 'Draft'}
-              </Badge>
-            </CardHeader>
-            <CardBody>
-              <dl className="divide-y divide-line">
-                <DetailRow label="When">
-                  <span className="flex items-start gap-2">
-                    <CalendarDays className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-                    {formatDateRange(event.startsAt, event.endsAt)}
-                  </span>
-                </DetailRow>
-                <DetailRow label="Venue">
-                  <span className="flex items-start gap-2">
-                    <MapPin className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-                    {event.venue ?? 'Not set'}
-                  </span>
-                </DetailRow>
-                <DetailRow label="Branch">{deptName}</DetailRow>
-                <DetailRow label="Audience">
-                  {event.alumniOnly
-                    ? 'Alumni only — students cannot see or register for this'
-                    : event.studentEligible
-                      ? 'Alumni and students'
-                      : 'Alumni'}
-                </DetailRow>
-                <DetailRow label="Ticket">
-                  <span className="flex items-center gap-2">
-                    <Ticket className="size-4 shrink-0 text-muted" aria-hidden="true" />
-                    {event.ticketPrice > 0 ? formatCurrency(event.ticketPrice) : 'Free'}
-                  </span>
-                </DetailRow>
-                <DetailRow label="Capacity">
-                  {event.capacity ? event.capacity.toLocaleString('en-IN') : 'No cap'}
-                </DetailRow>
-              </dl>
-            </CardBody>
-          </Card>
+        {event.published ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {upcoming && checkInAllowed ? (
+              <ButtonLink href={`/admin/events/${event.id}?mode=door`} className="min-h-11 sm:min-h-0">
+                <DoorOpen className="size-4" aria-hidden="true" />
+                Door mode
+              </ButtonLink>
+            ) : null}
+            {upcoming && canInvite ? (
+              <ButtonLink href={inviteHref} variant="secondary" className="min-h-11 sm:min-h-0">
+                <Send className="size-4" aria-hidden="true" />
+                Invite people
+              </ButtonLink>
+            ) : null}
+            {upcoming ? <CopyButton text={shareText} label="Copy for WhatsApp" copiedLabel="Copied for WhatsApp" /> : null}
+            <ButtonLink href={`/events/${event.slug}`} variant="ghost" className="min-h-11 sm:min-h-0">
+              <Eye className="size-4" aria-hidden="true" />
+              View as member
+            </ButtonLink>
+            {menu.length ? <EventActionsMenu label="More actions for this event" items={menu} /> : null}
+          </div>
+        ) : (
+          <p className="text-sm text-secondary">
+            Members cannot see this event until it is published.{' '}
+            {menu.length ? (
+              <Link href={`/admin/gallery/new?event=${event.slug}`} className="link">
+                Create its album
+              </Link>
+            ) : null}
+          </p>
+        )}
+      </header>
 
-          <Card>
-            <CardHeader>
-              <div className="min-w-0 space-y-1">
-                <CardTitle as="h2">Seats</CardTitle>
-                <CardDescription>
-                  {event.capacity
-                    ? `${event.registeredCount.toLocaleString('en-IN')} of ${event.capacity.toLocaleString('en-IN')} taken`
-                    : 'No capacity was set for this event'}
-                </CardDescription>
-              </div>
-            </CardHeader>
-            <CardBody className="space-y-4">
-              {event.capacity ? (
-                <>
-                  <Progress
-                    value={event.registeredCount}
-                    max={event.capacity}
-                    tone={
-                      event.registeredCount >= event.capacity
-                        ? 'danger'
-                        : event.registeredCount / event.capacity >= 0.9
-                          ? 'warning'
-                          : 'brand'
-                    }
-                    label={`${event.registeredCount} of ${event.capacity} seats taken`}
-                  />
-                  <ProportionBar
-                    label="Seats taken against capacity"
-                    segments={[
-                      { label: 'Registered', value: event.registeredCount, tone: 'brand' },
-                      {
-                        label: 'Free seats',
-                        value: Math.max(0, event.capacity - event.registeredCount),
-                        tone: 'neutral',
-                      },
-                    ]}
-                  />
-                  {event.registeredCount >= event.capacity ? (
-                    <p className="text-sm text-danger-fg">
-                      Full. Registration is closed on the members&rsquo; side; raise the capacity if the venue can take
-                      more.
-                    </p>
-                  ) : null}
-                </>
-              ) : (
-                <p className="text-sm text-secondary">
-                  An uncapped event never turns anyone away, which is right for an online panel and wrong for a hall
-                  with 120 chairs. Set a capacity if the venue has one.
-                </p>
-              )}
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <div className="min-w-0 space-y-1">
-                <CardTitle as="h2">Ticket income</CardTitle>
-                <CardDescription>
-                  {event.ticketPrice > 0 ? 'Against the rows on file' : 'This event is free'}
-                </CardDescription>
-              </div>
-            </CardHeader>
-            <CardBody>
-              {event.ticketPrice > 0 ? (
-                <dl className="divide-y divide-line">
-                  <DetailRow label="Ticket price">{formatCurrency(event.ticketPrice)}</DetailRow>
-                  <DetailRow label="Collected">
-                    <span className="tabular">{formatCurrency(collected)}</span>
-                  </DetailRow>
-                  <DetailRow label="Expected at full roster">
-                    <span className="tabular">{formatCurrency(expected)}</span>
-                  </DetailRow>
-                </dl>
-              ) : (
-                <p className="text-sm text-secondary">
-                  Nothing is collected for this event, so there is nothing to reconcile against the gateway.
-                </p>
-              )}
-            </CardBody>
-          </Card>
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <div className="min-w-0 space-y-6">
+          {recap}
+          {desk}
+        </div>
+        <aside aria-label="Event details" className="min-w-0">
+          {details}
         </aside>
       </div>
-
-      {isPast ? (
-        <Section
-          title="After the event"
-          description="Attendance is the only figure that tells you whether the invitation worked."
-        >
-          <Card>
-            <CardBody className="grid gap-4 sm:grid-cols-3">
-              <div>
-                <p className="text-sm text-secondary">Turnout against the roster</p>
-                <p className="mt-1 font-display text-display-xs font-bold tabular">
-                  {registrations.length ? formatPercent(checkedIn / registrations.length) : '—'}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-secondary">Did not arrive</p>
-                <p className="mt-1 font-display text-display-xs font-bold tabular">
-                  {registrations.length - checkedIn}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-secondary">Guests brought</p>
-                <p className="mt-1 font-display text-display-xs font-bold tabular">{guests}</p>
-              </div>
-            </CardBody>
-          </Card>
-        </Section>
-      ) : (
-        <Alert tone="neutral" title="Check-in opens at the door" icon={<ScanLine className="size-4" />}>
-          <p>
-            The desk searches this roster by name{showRoll ? ' or roll number' : ' or batch'} and marks people
-            attended one at a time. Nothing about a registration can be edited from here — a wrong name is a profile
-            correction, not a check-in.
-          </p>
-        </Alert>
-      )}
     </div>
   );
+}
+
+/** The composer, with the audience this event is for. */
+function inviteLink(e: EventItem, canReachStudents: boolean): string {
+  const qs = new URLSearchParams({ event: e.slug });
+  if (e.alumniOnly || !e.studentEligible || !canReachStudents) qs.set('cohort', 'alumni');
+  if (e.departmentCode) qs.set('department', e.departmentCode);
+  return `/admin/comms/new?${qs.toString()}`;
+}
+
+function albumCredit(contributedBy: string | null, officeName: string): string {
+  const who = parseContributor(contributedBy);
+  if (who) return `Sent in by ${who.name.split(/\s+/)[0]} · ${who.branch} ’${String(who.year).slice(-2)}`;
+  return contributedBy ? `By ${contributedBy}` : `By the ${officeName}`;
 }

@@ -1,32 +1,17 @@
 import { redirect } from 'next/navigation';
-import { CalendarCheck2, GraduationCap, History, Mail, ScrollText, ShieldAlert } from 'lucide-react';
+import { CalendarCheck2, History } from 'lucide-react';
 
-import {
-  Alert,
-  Badge,
-  Card,
-  CardBody,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  DetailRow,
-  PageHeader,
-  Section,
-  Stat,
-} from '@/components/ui';
+import { Breadcrumbs, PageHeader, Section, TrustChip } from '@/components/ui';
+import { Crest } from '@/components/brand/Crest';
 import { getSession, getSessionMember } from '@/lib/auth/session';
-import { require as requireCap } from '@/lib/auth/guard';
-import { getDepartments, getMembersForAdmin, searchDegreeRegister } from '@/lib/data/repo';
-import { formatDate, formatNumber } from '@/lib/format';
+import { can, require as requireCap } from '@/lib/auth/guard';
+import { getTenantBrand } from '@/lib/tenant';
+import { canOpen } from '@/lib/navigation';
+import { getAuditLog, getDepartments, getMembersForAdmin, searchDegreeRegister } from '@/lib/data/repo';
+import { formatDate } from '@/lib/format';
 import { RolloverRunner, type BatchPreview } from './RolloverRunner';
 
-export const metadata = { title: 'Annual rollover' };
-
-/** Previous runs. Kept visible because a rollover is a once-a-year action nobody remembers doing. */
-const PAST_RUNS = [
-  { year: 2025, at: '2025-09-12T10:20:00+05:30', moved: 198, actor: 'Dr. Padmaja Vemulapalli' },
-  { year: 2024, at: '2024-09-04T15:05:00+05:30', moved: 211, actor: 'Dr. Padmaja Vemulapalli' },
-];
+export const metadata = { title: 'Annual rollover · Staff console' };
 
 export default async function RolloverPage() {
   const session = await getSession();
@@ -34,6 +19,10 @@ export default async function RolloverPage() {
   requireCap(session, 'rollover.execute');
 
   const { member } = await getSessionMember();
+  const resolved = await getTenantBrand();
+  if (!resolved) redirect('/login');
+  const pack = resolved.brand.pack;
+  const fmt = { locale: pack.locale.locale, timeZone: pack.locale.timeZone };
   const departments = getDepartments();
 
   const students = getMembersForAdmin({ status: 'active_student', perPage: 5000 }).items;
@@ -41,13 +30,14 @@ export default async function RolloverPage() {
   // Roll numbers the examinations branch has actually supplied. A student
   // whose roll is not in the register still rolls over — they are simply
   // marked as verified by the rollover rather than by the register, and
-  // the alumni cell can re-verify once the batch file lands.
+  // re-linked once the batch file lands.
   const registerRolls = new Set(
     searchDegreeRegister('', { perPage: 100000 }).items.map((r) => r.rollNumber.toUpperCase()),
   );
 
   const years = [...new Set(students.map((s) => s.batchYear).filter((y): y is number => y !== null))].sort();
 
+  // Counts only: no names, rolls or addresses leave the server for the runner.
   const batches: BatchPreview[] = years.map((year) => {
     const cohort = students.filter((s) => s.batchYear === year);
 
@@ -67,156 +57,60 @@ export default async function RolloverPage() {
           name: departments.find((d) => d.code === code)?.name ?? 'Branch not recorded',
           count,
         })),
-      // Every student account is on a college mailbox that is deactivated
-      // shortly after they leave. This is the single biggest cause of a
-      // dead alumni list, and the rollover is the last moment anyone can
-      // do something about it.
-      collegeEmailOnly: cohort.filter((s) => (s.contact?.email ?? '').toLowerCase().endsWith('@diet.ac.in')).length,
       withRegisterRow: cohort.filter((s) => s.rollNumber && registerRolls.has(s.rollNumber.toUpperCase())).length,
-      sample: cohort.slice(0, 8).map((s) => ({
-        name: s.fullName,
-        roll: s.rollNumber ?? '—',
-        department: s.departmentCode ?? '—',
-      })),
     };
   });
 
-  const nextBatch = batches[0] ?? null;
+  // Past runs come from the audit log, and only for somebody who can read it.
+  const canAudit = can(session, 'audit.read');
+  const history = canAudit ? getAuditLog({ action: 'rollover.execute' }) : null;
 
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Identity"
+        breadcrumbs={<Breadcrumbs items={[{ label: 'Staff console', href: '/admin' }, { label: 'Annual rollover' }]} />}
+        eyebrow="People and records"
         title="Annual rollover"
-        description="Moves a graduating batch from student to alumnus. One batch at a time, triggered by a person, previewed before it runs, and written to the audit log with the before and after snapshot."
+        description="Moves a graduating batch from final year to alumni, once their results are out."
+        meta={<TrustChip icon={<CalendarCheck2 />}>Never runs on its own</TrustChip>}
       />
 
-      <Alert tone="warning" title="This never runs on its own" icon={<ShieldAlert className="size-4" />}>
-        <p>
-          There is no scheduled job and no trigger tied to a date. A rollover happens when a college admin runs it,
-          after the results are out and the batch has actually graduated — which in Andhra Pradesh is rarely the month
-          anyone expects. Running it early turns final-years into alumni, which changes what they can see, how many
-          people they may contact, and whether the giving module appears for them.
-        </p>
-      </Alert>
-
-      <div className="grid gap-gutter sm:grid-cols-2 xl:grid-cols-4">
-        <Stat
-          label="Students on the portal"
-          value={formatNumber(students.length)}
-          hint={`${batches.length} batch${batches.length === 1 ? '' : 'es'} present`}
-          icon={<GraduationCap className="size-4" />}
-        />
-        <Stat
-          label="Next batch out"
-          value={nextBatch ? nextBatch.year : '—'}
-          hint={nextBatch ? `${nextBatch.total} members would move` : 'No student cohort loaded'}
-          icon={<CalendarCheck2 className="size-4" />}
-        />
-        <Stat
-          label="On a college mailbox"
-          value={nextBatch ? nextBatch.collegeEmailOnly : 0}
-          hint="Lose the address, lose the account"
-          icon={<Mail className="size-4" />}
-        />
-        <Stat
-          label="Already in the register"
-          value={nextBatch ? `${nextBatch.withRegisterRow} of ${nextBatch.total}` : '—'}
-          hint="Degree rows supplied by the examinations branch"
-          icon={<ScrollText className="size-4" />}
+      <div className="max-w-3xl">
+        <RolloverRunner
+          batches={batches}
+          actorName={member?.fullName ?? 'you'}
+          crest={<Crest pack={pack} size={48} />}
+          donations={pack.features.donations}
+          links={{
+            upload: canOpen(session, pack, '/admin/degree-register'),
+            comms: canOpen(session, pack, '/admin/comms'),
+            news: canOpen(session, pack, '/admin/news'),
+            audit: canAudit,
+          }}
         />
       </div>
 
-      <div className="grid gap-gutter lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
-        <RolloverRunner batches={batches} actorName={member?.fullName ?? 'You'} />
-
-        <div className="space-y-gutter">
-          <Card>
-            <CardHeader>
-              <div className="space-y-1">
-                <CardTitle as="h2">What changes for a person</CardTitle>
-                <CardDescription>Same row in the same table. Only the status and the roles move.</CardDescription>
-              </div>
-            </CardHeader>
-            <CardBody>
-              <dl className="divide-y divide-line">
-                <DetailRow label="Status">
-                  <span className="font-mono text-xs">active_student → active_alumni</span>
-                </DetailRow>
-                <DetailRow label="Roles">
-                  <span className="font-mono text-xs">student → alumni</span>
-                  <span className="mt-1 block text-xs font-normal text-secondary">
-                    Any other role a person holds — faculty, HOD — is untouched.
-                  </span>
-                </DetailRow>
-                <DetailRow label="Directory">
-                  Appears in the alumni cohort, and becomes searchable by the students still on campus.
-                </DetailRow>
-                <DetailRow label="Request quota">
-                  <span className="tabular">5 open / 10 a month → 25 open / 60 a month</span>
-                </DetailRow>
-                <DetailRow label="Gains">Posting jobs, receiving mentorship requests, the giving module.</DetailRow>
-                <DetailRow label="Loses">
-                  Student-only events, and the placement cell&rsquo;s view of their CGPA and placement status — that
-                  data stays placement-side and is never exposed to the alumni network.
-                </DetailRow>
-                <DetailRow label="Untouched">
-                  Contact details, visibility settings, consent records, connections and every past registration.
-                </DetailRow>
-              </dl>
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <div className="space-y-1">
-                <CardTitle as="h2">Previous rollovers</CardTitle>
-                <CardDescription>Once a year, by a named person.</CardDescription>
-              </div>
-            </CardHeader>
-            <CardBody>
-              <ul className="space-y-3">
-                {PAST_RUNS.map((r) => (
-                  <li key={r.year} className="flex items-start justify-between gap-3 text-sm">
-                    <div className="min-w-0">
-                      <p className="font-medium tabular">Batch of {r.year}</p>
-                      <p className="text-xs text-secondary">
-                        {r.actor} · {formatDate(r.at)}
-                      </p>
-                    </div>
-                    <Badge tone="neutral">
-                      <History className="size-3.5" aria-hidden="true" />
-                      {r.moved} moved
-                    </Badge>
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-4 text-xs text-secondary">
-                Both entries are reconstructed from <span className="font-mono">audit_log</span>. Nothing about a
-                rollover happens outside it.
-              </p>
-            </CardBody>
-          </Card>
-        </div>
-      </div>
-
-      <Section title="Why students are not a separate table">
-        <Card>
-          <CardBody className="max-w-prose space-y-3 text-sm text-secondary">
-            <p>
-              Students and alumni are one row each in <span className="font-mono">members</span>, keyed on roll number,
-              separated by a status enum. The rollover flips the status and the role — it does not copy anything
-              anywhere.
-            </p>
-            <p>
-              The alternative, a <span className="font-mono">students</span> table beside an{' '}
-              <span className="font-mono">alumni</span> table, makes every graduating batch a manual data migration with
-              its own foreign-key repair job, and quietly breaks every connection, event registration and job
-              application the person made while they were still on campus. It is the single decision that most often
-              makes a college portal unmaintainable by its third year.
-            </p>
-          </CardBody>
-        </Card>
+      <Section title="Past rollovers">
+        {history === null ? (
+          <p className="text-sm text-secondary">Past runs are in the audit log, which the college admin can open.</p>
+        ) : history.length === 0 ? (
+          <p className="text-sm text-secondary">No rollover has been run on this portal yet.</p>
+        ) : (
+          <ul className="max-w-3xl divide-y divide-line rounded-lg border border-line bg-surface-raised">
+            {history.map((h) => (
+              <li key={h.id} className="flex items-start gap-3 px-4 py-3">
+                <History className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{h.reason ?? 'Batch rolled over'}</p>
+                  <p className="text-xs text-secondary">
+                    {h.actorName ? `${h.actorName} · ` : ''}
+                    {formatDate(h.createdAt, fmt)}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </Section>
     </div>
   );

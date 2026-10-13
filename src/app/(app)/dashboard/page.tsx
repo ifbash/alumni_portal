@@ -5,7 +5,7 @@ import { requireSession } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
 import { StudentHome } from './StudentHome';
 import { MemberHome } from './MemberHome';
-import { StaffStrip } from './StaffStrip';
+import { PendingHome } from './PendingHome';
 
 /**
  * The portal home.
@@ -14,11 +14,15 @@ import { StaffStrip } from './StaffStrip';
  * not get the same page with two cards swapped out. They arrive for
  * opposite reasons — one is looking for help, the other is deciding
  * whether to give any — so the route branches on the cohort and renders
- * one of two genuinely different screens.
+ * one of genuinely different screens:
  *
- * Staff capabilities are additive on top: an HOD who is also an alumnus
- * gets the alumni home *and* a strip into the console, because that is
- * what they are.
+ *  - no roles yet (a registration still being checked): `PendingHome`,
+ *    which shows no member data at all;
+ *  - a final-year student: `StudentHome`;
+ *  - everyone else, alumni, faculty and staff: `MemberHome`, whose blocks
+ *    are each gated on a capability. Staff queues arrive through
+ *    `staffTasks()` in its "Needs you" list, so an HOD who is also an
+ *    alumnus gets the alumni home and their queue in one place.
  */
 
 export const metadata: Metadata = {
@@ -37,14 +41,7 @@ export default async function DashboardPage() {
   const pack = resolved.brand.pack;
   const isStudent = session.roles.some((r) => r.role === 'student');
 
-  return (
-    <div className="space-y-8">
-      <StaffStrip session={session} pack={pack} />
-      {isStudent ? (
-        <StudentHome session={session} pack={pack} />
-      ) : (
-        <MemberHome session={session} pack={pack} />
-      )}
-    </div>
-  );
+  if (session.roles.length === 0) return <PendingHome session={session} pack={pack} />;
+  if (isStudent) return <StudentHome session={session} pack={pack} />;
+  return <MemberHome session={session} pack={pack} />;
 }

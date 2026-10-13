@@ -1,50 +1,44 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
+import { BadgeCheck, Eye, Pencil, Plus } from 'lucide-react';
 import {
-  BadgeCheck,
-  Building2,
-  Check,
-  GraduationCap,
-  MapPin,
-  Pencil,
-  Plus,
-  ShieldCheck,
-  Eye,
-} from 'lucide-react';
-import {
-  Alert,
   Avatar,
   Badge,
   ButtonLink,
   Card,
   CardBody,
-  CardDescription,
-  CardHeader,
   CardTitle,
+  CopyButton,
   DetailRow,
-  PageHeader,
   Progress,
-  Separator,
 } from '@/components/ui';
-import { MarginNote } from '@/components/brand/Marks';
 import { ContactBlock } from '@/components/members/ContactBlock';
 import { getSession } from '@/lib/auth/session';
 import { requireSession, can } from '@/lib/auth/guard';
 import { getOwnProfile } from '@/lib/data/repo';
-import { ROLE_LABELS } from '@/lib/navigation';
+import { getTenantBrand } from '@/lib/tenant';
+import { isVendorOnlySession } from '@/lib/navigation';
 import { formatDate, memberLine, yearsOut } from '@/lib/format';
+import { rollNumber } from '@/lib/branding/copy';
+import { pickBandPhoto } from '@/lib/branding/media';
+import { availabilityCopy, type AvailabilityKey } from '@/lib/availability-copy';
+import { visibilityOption } from '@/lib/visibility-copy';
+import { viewerBranch } from '@/lib/identity';
+import { siteOrigin } from '@/lib/share';
+import { CONNECTION_LIMITS } from '@/lib/config';
+import type { EducationEntry, EmploymentEntry } from '@/lib/data/types';
 import { profileChecks, completenessScore } from './completeness';
 
 /**
  * Your own profile, as you hold it.
  *
- * Two things separate this from the public card in the directory. It shows
- * the fields nobody else can see — roll number, contact record, the
- * verification decision the college made — labelled as such. And it opens
- * with a completeness meter that names the missing field and links to the
- * input that fills it, because a percentage on its own has never caused
- * anybody to complete anything.
+ * It opens on the person, not on a score: the cover strip, the photo or
+ * initials, the name once, one line of work and place. The completeness
+ * bar only appears while something is missing, and each missing item is a
+ * link to the field that fills it. The rail holds what only the owner
+ * sees (their contact record, who it is released to, what they have said
+ * yes to), and the college's record of them closes the page.
  */
 
 export const metadata: Metadata = {
@@ -62,206 +56,408 @@ export default async function ProfilePage() {
   const checks = profileChecks(profile);
   const score = completenessScore(checks);
   const missing = checks.filter((c) => !c.done);
-  const filled = checks.filter((c) => c.done);
 
   const editable = can(session, 'profile.write.own');
   const listed = can(session, 'directory.search.alumni');
 
-  const currentRole = profile.employment.find((e) => e.isCurrent) ?? null;
-  const roleLabels = profile.roles.map((r) =>
-    memberLine([ROLE_LABELS[r.role] ?? r.role, r.departmentCode]),
-  );
+  const resolved = await getTenantBrand();
+  if (!resolved) notFound();
+  const pack = resolved.brand.pack;
+  const copy = pack.copy;
+  const timing = { locale: pack.locale.locale, timeZone: pack.locale.timeZone };
+  const office = copy.officeName;
+
+  const vendorOnly = isVendorOnlySession(session);
+  const holdsAlumni = profile.roles.some((r) => r.role === 'alumni');
+  const holdsFaculty = profile.roles.some((r) => r.role === 'faculty' || r.role === 'hod');
+  const directoryOn = pack.features.directory;
+
+  // Member-level links (the preview, the batch and branch pages, the
+  // shareable directory link) are for members only. The vendor may open
+  // its own profile, and nothing it links to may bounce.
+  const memberLinks = directoryOn && listed && !vendorOnly;
+
+  // Listed in the directory means other members can open this record at
+  // /directory/{slug}. Final-year students are not listed to other members.
+  const shareable = memberLinks && profile.status === 'active_alumni';
+  const profileUrl = shareable ? `${await siteOrigin()}/directory/${profile.slug}` : null;
+
+  // One source for the line under the name: the headline fields the form
+  // edits, then the city.
+  const place = memberLine([
+    profile.city,
+    profile.country && profile.country !== 'IN' ? profile.country : null,
+  ]);
+  const headline =
+    memberLine([profile.designation, profile.currentCompany, place]) ||
+    (profile.isStudent ? 'Final-year student' : null);
+
+  // The batch belongs to holders of the alumni role only; staff seeded
+  // from alumni rows are introduced by their department.
+  const branch = profile.isStudent || holdsAlumni ? profile.departmentCode : viewerBranch(session);
+
+  const photo = pickBandPhoto(pack, 'profile');
+
+  // What the owner has said yes to. Students are never asked, and the
+  // vendor holds no member features, so neither has anything to show.
+  const receivesRequests = !profile.isStudent && can(session, 'connection.receive');
+  const availabilityCtx = {
+    audience: holdsFaculty && !holdsAlumni ? ('faculty' as const) : ('alumni' as const),
+    company: profile.currentCompany,
+    officeName: office,
+    openLimit: CONNECTION_LIMITS.studentOpenRequests,
+  };
+  const openTo = (['mentoring', 'referrals', 'speaking'] as const)
+    .map((key) => ({ key, on: availabilityOn(profile, key), copy: availabilityCopy(key, availabilityCtx) }))
+    .filter((a): a is { key: AvailabilityKey; on: boolean; copy: NonNullable<typeof a.copy> } => a.copy !== null);
+  const openOn = openTo.filter((a) => a.on);
+  const openOff = openTo.filter((a) => !a.on);
+
+  const visibility = visibilityOption(profile.contact?.visibility ?? 'on_accept');
+  const roll = rollNumber(copy);
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        eyebrow="Your profile"
-        title={profile.fullName}
-        description={
-          profile.isStudent
-            ? 'This is what alumni see when a request from you lands in their inbox. Everything except your contact record is visible to other verified members.'
-            : 'This is the record students and other alumni see. Your contact details are held separately and released only under the rules on your privacy page.'
-        }
-        actions={
-          <>
-            {listed ? (
-              <ButtonLink href={`/directory/${profile.slug}`} variant="secondary">
-                <Eye className="size-4" aria-hidden="true" />
-                View as others see it
-              </ButtonLink>
-            ) : null}
-            {editable ? (
-              <ButtonLink href="/profile/edit">
-                <Pencil className="size-4" aria-hidden="true" />
-                Edit profile
-              </ButtonLink>
-            ) : null}
-          </>
-        }
-      />
+      {/* ---- Header ---------------------------------------------------- */}
 
-      {!editable ? (
-        <Alert tone="neutral" title="This profile is read-only for your role">
-          Your account holds a staff role without profile editing. The alumni cell can make changes
-          on your behalf, and every change they make is written to the audit log with a before and
-          after.
-        </Alert>
-      ) : null}
-
-      {/* ---- Completeness ---------------------------------------------- */}
-
-      <Card>
-        <CardHeader>
-          <div className="space-y-1">
-            <CardTitle as="h2">Profile completeness</CardTitle>
-            <CardDescription>
-              Weighted by what the directory can actually be searched on — not by how many boxes
-              are ticked.
-            </CardDescription>
-          </div>
-          <span className="font-display text-display-xs font-bold tabular">{score}%</span>
-        </CardHeader>
-
-        <CardBody className="space-y-5">
-          <Progress
-            value={score}
-            label={`Profile ${score} per cent complete`}
-            tone={score >= 80 ? 'success' : score >= 50 ? 'brand' : 'warning'}
-          />
-
-          {missing.length ? (
-            <div className="space-y-3">
-              <h3 className="text-sm font-semibold">
-                {missing.length} {missing.length === 1 ? 'thing is' : 'things are'} missing
-              </h3>
-              <ul className="space-y-2.5">
-                {missing.map((c) => (
-                  <li
-                    key={c.id}
-                    className="flex flex-wrap items-start gap-x-3 gap-y-1.5 rounded-lg border border-line bg-surface px-3.5 py-3"
-                  >
-                    <span
-                      className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border border-dashed border-line-strong text-muted"
-                      aria-hidden="true"
-                    >
-                      <Plus className="size-3" />
-                    </span>
-                    <div className="min-w-0 flex-1 space-y-0.5">
-                      <p className="text-sm font-medium">{c.label}</p>
-                      <p className="text-xs text-secondary">{c.why}</p>
-                    </div>
-                    {editable ? (
-                      <ButtonLink href={c.href} variant="secondary" size="sm">
-                        Add it
-                      </ButtonLink>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <Alert tone="success" title="Nothing left to fill in" icon={<Check className="size-4" />}>
-              Your record has everything the directory searches on. Keep the employer current —
-              that is the field that goes stale first.
-            </Alert>
-          )}
-
-          {filled.length ? (
-            <div className="space-y-2">
-              <h3 className="text-sm font-semibold text-secondary">Already done</h3>
-              <ul className="flex flex-wrap gap-1.5">
-                {filled.map((c) => (
-                  <li key={c.id}>
-                    <Badge tone="success">
-                      <Check className="size-3" aria-hidden="true" />
-                      {c.label}
-                    </Badge>
-                  </li>
-                ))}
-              </ul>
-            </div>
+      <Card className="overflow-hidden">
+        <div className="band-surface relative h-20 sm:h-24" aria-hidden="true">
+          {photo ? (
+            // Decorative: the name below says whose page this is. No text
+            // sits on the photo. Tenant-supplied URL; see next.config.ts.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={photo.src}
+              alt=""
+              decoding="async"
+              className="absolute inset-0 size-full object-cover"
+              style={{ objectPosition: photo.focus }}
+            />
           ) : null}
+        </div>
 
-          <MarginNote>
-            Nobody is scored on this and no staff member sees your percentage. It exists because a
-            profile with a company and a city gets answered, and one with neither does not.
-          </MarginNote>
+        <CardBody className="pt-0">
+          <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-[minmax(0,1fr)_auto]">
+            <span className="-mt-12 inline-flex w-fit rounded-full bg-surface-raised ring-4 ring-[var(--surface-raised)] sm:col-start-1 sm:row-start-1">
+              <Avatar name={profile.fullName} src={profile.photoUrl} size="xl" />
+            </span>
+
+            {editable || memberLinks ? (
+              <div className="order-last flex flex-wrap items-center gap-2 sm:order-none sm:col-start-2 sm:row-start-1 sm:self-end sm:justify-end">
+                {memberLinks ? (
+                  <ButtonLink href="/profile/preview" variant="secondary" className="min-h-11">
+                    <Eye className="size-4" aria-hidden="true" />
+                    What others see
+                  </ButtonLink>
+                ) : null}
+                {profileUrl ? (
+                  <CopyButton text={profileUrl} label="Copy profile link" copiedLabel="Link copied" />
+                ) : null}
+                {editable ? (
+                  <ButtonLink href="/profile/edit" className="order-first min-h-11 sm:order-none">
+                    <Pencil className="size-4" aria-hidden="true" />
+                    Edit profile
+                  </ButtonLink>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div className="min-w-0 space-y-3 sm:col-span-2">
+              <div className="space-y-1">
+                <h1 className="font-display text-display-xs font-bold">{profile.fullName}</h1>
+                {profile.preferredName ? (
+                  <p className="text-sm text-secondary">Goes by {profile.preferredName}</p>
+                ) : null}
+                {headline ? <p className="text-md text-secondary">{headline}</p> : null}
+              </div>
+
+              <ul className="flex flex-wrap items-center gap-1.5" aria-label="About this record">
+                {holdsAlumni && profile.batchYear ? (
+                  <li>
+                    <IdentityChip
+                      parts={[
+                        branch
+                          ? { label: branch, href: memberLinks ? `/directory/branch/${branch}` : null }
+                          : null,
+                        {
+                          label: `Batch of ${profile.batchYear}`,
+                          href: memberLinks ? `/directory/batch/${profile.batchYear}` : null,
+                        },
+                      ]}
+                    />
+                  </li>
+                ) : branch ? (
+                  <li>
+                    <Badge tone="neutral">{profile.isStudent ? `${branch} · Final year` : branch}</Badge>
+                  </li>
+                ) : null}
+                <li>
+                  {profile.verifiedAt ? (
+                    <Badge tone="success">
+                      <BadgeCheck className="size-3.5" aria-hidden="true" />
+                      Verified
+                    </Badge>
+                  ) : (
+                    <Badge tone="warning" dot>
+                      Awaiting verification
+                    </Badge>
+                  )}
+                </li>
+                {receivesRequests
+                  ? openOn.map((a) => (
+                      <li key={a.key}>
+                        <Badge tone={a.key === 'mentoring' ? 'success' : a.key === 'referrals' ? 'brand' : 'accent'} dot>
+                          {a.copy.chip}
+                        </Badge>
+                      </li>
+                    ))
+                  : null}
+              </ul>
+
+              {!editable ? (
+                <p className="text-sm text-secondary">
+                  Changes to this profile are made by the {office}
+                  {copy.supportEmail ? (
+                    <>
+                      {' '}
+                      at{' '}
+                      <a href={`mailto:${copy.supportEmail}`} className="link">
+                        {copy.supportEmail}
+                      </a>
+                    </>
+                  ) : null}
+                  .
+                </p>
+              ) : null}
+            </div>
+          </div>
         </CardBody>
       </Card>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
-          {/* ---- Identity ---------------------------------------------- */}
+      {/* ---- Completeness, only while something is missing ------------- */}
+
+      {editable && score < 100 && missing.length ? (
+        <section
+          aria-label="Profile completeness"
+          className="flex flex-col gap-3 rounded-lg border border-line bg-surface-raised px-4 py-3 sm:flex-row sm:items-center sm:gap-5"
+        >
+          <div className="flex shrink-0 items-center gap-3">
+            <span className="font-display text-lg font-semibold tabular">{score}%</span>
+            <Progress value={score} label={`Profile ${score} per cent complete`} className="w-28 sm:w-36" />
+          </div>
+          <p className="min-w-0 text-sm text-secondary">
+            <span className="font-medium text-primary">To finish: </span>
+            {missing.map((c, i) => (
+              <span key={c.id}>
+                {i > 0 ? <span className="text-muted" aria-hidden="true"> · </span> : null}
+                <Link href={c.href} className="link">
+                  {c.label}
+                </Link>
+              </span>
+            ))}
+          </p>
+        </section>
+      ) : null}
+
+      {/* ---- Main column and rail ---------------------------------------
+          Phones read header, completeness, About, then the rail. At lg the
+          rail spans both rows and the second row absorbs its height, so no
+          gap opens under About. */}
+
+      <div className="grid grid-cols-1 gap-gutter lg:grid-cols-[minmax(0,1fr)_20rem] lg:grid-rows-[auto_1fr]">
+        <Card className="min-w-0 lg:col-start-1 lg:row-start-1">
+          <CardBody className="space-y-4">
+            <SectionTitle title="About" edit={editable ? '/profile/edit#bio' : null} editLabel="Edit about" />
+            {profile.bio ? (
+              <p className="max-w-prose whitespace-pre-line text-sm leading-relaxed text-secondary">
+                {profile.bio}
+              </p>
+            ) : (
+              <EmptyLine
+                text="You have not written an introduction yet."
+                href={editable ? '/profile/edit#bio' : null}
+                action="Write one"
+              />
+            )}
+
+            <div className="space-y-2 border-t border-line pt-4">
+              <h3 className="text-sm font-semibold">Skills</h3>
+              {profile.skills.length ? (
+                <ul className="flex flex-wrap gap-1.5">
+                  {profile.skills.map((s) => (
+                    <li key={s}>
+                      <Badge tone="outline">{s}</Badge>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <EmptyLine
+                  text="No skills listed yet."
+                  href={editable ? '/profile/edit#skills' : null}
+                  action="Add skills"
+                />
+              )}
+            </div>
+          </CardBody>
+        </Card>
+
+        <aside
+          aria-label="Contact and availability"
+          className="min-w-0 space-y-gutter lg:col-start-2 lg:row-span-2 lg:row-start-1"
+        >
+          <ContactBlock
+            contact={profile.contact}
+            ownerName={profile.fullName}
+            visibility={profile.contact?.visibility ?? null}
+            hasAcceptedConnection={false}
+            viewerIsOwner
+          />
+
+          {visibility ? (
+            <Card>
+              <CardBody className="flex items-start justify-between gap-3 py-3">
+                <div className="min-w-0 space-y-0.5">
+                  <p className="text-xs text-secondary">Who can see them</p>
+                  <p className="text-sm font-medium">{visibility.label}</p>
+                </div>
+                <Link
+                  href="/settings/privacy"
+                  className="link -my-1 inline-flex min-h-11 shrink-0 items-center text-sm"
+                >
+                  Change
+                </Link>
+              </CardBody>
+            </Card>
+          ) : null}
+
+          {receivesRequests && openTo.length ? (
+            <Card>
+              <CardBody className="space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <CardTitle as="h2" className="text-md">
+                    Open to
+                  </CardTitle>
+                  {editable ? (
+                    <Link
+                      href="/profile/edit#availability"
+                      className="link -my-3 inline-flex min-h-11 shrink-0 items-center text-sm"
+                    >
+                      Change
+                    </Link>
+                  ) : null}
+                </div>
+                {openOn.length ? (
+                  <ul className="space-y-2.5">
+                    {openOn.map((a) => (
+                      <li key={a.key} className="space-y-0.5">
+                        <p className="text-sm font-medium">{a.copy.label}</p>
+                        <p className="text-xs text-secondary">{a.copy.line}</p>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-secondary">
+                    You are not open to requests for mentoring, referrals or speaking.
+                  </p>
+                )}
+                {openOn.length && openOff.length ? (
+                  <p className="border-t border-line pt-3 text-xs text-secondary">
+                    Not open to {openOff.map((a) => a.key).join(' or ')}.
+                  </p>
+                ) : null}
+              </CardBody>
+            </Card>
+          ) : null}
+        </aside>
+
+        <div className="min-w-0 space-y-gutter lg:col-start-1 lg:row-start-2">
+          <Card>
+            <CardBody className="space-y-4">
+              <SectionTitle
+                title="Experience"
+                edit={editable ? '/profile/edit#employment' : null}
+                editLabel="Edit experience"
+              />
+              {profile.employment.length ? (
+                <ExperienceList entries={profile.employment} timing={timing} />
+              ) : (
+                <EmptyLine
+                  text={
+                    profile.isStudent
+                      ? 'No internships listed yet.'
+                      : 'No roles listed yet. One line with a company and the years is enough.'
+                  }
+                  href={editable ? '/profile/edit#employment' : null}
+                  action="Add a role"
+                />
+              )}
+            </CardBody>
+          </Card>
 
           <Card>
-            <CardHeader>
-              <CardTitle as="h2">Identity</CardTitle>
-            </CardHeader>
-            <CardBody className="space-y-5">
-              <div className="flex flex-wrap items-center gap-4">
-                <Avatar name={profile.fullName} src={profile.photoUrl} size="xl" />
-                <div className="min-w-0 space-y-1">
-                  <p className="font-display text-lg font-semibold">{profile.fullName}</p>
-                  {profile.preferredName ? (
-                    <p className="text-sm text-secondary">Goes by {profile.preferredName}</p>
-                  ) : null}
-                  <p className="text-sm text-secondary">
-                    {memberLine([
-                      currentRole?.designation ?? profile.designation,
-                      profile.currentCompany,
-                    ]) || (profile.isStudent ? 'Final-year student' : 'No employer on file')}
-                  </p>
-                  <div className="flex flex-wrap gap-1.5 pt-0.5">
-                    {profile.verifiedAt ? (
-                      <Badge tone="success">
-                        <BadgeCheck className="size-3.5" aria-hidden="true" />
-                        Verified
-                      </Badge>
-                    ) : (
-                      <Badge tone="warning" dot>
-                        Awaiting verification
-                      </Badge>
-                    )}
-                    {roleLabels.map((label) => (
-                      <Badge key={label} tone="neutral">
-                        {label}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
+            <CardBody className="space-y-4">
+              <SectionTitle
+                title="Education"
+                edit={editable ? '/profile/edit#education' : null}
+                editLabel="Edit education"
+              />
+              {profile.education.length ? (
+                <EducationList entries={profile.education} timing={timing} />
+              ) : (
+                <EmptyLine
+                  text="Nothing listed beyond your degree."
+                  href={editable ? '/profile/edit#education' : null}
+                  action="Add a qualification"
+                />
+              )}
+            </CardBody>
+          </Card>
+
+          {/* ---- The college's record ---------------------------------- */}
+
+          <Card>
+            <CardBody className="space-y-3">
+              <div className="space-y-0.5">
+                <CardTitle as="h2" className="text-md">
+                  Your college record
+                </CardTitle>
+                <p className="text-sm text-secondary">
+                  From the college register. The {office} can correct it.
+                </p>
               </div>
 
               <dl className="divide-y divide-line">
-                <DetailRow label="Roll number">
-                  <span className="font-mono">{profile.rollNumber ?? '—'}</span>
-                  <span className="ml-2 text-xs font-normal text-muted">
-                    From the college register. Cannot be edited.
-                  </span>
-                </DetailRow>
-                <DetailRow label="Programme">
-                  {memberLine([profile.programme, profile.departmentName]) || '—'}
-                </DetailRow>
-                <DetailRow label="Batch">
-                  {profile.batchYear ? (
-                    <>
-                      {profile.batchYear}
-                      <span className="ml-2 text-xs font-normal text-muted">
-                        {profile.admissionYear ? `admitted ${profile.admissionYear} · ` : ''}
-                        {yearsOut(profile.batchYear)}
-                      </span>
-                    </>
-                  ) : (
-                    '—'
-                  )}
-                </DetailRow>
-                <DetailRow label="Verification">
+                {profile.isStudent || holdsAlumni ? (
+                  <>
+                    <DetailRow className={RECORD_ROW} label={roll.label}>
+                      <span className="font-mono">{profile.rollNumber ?? '—'}</span>
+                    </DetailRow>
+                    <DetailRow className={RECORD_ROW} label="Programme">
+                      {memberLine([profile.programme, profile.departmentName]) || '—'}
+                    </DetailRow>
+                    <DetailRow className={RECORD_ROW} label="Batch">
+                      {profile.batchYear ? (
+                        <>
+                          {profile.batchYear}
+                          <span className="ml-2 text-xs font-normal text-secondary">
+                            {memberLine([
+                              profile.admissionYear ? `admitted ${profile.admissionYear}` : null,
+                              profile.isStudent ? 'final year' : yearsOut(profile.batchYear),
+                            ])}
+                          </span>
+                        </>
+                      ) : (
+                        '—'
+                      )}
+                    </DetailRow>
+                  </>
+                ) : null}
+                <DetailRow className={RECORD_ROW} label="Verification">
                   {profile.verifiedAt ? (
                     <>
-                      {VERIFICATION_METHOD[profile.verificationMethod ?? ''] ??
-                        profile.verificationMethod ??
-                        'Verified'}
-                      <span className="ml-2 text-xs font-normal text-muted">
-                        {formatDate(profile.verifiedAt)}
+                      {verificationMethod(profile.verificationMethod, office)}
+                      <span className="ml-2 text-xs font-normal text-secondary">
+                        {formatDate(profile.verifiedAt, timing)}
                       </span>
                     </>
                   ) : (
@@ -271,237 +467,12 @@ export default async function ProfilePage() {
                 {profile.isStudent && profile.placementStatus ? (
                   <DetailRow label="Placement">
                     {profile.placementStatus}
-                    <span className="ml-2 text-xs font-normal text-muted">
+                    <span className="ml-2 text-xs font-normal text-secondary">
                       Visible to the placement cell only. Never to alumni.
                     </span>
                   </DetailRow>
                 ) : null}
               </dl>
-            </CardBody>
-          </Card>
-
-          {/* ---- About ------------------------------------------------- */}
-
-          <Card>
-            <CardHeader>
-              <CardTitle as="h2">About</CardTitle>
-              {editable ? (
-                <ButtonLink href="/profile/edit#bio" variant="ghost" size="sm">
-                  Edit
-                </ButtonLink>
-              ) : null}
-            </CardHeader>
-            <CardBody className="space-y-4">
-              {profile.bio ? (
-                <p className="max-w-prose text-sm leading-relaxed text-secondary">{profile.bio}</p>
-              ) : (
-                <p className="text-sm text-muted">
-                  Nothing written yet. Two sentences is enough — what you work on, and what you are
-                  willing to be asked about.
-                </p>
-              )}
-
-              <Separator />
-
-              <dl className="grid gap-4 sm:grid-cols-2">
-                <div className="flex items-start gap-2.5">
-                  <Building2 className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-                  <div>
-                    <dt className="text-xs text-muted">Current work</dt>
-                    <dd className="text-sm font-medium">
-                      {memberLine([profile.designation, profile.currentCompany]) || 'Not stated'}
-                    </dd>
-                  </div>
-                </div>
-                <div className="flex items-start gap-2.5">
-                  <MapPin className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-                  <div>
-                    <dt className="text-xs text-muted">Location</dt>
-                    <dd className="text-sm font-medium">
-                      {memberLine([
-                        profile.city,
-                        profile.country === 'IN' ? profile.state : profile.country,
-                      ]) || 'Not stated'}
-                    </dd>
-                  </div>
-                </div>
-              </dl>
-
-              <div className="space-y-2">
-                <p className="text-xs text-muted">Skills</p>
-                {profile.skills.length ? (
-                  <ul className="flex flex-wrap gap-1.5">
-                    {profile.skills.map((s) => (
-                      <li key={s}>
-                        <Badge tone="outline">{s}</Badge>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-sm text-muted">
-                    None added. Skills are the filter students use most after branch and batch.
-                  </p>
-                )}
-              </div>
-            </CardBody>
-          </Card>
-
-          {/* ---- History ----------------------------------------------- */}
-
-          <Card>
-            <CardHeader>
-              <CardTitle as="h2">Work history</CardTitle>
-              {editable ? (
-                <ButtonLink href="/profile/edit#employment" variant="ghost" size="sm">
-                  Edit
-                </ButtonLink>
-              ) : null}
-            </CardHeader>
-            <CardBody>
-              {profile.employment.length ? (
-                <ol className="space-y-4">
-                  {profile.employment.map((e) => (
-                    <li key={e.id} className="flex gap-3">
-                      <span
-                        className="mt-1 grid size-8 shrink-0 place-items-center rounded bg-surface-sunken text-muted"
-                        aria-hidden="true"
-                      >
-                        <Building2 className="size-4" />
-                      </span>
-                      <div className="min-w-0 space-y-0.5">
-                        <p className="text-sm font-medium">
-                          {memberLine([e.designation, e.company])}
-                        </p>
-                        <p className="text-xs text-secondary">
-                          {formatDate(e.startedOn)} –{' '}
-                          {e.isCurrent ? 'present' : formatDate(e.endedOn)}
-                          {e.location ? ` · ${e.location}` : ''}
-                        </p>
-                        {e.isCurrent ? <Badge tone="brand">Current</Badge> : null}
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <p className="text-sm text-muted">
-                  {profile.isStudent
-                    ? 'Internships count. Add one and it shows up here.'
-                    : 'No roles listed. Even one line — company and years — makes the profile searchable by company.'}
-                </p>
-              )}
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle as="h2">Education</CardTitle>
-              {editable ? (
-                <ButtonLink href="/profile/edit#education" variant="ghost" size="sm">
-                  Edit
-                </ButtonLink>
-              ) : null}
-            </CardHeader>
-            <CardBody>
-              <ol className="space-y-4">
-                {profile.education.map((e) => (
-                  <li key={e.id} className="flex gap-3">
-                    <span
-                      className="mt-1 grid size-8 shrink-0 place-items-center rounded bg-surface-sunken text-muted"
-                      aria-hidden="true"
-                    >
-                      <GraduationCap className="size-4" />
-                    </span>
-                    <div className="min-w-0 space-y-0.5">
-                      <p className="text-sm font-medium">{e.institution}</p>
-                      <p className="text-xs text-secondary">
-                        {memberLine([e.qualification, e.field])}
-                      </p>
-                      <p className="text-xs text-muted">
-                        {formatDate(e.startedOn)} – {e.endedOn ? formatDate(e.endedOn) : 'present'}
-                      </p>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            </CardBody>
-          </Card>
-        </div>
-
-        {/* ---- Right rail ---------------------------------------------- */}
-
-        <div className="space-y-6">
-          <ContactBlock
-            contact={profile.contact}
-            ownerName={profile.fullName}
-            visibility={profile.contact?.visibility ?? null}
-            hasAcceptedConnection={false}
-            viewerIsOwner
-          />
-
-          <Card>
-            <CardHeader>
-              <div className="space-y-1">
-                <CardTitle as="h2" className="text-md">
-                  Who can see your contact details
-                </CardTitle>
-              </div>
-            </CardHeader>
-            <CardBody className="space-y-3">
-              <p className="text-sm text-secondary">
-                {VISIBILITY_SUMMARY[profile.contact?.visibility ?? 'on_accept']}
-              </p>
-              <ButtonLink href="/settings/privacy" variant="secondary" size="sm">
-                <ShieldCheck className="size-4" aria-hidden="true" />
-                Change this
-              </ButtonLink>
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle as="h2" className="text-md">
-                What you are open to
-              </CardTitle>
-            </CardHeader>
-            <CardBody>
-              <ul className="space-y-2.5">
-                {AVAILABILITY.map((a) => {
-                  const on = profile[a.key];
-                  return (
-                    <li key={a.key} className="flex items-start gap-2.5">
-                      <Badge tone={on ? 'success' : 'neutral'} dot>
-                        {on ? 'On' : 'Off'}
-                      </Badge>
-                      <div className="min-w-0 space-y-0.5">
-                        <p className="text-sm font-medium">{a.label}</p>
-                        <p className="text-xs text-secondary">{on ? a.onCopy : a.offCopy}</p>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-              {editable ? (
-                <div className="pt-4">
-                  <ButtonLink href="/profile/edit#availability" variant="secondary" size="sm">
-                    Change what you are open to
-                  </ButtonLink>
-                </div>
-              ) : null}
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardBody className="space-y-2.5">
-              <CardTitle as="h2" className="text-md">
-                Your data
-              </CardTitle>
-              <p className="text-sm text-secondary">
-                Download everything the college holds about you, ask for a correction, or ask for
-                the account to be deleted. The college has 30 days to answer.
-              </p>
-              <Link href="/settings/data" className="link text-sm">
-                Open your data requests
-              </Link>
             </CardBody>
           </Card>
         </div>
@@ -510,37 +481,148 @@ export default async function ProfilePage() {
   );
 }
 
-const VERIFICATION_METHOD: Record<string, string> = {
-  auto_roll_match: 'Roll number matched the degree register automatically',
-  admin_manual: 'Approved by hand at the alumni cell',
-  bulk_import: 'Loaded in a bulk import from college records',
-  placement_cell_import: 'Loaded from the placement cell roll list',
-};
+function availabilityOn(
+  p: { openToMentoring: boolean; openToReferrals: boolean; openToSpeaking: boolean },
+  key: AvailabilityKey,
+): boolean {
+  return key === 'mentoring' ? p.openToMentoring : key === 'referrals' ? p.openToReferrals : p.openToSpeaking;
+}
 
-const VISIBILITY_SUMMARY: Record<string, string> = {
-  private: 'Nobody can see your email or mobile through the portal. Members can still send you a request, and you can reply.',
-  on_accept: 'Your email is released to a member only after you accept their connection request. Until then they see a masked address.',
-  alumni_only: 'Alumni and faculty can see your email. Students cannot, whatever they ask for.',
-  all_members: 'Every verified member can see your email. Your mobile number is still never shown in the directory.',
-};
+// ---------------------------------------------------------------
+// Pieces
+// ---------------------------------------------------------------
 
-const AVAILABILITY = [
-  {
-    key: 'openToMentoring' as const,
-    label: 'Mentoring',
-    onCopy: 'Students can send you a mentorship request. You can decline any of them silently.',
-    offCopy: 'You are not listed as a mentor and students are told not to ask.',
-  },
-  {
-    key: 'openToReferrals' as const,
-    label: 'Referrals',
-    onCopy: 'Students can ask you to refer them at your current employer.',
-    offCopy: 'Referral requests cannot be sent to you.',
-  },
-  {
-    key: 'openToSpeaking' as const,
-    label: 'Speaking',
-    onCopy: 'The alumni cell may invite you to speak at a campus session.',
-    offCopy: 'You will not be invited to speak.',
-  },
-];
+/** "CSE · Batch of 2017": each half links to its page when the viewer can open it. */
+function IdentityChip({ parts }: { parts: Array<{ label: string; href: string | null } | null> }) {
+  const shown = parts.filter((p): p is { label: string; href: string | null } => p !== null);
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-brand-soft px-2.5 py-0.5 text-xs font-semibold text-brand-soft-fg">
+      {shown.map((p, i) => (
+        <span key={p.label} className="inline-flex items-center gap-1">
+          {i > 0 ? <span aria-hidden="true">·</span> : null}
+          {p.href ? (
+            <Link href={p.href} className="underline-offset-2 hover:underline">
+              {p.label}
+            </Link>
+          ) : (
+            p.label
+          )}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function SectionTitle({ title, edit, editLabel }: { title: string; edit: string | null; editLabel: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <CardTitle as="h2">{title}</CardTitle>
+      {edit ? (
+        <ButtonLink href={edit} variant="ghost" size="sm" className="-my-2 min-h-11" aria-label={editLabel}>
+          <Pencil className="size-3.5" aria-hidden="true" />
+          Edit
+        </ButtonLink>
+      ) : null}
+    </div>
+  );
+}
+
+function EmptyLine({ text, href, action }: { text: string; href: string | null; action: string }) {
+  return (
+    <p className="flex flex-wrap items-center gap-x-2 text-sm text-secondary">
+      <span>{text}</span>
+      {href ? (
+        <Link href={href} className="link inline-flex min-h-11 items-center gap-1">
+          <Plus className="size-3.5" aria-hidden="true" />
+          {action}
+        </Link>
+      ) : null}
+    </p>
+  );
+}
+
+interface Timing {
+  locale: string;
+  timeZone: string;
+}
+
+function ExperienceList({ entries, timing }: { entries: EmploymentEntry[]; timing: Timing }) {
+  return (
+    <ol>
+      {entries.map((e, i) => (
+        <li key={e.id} className="relative flex gap-4 pb-5 last:pb-0">
+          {i < entries.length - 1 ? (
+            <span aria-hidden="true" className="absolute bottom-0 left-[0.4375rem] top-5 w-px bg-line" />
+          ) : null}
+          <span
+            aria-hidden="true"
+            className={
+              e.isCurrent
+                ? 'mt-1.5 size-3.5 shrink-0 rounded-full border-2 border-[var(--button-primary-bg)] bg-brand-soft'
+                : 'mt-1.5 size-3.5 shrink-0 rounded-full border-2 border-line-strong bg-surface-raised'
+            }
+          />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <p className="font-medium">{e.designation || e.company}</p>
+              {e.isCurrent ? <Badge tone="brand">Current</Badge> : null}
+            </div>
+            {e.designation ? <p className="text-sm text-secondary">{e.company}</p> : null}
+            <p className="mt-0.5 text-xs text-secondary">
+              {memberLine([period(e.startedOn, e.endedOn, e.isCurrent, timing), e.location])}
+            </p>
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function EducationList({ entries, timing }: { entries: EducationEntry[]; timing: Timing }) {
+  return (
+    <ul className="space-y-4">
+      {entries.map((e) => (
+        <li key={e.id} className="min-w-0">
+          <p className="font-medium">{e.institution}</p>
+          {e.qualification || e.field ? (
+            <p className="text-sm text-secondary">{memberLine([e.qualification, e.field])}</p>
+          ) : null}
+          <p className="mt-0.5 text-xs text-secondary">{period(e.startedOn, e.endedOn, !e.endedOn, timing)}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** "Apr 2021 – Present", month precision, in the college's locale and time zone. */
+function period(start: string | null, end: string | null, current: boolean, timing: Timing): string | null {
+  const from = monthYear(start, timing);
+  const to = end ? monthYear(end, timing) : current ? 'Present' : null;
+  if (from && to) return `${from} – ${to}`;
+  return from ?? (to ? `Until ${to}` : null);
+}
+
+function monthYear(iso: string | null, timing: Timing): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat(timing.locale, { month: 'short', year: 'numeric', timeZone: timing.timeZone }).format(d);
+}
+
+/** Label over value on phones, side by side from sm. */
+const RECORD_ROW = 'grid-cols-1 gap-0.5 sm:grid-cols-[minmax(0,10rem)_1fr] sm:gap-4';
+
+function verificationMethod(method: string | null, office: string): string {
+  switch (method) {
+    case 'auto_roll_match':
+      return 'Matched against the register';
+    case 'admin_manual':
+      return `Checked by the ${office}`;
+    case 'bulk_import':
+      return 'Loaded from college records';
+    case 'placement_cell_import':
+      return 'Loaded by the placement cell';
+    default:
+      return 'Verified';
+  }
+}

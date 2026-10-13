@@ -5,9 +5,11 @@ import { can, require as requireCap } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
 import { getDepartments } from '@/lib/data/repo';
 import { PageHeader, Breadcrumbs, Alert } from '@/components/ui';
+import { formatTimeZoneLabel } from '@/lib/format';
+import { siteOrigin } from '@/lib/share';
 import { EventForm } from './EventForm';
 
-export const metadata = { title: 'New event' };
+export const metadata = { title: 'New event · Staff console' };
 
 export default async function NewEventPage() {
   const session = await getSession();
@@ -42,41 +44,41 @@ export default async function NewEventPage() {
       ? [{ value: mine.code, label: `${mine.code} — ${mine.name}` }]
       : [];
 
+  const pack = brand.pack;
+
   return (
     <div className="space-y-6">
       <PageHeader
         breadcrumbs={
           <Breadcrumbs
             items={[
-              { label: 'Admin', href: '/admin' },
+              { label: 'Staff console', href: '/admin' },
               { label: 'Events', href: '/admin/events' },
               { label: 'New event' },
             ]}
           />
         }
-        eyebrow="Engagement"
+        eyebrow="Events"
         title="New event"
-        description="Save it as a draft while the details settle. Publishing opens registration to the audience you choose, immediately and without a second confirmation from anyone else."
+        description="Save a draft while the details settle. Publishing opens registration straight away."
       />
 
       {options.length === 0 ? (
-        <Alert tone="danger" title="No branch is in your scope">
-          <p>
-            You hold <code className="font-mono text-xs">event.create.department</code> but your account is not
-            attached to a branch, so there is nothing you could scope an event to. Ask the college admin to set your
-            department on the roles screen.
-          </p>
+        <Alert tone="warning" title="Your account has no branch yet">
+          <p>Events you create are for your branch. Ask the college admin to set your department.</p>
         </Alert>
       ) : (
         <EventForm
           options={options}
           locked={!wide}
-          scopeNote={
-            wide
-              ? 'You hold event.create.any, so a college-wide event and any single branch are both available.'
-              : `You hold event.create.department for ${mine?.code ?? 'your branch'}. Every event you create is scoped to it.`
+          scopeNote={wide ? 'College-wide or one branch.' : `Your events are for ${mine?.code ?? 'your branch'}.`}
+          share={{ copy: pack.copy, locale: pack.locale }}
+          origin={await siteOrigin()}
+          timeZoneLabel={formatTimeZoneLabel(pack.locale.timeZone, pack.locale.locale)}
+          canInvite={
+            can(session, 'comms.send.all') || can(session, 'comms.send.segment') || can(session, 'comms.send.department')
           }
-          portalName={brand.pack.copy.portalName}
+          canAlbum={pack.features.gallery && wide}
         />
       )}
     </div>

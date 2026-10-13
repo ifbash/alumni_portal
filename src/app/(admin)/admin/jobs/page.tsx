@@ -1,16 +1,6 @@
-import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
-import {
-  Briefcase,
-  BadgeCheck,
-  ShieldAlert,
-  Building2,
-  MapPin,
-  Users,
-  ExternalLink,
-  CalendarClock,
-  ScrollText,
-} from 'lucide-react';
+import { redirect, notFound } from 'next/navigation';
+import { Building2, CheckCircle2, ChevronRight, TriangleAlert } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
 import { can, require as requireCap } from '@/lib/auth/guard';
@@ -18,35 +8,31 @@ import { getTenantBrand } from '@/lib/tenant';
 import { getJobs } from '@/lib/data/repo';
 import type { JobPosting } from '@/lib/data/types';
 import {
+  Avatar,
+  Badge,
+  ButtonLink,
+  Card,
+  ChipNav,
+  HowThisWorks,
   PageHeader,
   Section,
-  Alert,
-  Badge,
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardBody,
-  CardFooter,
-  Stat,
-  Avatar,
-  EmptyState,
-  Separator,
-  TableWrap,
-  Table,
-  THead,
-  TBody,
-  TR,
-  TH,
-  TD,
-  DefinitionCard,
+  SummaryLine,
 } from '@/components/ui';
+import { JobSummary } from '@/components/content';
 import { formatDate, formatRelative, memberLine } from '@/lib/format';
-import { ModerationActions } from './ModerationActions';
+import { ModerationActions, ModerationPolicy } from './ModerationActions';
 
-export const metadata = { title: 'Job moderation' };
+export const metadata = { title: 'Jobs · Staff console' };
 
-export default async function AdminJobsPage() {
+type Decided = 'all' | 'approved' | 'rejected' | 'closed';
+
+const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+
+export default async function AdminJobsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const session = await getSession();
   if (!session) redirect('/login');
 
@@ -68,392 +54,218 @@ export default async function AdminJobsPage() {
   const livePerPoster = new Map<string, number>();
   for (const j of live) livePerPoster.set(j.postedBy.id, (livePerPoster.get(j.postedBy.id) ?? 0) + 1);
 
-  const moderated = [...rejected, ...live, ...closed]
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .slice(0, 12);
+  const params = await searchParams;
+  const decided: Decided = ((v) => (v === 'approved' || v === 'rejected' || v === 'closed' ? v : 'all'))(
+    one(params.decided),
+  );
+  const pool = decided === 'approved' ? live : decided === 'rejected' ? rejected : decided === 'closed' ? closed : [...rejected, ...live, ...closed];
+  const moderated = [...pool].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 12);
 
   const canReadAudit = can(session, 'audit.read');
+  const canOpenProfiles = can(session, 'profile.read.any');
+
+  const pack = resolved.brand.pack;
+  const timing = { locale: pack.locale.locale, timeZone: pack.locale.timeZone };
+  const oldest = [...pending].sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0] ?? null;
+  const rejectionNote = rejected.find((j) => j.moderationNote)?.moderationNote ?? null;
+
+  const posterHref = (p: JobPosting['postedBy']) =>
+    canOpenProfiles ? `/admin/members/${p.id}` : `/directory/${p.slug}`;
 
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Engagement"
-        title="Job moderation"
-        description="Every posting is held until a human reads it. Alumni post here to reach students who trust the college's name on the listing — that trust is the thing moderation protects."
-        actions={
-          <Badge tone={pending.length ? 'warning' : 'success'} dot>
-            {pending.length ? `${pending.length} waiting` : 'Queue clear'}
-          </Badge>
+        title="Jobs"
+        description={
+          oldest
+            ? `${pending.length} waiting · oldest submitted ${formatRelative(oldest.createdAt, timing)}`
+            : 'Nothing is waiting for a decision.'
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat
-          label="In the queue"
-          value={pending.length}
-          hint={pending.length ? 'Nothing is visible to students until you decide' : 'Nothing waiting'}
-          icon={<ShieldAlert className="size-4" />}
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <SummaryLine
+          className="md:pt-3"
+          items={[
+            { value: live.length, label: 'live', href: '/admin/jobs?decided=approved#decided' },
+            { value: applications, label: applications === 1 ? 'application' : 'applications' },
+            { value: rejected.length, label: 'rejected', href: '/admin/jobs?decided=rejected#decided' },
+          ]}
         />
-        <Stat label="Live postings" value={live.length} hint="Visible in the jobs board" icon={<Briefcase className="size-4" />} />
-        <Stat
-          label="Applications"
-          value={applications.toLocaleString('en-IN')}
-          hint="Across every live posting"
-          icon={<Users className="size-4" />}
-        />
-        <Stat
-          label="Rejected"
-          value={rejected.length}
-          hint="Each one carries a reason the poster can read"
-          icon={<ScrollText className="size-4" />}
-        />
+        <HowThisWorks summary="Moderation policy" className="md:w-96">
+          <ModerationPolicy />
+          <p>Approving publishes the posting to students straight away. A rejection always carries a reason.</p>
+        </HowThisWorks>
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className="min-w-0 space-y-1">
-            <CardTitle as="h2">The policy you are applying</CardTitle>
-            <CardDescription>
-              The rule the last rejection cited, written out so two moderators reach the same answer.
-            </CardDescription>
-          </div>
-        </CardHeader>
-        <CardBody className="space-y-4 text-sm">
-          <div className="space-y-1">
-            <p className="font-semibold">Direct employers only.</p>
-            <p className="text-secondary">
-              The posting must come from the organisation that will employ the candidate. A consultancy or staffing
-              firm advertising a role at an unnamed client is refused, however genuine the role is — a student cannot
-              evaluate an employer they are not told the name of, and the placement cell cannot follow up on an offer
-              that was never made by anyone identifiable.
-            </p>
-          </div>
-          <Separator />
-          <ul className="space-y-2 text-secondary">
-            <li className="flex gap-2">
-              <span aria-hidden="true" className="text-brand-fg">
-                ·
-              </span>
-              <span>
-                <strong className="text-primary">Name the employer.</strong> &ldquo;A leading MNC&rdquo; is a
-                rejection.
-              </span>
-            </li>
-            <li className="flex gap-2">
-              <span aria-hidden="true" className="text-brand-fg">
-                ·
-              </span>
-              <span>
-                <strong className="text-primary">No fee from the candidate</strong>, in any form — registration,
-                training, certification, deposit.
-              </span>
-            </li>
-            <li className="flex gap-2">
-              <span aria-hidden="true" className="text-brand-fg">
-                ·
-              </span>
-              <span>
-                <strong className="text-primary">The apply route must reach the hiring team.</strong> A link to a
-                lead-capture form is not an application.
-              </span>
-            </li>
-            <li className="flex gap-2">
-              <span aria-hidden="true" className="text-brand-fg">
-                ·
-              </span>
-              <span>
-                <strong className="text-primary">A rejection always carries a reason</strong>, and the poster reads
-                it. An approval does not need one.
-              </span>
-            </li>
-          </ul>
-        </CardBody>
-      </Card>
-
-      <Section
-        title="Queue"
-        description={
-          pending.length
-            ? 'Read the whole posting, then decide. Both outcomes are recorded against your name.'
-            : 'Nothing is waiting on you.'
-        }
-      >
+      <Section title="Waiting for a decision">
         {pending.length === 0 ? (
-          <EmptyState
-            icon={<BadgeCheck className="size-5" />}
-            title="The queue is clear"
-            description="Every posting an alumnus has submitted has been decided. New submissions land here immediately and stay invisible to students until then."
-          />
+          <p className="flex items-center gap-2 text-sm text-secondary">
+            <CheckCircle2 className="size-4 shrink-0 text-success-fg" aria-hidden="true" />
+            Nothing is waiting. New postings appear here first.
+          </p>
         ) : (
-          <div className="space-y-6">
+          <ul className="grid gap-4 xl:grid-cols-2">
             {pending.map((job) => (
-              <QueueCard key={job.id} job={job} livePostings={livePerPoster.get(job.postedBy.id) ?? 0} />
+              <li key={job.id} className="min-w-0">
+                <QueueCard
+                  job={job}
+                  locale={pack.locale}
+                  timing={timing}
+                  livePostings={livePerPoster.get(job.postedBy.id) ?? 0}
+                  posterHref={posterHref(job.postedBy)}
+                  precedent={rejectionNote}
+                />
+              </li>
             ))}
-          </div>
+          </ul>
         )}
       </Section>
 
       <Section
-        title="Recently moderated"
-        description="What was decided, and on what grounds. A queue nobody can audit at a glance is a queue that drifts."
+        id="decided"
+        title="Decided"
         actions={
           canReadAudit ? (
-            <Link href="/admin/audit" className="text-sm font-medium text-brand-fg hover:underline">
-              Full audit log
+            <Link href="/admin/audit" className="inline-flex min-h-11 items-center text-sm font-medium text-brand-fg hover:underline sm:min-h-0">
+              Open the audit log
             </Link>
           ) : undefined
         }
       >
+        <ChipNav
+          ariaLabel="Decided postings"
+          items={[
+            { label: 'All', href: '/admin/jobs#decided', active: decided === 'all' },
+            { label: 'Approved', href: '/admin/jobs?decided=approved#decided', active: decided === 'approved', count: live.length },
+            { label: 'Rejected', href: '/admin/jobs?decided=rejected#decided', active: decided === 'rejected', count: rejected.length },
+            { label: 'Closed', href: '/admin/jobs?decided=closed#decided', active: decided === 'closed', count: closed.length },
+          ]}
+        />
+
         {moderated.length === 0 ? (
-          <EmptyState title="Nothing has been moderated yet" description="Decisions appear here as they are made." />
+          <p className="text-sm text-secondary">Nothing here yet. Decisions appear as they are made.</p>
         ) : (
-          <>
-            <TableWrap caption="Recently moderated job postings with the decision and its reason" className="hidden sm:block">
-              <Table>
-                <THead>
-                  <TR>
-                    <TH>Posting</TH>
-                    <TH>Posted by</TH>
-                    <TH>Submitted</TH>
-                    <TH>Decision</TH>
-                    <TH>Reason</TH>
-                  </TR>
-                </THead>
-                <TBody>
-                  {moderated.map((j) => (
-                    <TR key={j.id} interactive>
-                      <TD>
-                        <p className="font-medium">{j.title}</p>
-                        <p className="text-xs text-secondary">
-                          {memberLine([j.company, j.location, j.isInternship ? 'Internship' : null])}
-                        </p>
-                      </TD>
-                      <TD>
-                        <p className="text-sm">{j.postedBy.fullName}</p>
-                        <p className="text-xs text-muted">
-                          {memberLine([j.postedBy.departmentCode, j.postedBy.batchYear])}
-                        </p>
-                      </TD>
-                      <TD>
-                        <span className="text-sm">{formatDate(j.createdAt)}</span>
-                      </TD>
-                      <TD>
-                        <DecisionBadge state={j.state} />
-                      </TD>
-                      <TD>
-                        <p className="max-w-prose text-sm text-secondary">
-                          {j.moderationNote ?? (j.state === 'live' ? 'No reason recorded — approvals do not need one.' : '—')}
-                        </p>
-                      </TD>
-                    </TR>
-                  ))}
-                </TBody>
-              </Table>
-            </TableWrap>
-
-            <div className="space-y-3 sm:hidden">
+          <Card>
+            <ul className="divide-y divide-line">
               {moderated.map((j) => (
-                <DefinitionCard
-                  key={j.id}
-                  title={j.title}
-                  subtitle={memberLine([j.company, j.location])}
-                  rows={[
-                    { label: 'Posted by', value: j.postedBy.fullName },
-                    { label: 'Submitted', value: formatDate(j.createdAt) },
-                    { label: 'Decision', value: <DecisionBadge state={j.state} /> },
-                    {
-                      label: 'Reason',
-                      value: j.moderationNote ?? (j.state === 'live' ? 'None recorded' : '—'),
-                    },
-                  ]}
-                />
+                <li key={j.id}>
+                  <Link
+                    href={`/admin/jobs/${j.id}`}
+                    className="flex min-h-11 items-start gap-3 px-4 py-3 transition-colors duration-fast ease-brand hover:bg-surface-sunken"
+                  >
+                    <Avatar name={j.company} size="sm" shape="square" />
+                    <span className="min-w-0 flex-1 space-y-0.5">
+                      <span className="block truncate font-medium text-primary">{j.title}</span>
+                      <span className="block truncate text-sm text-secondary">
+                        {memberLine([j.company, j.postedBy.fullName, formatDate(j.createdAt, timing)])}
+                      </span>
+                      {j.state === 'rejected' && j.moderationNote ? (
+                        <span className="line-clamp-2 block text-sm text-secondary">{j.moderationNote}</span>
+                      ) : null}
+                    </span>
+                    <DecisionBadge state={j.state} />
+                    <ChevronRight className="mt-1 size-4 shrink-0 text-muted" aria-hidden="true" />
+                  </Link>
+                </li>
               ))}
-            </div>
-
-            <p className="text-xs text-muted">
-              The moderator&rsquo;s name and the exact time of each decision live in the audit log under{' '}
-              <code className="font-mono">job.moderate</code>
-              {canReadAudit ? '.' : ', which needs the audit.read capability to open.'}
-            </p>
-          </>
+            </ul>
+          </Card>
         )}
+
+        {!canReadAudit ? (
+          <p className="text-sm text-secondary">
+            Who decided each posting is in the audit log, which the college admin can open.
+          </p>
+        ) : null}
       </Section>
     </div>
   );
 }
 
 function DecisionBadge({ state }: { state: JobPosting['state'] }) {
-  if (state === 'live') {
-    return (
-      <Badge tone="success" dot>
-        Approved
-      </Badge>
-    );
-  }
-  if (state === 'rejected') {
-    return (
-      <Badge tone="danger" dot>
-        Rejected
-      </Badge>
-    );
-  }
-  return <Badge tone="neutral">Closed by the poster</Badge>;
+  if (state === 'live') return <Badge tone="success">Approved</Badge>;
+  if (state === 'rejected') return <Badge tone="danger">Rejected</Badge>;
+  return <Badge tone="neutral">Closed</Badge>;
 }
 
-function QueueCard({ job, livePostings }: { job: JobPosting; livePostings: number }) {
+function QueueCard({
+  job,
+  locale,
+  timing,
+  livePostings,
+  posterHref,
+  precedent,
+}: {
+  job: JobPosting;
+  locale: Parameters<typeof JobSummary>[0]['locale'];
+  timing: { locale: string; timeZone: string };
+  livePostings: number;
+  posterHref: string;
+  precedent: string | null;
+}) {
   const poster = job.postedBy;
-  const employerMatch =
-    poster.currentCompany && poster.currentCompany.toLowerCase() === job.company.toLowerCase();
+  const employerMatch = Boolean(
+    poster.currentCompany && poster.currentCompany.toLowerCase() === job.company.toLowerCase(),
+  );
+  const yy = poster.batchYear ? `’${String(poster.batchYear).slice(-2)}` : null;
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="min-w-0 space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge tone="warning" dot>
-              Awaiting moderation
-            </Badge>
-            {job.isInternship ? <Badge tone="info">Internship</Badge> : null}
-            <span className="text-xs text-muted">Submitted {formatRelative(job.createdAt)}</span>
-          </div>
-          <CardTitle as="h3">{job.title}</CardTitle>
-          <CardDescription>
-            <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <span className="flex items-center gap-1.5">
-                <Building2 className="size-4" aria-hidden="true" />
-                {job.company}
+    <JobSummary
+      job={job}
+      href={`/admin/jobs/${job.id}`}
+      locale={locale}
+      footer={
+        <div className="space-y-3">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-secondary">
+            <Avatar name={poster.fullName} src={poster.photoUrl} size="xs" />
+            <Link href={posterHref} className="font-medium text-primary hover:text-brand-fg hover:underline">
+              {poster.fullName}
+            </Link>
+            <span>{memberLine([[poster.departmentCode, yy].filter(Boolean).join(' '), `submitted ${formatRelative(job.createdAt, timing)}`])}</span>
+          </p>
+
+          {poster.currentCompany ? (
+            <p className="flex items-start gap-2 text-sm text-secondary">
+              <Building2 className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
+              <span>
+                {employerMatch
+                  ? `Works at ${poster.currentCompany}`
+                  : `Works at ${poster.currentCompany} · posting is for ${job.company}`}
+                {livePostings > 0 ? ` · ${livePostings} of their postings already live` : ''}
               </span>
-              {job.location ? (
-                <span className="flex items-center gap-1.5">
-                  <MapPin className="size-4" aria-hidden="true" />
-                  {job.location}
-                </span>
-              ) : null}
-              {job.closesOn ? (
-                <span className="flex items-center gap-1.5">
-                  <CalendarClock className="size-4" aria-hidden="true" />
-                  Closes {formatDate(job.closesOn)}
-                </span>
-              ) : null}
-            </span>
-          </CardDescription>
-        </div>
-      </CardHeader>
-
-      <CardBody className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <div className="space-y-4">
-          <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-            <div>
-              <dt className="text-xs text-secondary">Experience</dt>
-              <dd className="font-medium">{job.experienceYears ?? 'Not stated'}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-secondary">Compensation</dt>
-              <dd className="font-medium tabular">{job.salaryRange ?? 'Not stated'}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-secondary">Apply route</dt>
-              <dd className="font-medium">
-                {job.applyUrl ? (
-                  <a
-                    href={job.applyUrl}
-                    rel="noreferrer noopener nofollow"
-                    target="_blank"
-                    className="inline-flex items-center gap-1 text-brand-fg underline underline-offset-2"
-                  >
-                    External link
-                    <ExternalLink className="size-3" aria-hidden="true" />
-                  </a>
-                ) : (
-                  'Through the portal'
-                )}
-              </dd>
-            </div>
-          </dl>
-
-          {job.skills.length ? (
-            <ul className="flex flex-wrap gap-1.5">
-              {job.skills.map((s) => (
-                <li key={s}>
-                  <Badge tone="outline">{s}</Badge>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-
-          <div className="rounded-lg border border-line bg-surface p-4">
-            <p className="whitespace-pre-line text-sm leading-relaxed text-secondary">
-              {job.description ?? 'No description was submitted, which is itself grounds for a rejection.'}
             </p>
-          </div>
-        </div>
-
-        <aside className="space-y-4 rounded-lg border border-line bg-surface-sunken p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted">Who posted this</p>
-
-          <div className="flex items-start gap-3">
-            <Avatar name={poster.fullName} src={poster.photoUrl} size="md" />
-            <div className="min-w-0">
-              <Link href={`/directory/${poster.slug}`} className="font-semibold hover:text-brand-fg hover:underline">
-                {poster.fullName}
-              </Link>
-              <p className="text-xs text-secondary">
-                {memberLine([poster.departmentCode, poster.batchYear ? `Batch of ${poster.batchYear}` : null, poster.city])}
-              </p>
-            </div>
-          </div>
-
-          <dl className="space-y-2 text-sm">
-            <div>
-              <dt className="text-xs text-secondary">Current employer on their profile</dt>
-              <dd className="font-medium">
-                {poster.currentCompany
-                  ? memberLine([poster.designation, poster.currentCompany])
-                  : 'Nothing on their profile'}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs text-secondary">Standing</dt>
-              <dd className="font-medium">
-                {livePostings === 0
-                  ? 'First posting from this member'
-                  : `${livePostings} posting${livePostings === 1 ? '' : 's'} already live`}
-              </dd>
-            </div>
-          </dl>
-
-          {employerMatch ? (
-            <Alert tone="success" title="Consistent with the direct-employer rule">
-              <p>
-                They work at {job.company}. A referral from this posting reaches a real person inside the company.
-              </p>
-            </Alert>
-          ) : poster.currentCompany ? (
-            <Alert tone="warning" title="Posting for a company they do not work at">
-              <p>
-                Their profile says {poster.currentCompany}, the posting says {job.company}. That is fine for an
-                alumnus passing on a genuine opening — and it is exactly what a staffing listing looks like. Read the
-                description before approving.
-              </p>
-            </Alert>
           ) : (
-            <Alert tone="warning" title="No employer on their profile">
-              <p>
-                There is nothing to check the posting against. Ask them to complete their profile, or verify the
-                opening independently.
-              </p>
-            </Alert>
+            <p className="flex items-start gap-2 text-sm text-warning-fg">
+              <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              No employer on their profile, so there is nothing to check this against.
+            </p>
           )}
 
-          {poster.openToReferrals ? (
-            <p className="text-xs text-secondary">Open to referrals — students may contact them about this role.</p>
+          {job.description ? (
+            <div className="rounded border border-line bg-surface p-3">
+              <p className="line-clamp-3 whitespace-pre-line text-sm leading-relaxed text-secondary">{job.description}</p>
+              <Link href={`/admin/jobs/${job.id}`} className="mt-1 inline-flex min-h-11 items-center text-sm font-medium text-brand-fg hover:underline sm:min-h-0">
+                Read the full posting
+              </Link>
+            </div>
           ) : null}
-        </aside>
-      </CardBody>
 
-      <CardFooter className="justify-end">
-        <ModerationActions jobId={job.id} jobTitle={job.title} company={job.company} posterName={poster.fullName} />
-      </CardFooter>
-    </Card>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
+            <ButtonLink href={`/admin/jobs/${job.id}`} variant="ghost" size="sm" className="min-h-11 sm:min-h-0">
+              Open
+            </ButtonLink>
+            <ModerationActions
+              jobId={job.id}
+              jobTitle={job.title}
+              company={job.company}
+              posterName={poster.fullName}
+              precedent={precedent}
+            />
+          </div>
+        </div>
+      }
+    />
   );
 }

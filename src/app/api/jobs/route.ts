@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { getSession } from '@/lib/auth/session';
-import { can, require as requireCap, requireSession } from '@/lib/auth/guard';
+import { can, require as requireCap, requireActive } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
 import { getJobs } from '@/lib/data/repo';
 import { logAudit } from '@/lib/audit/log';
@@ -74,7 +74,7 @@ async function jobsFeature() {
 export async function GET(request: Request) {
   try {
     const session = await getSession();
-    requireSession(session);
+    requireActive(session);
     await jobsFeature();
 
     const query = parseQuery(request, ListQuery);

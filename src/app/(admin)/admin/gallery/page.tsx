@@ -1,46 +1,27 @@
-import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { HardDriveUpload, ImageOff, Images, ImagePlus, Inbox, UserRound } from 'lucide-react';
+import { ImageIcon, ImagePlus } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
-import { getDepartments } from '@/lib/data/repo';
 import { getAlbumPhotos, getAlbums, type GalleryAlbum } from '@/lib/data/content';
-import {
-  Alert,
-  Badge,
-  ButtonLink,
-  Card,
-  CardBody,
-  DefinitionCard,
-  EmptyState,
-  PageHeader,
-  Stat,
-  Table,
-  TableWrap,
-  Tabs,
-  TBody,
-  TD,
-  TH,
-  THead,
-  TR,
-} from '@/components/ui';
-import { MarginNote } from '@/components/brand/Marks';
-import { formatDate, formatRelative, memberLine } from '@/lib/format';
-import { ReviewActions } from './ReviewActions';
+import { Badge, ButtonLink, Card, CardBody, EmptyState, MediaFrame, PageHeader, SummaryLine, Tabs } from '@/components/ui';
+import { AlbumCard, parseContributor } from '@/components/content';
+import { formatDate } from '@/lib/format';
+import { siteOrigin } from '@/lib/share';
+import { albumShareText } from '@/lib/share-text';
+import { AlbumActionsMenu, ReviewActions } from './ReviewActions';
 
 /**
  * The gallery console.
  *
- * The interesting row is never the album the alumni cell uploaded itself —
+ * The interesting album is never the one the alumni cell uploaded itself —
  * it is the one a graduate sent in and is now waiting on somebody's
  * decision. A contribution that sits unreviewed for three weeks is a
- * contributor who never sends a second batch, so the queue is the first
- * thing on the page rather than a tab you have to remember to open.
+ * contributor who never sends a second batch, so the queue comes first.
  */
 
-export const metadata = { title: 'Gallery' };
+export const metadata = { title: 'Gallery · Staff console' };
 
 type View = 'all' | 'published' | 'review';
 
@@ -69,25 +50,26 @@ export default async function AdminGalleryPage({
 
   const all = getAlbums({ includeDrafts: true });
   const published = all.filter((a) => a.published);
-  const waiting = all.filter((a) => !a.published);
-  const contributed = waiting.filter((a) => credit(a.contributedBy).byMember);
+  const waiting = all.filter((a) => !a.published && parseContributor(a.contributedBy));
+  const unpublished = all.filter((a) => !a.published && !parseContributor(a.contributedBy));
 
-  const rows = view === 'published' ? published : view === 'review' ? waiting : all;
+  // The album grid below the queue: everything not already waiting on you.
+  const catalogue = view === 'published' ? published : view === 'review' ? unpublished : [...published, ...unpublished];
+  catalogue.sort((a, b) => b.takenOn.localeCompare(a.takenOn));
 
-  const departments = getDepartments();
-  const deptName = (code: string | null) =>
-    code ? (departments.find((d) => d.code === code)?.name ?? code) : 'All branches';
+  const origin = await siteOrigin();
+  const timing = { locale: pack.locale.locale, timeZone: pack.locale.timeZone };
+  const officeName = pack.copy.officeName;
 
-  const recorded = all.reduce((n, a) => n + a.photoCount, 0);
-  const files = all.reduce((n, a) => n + getAlbumPhotos(a.id).filter((p) => p.url).length, 0);
-  const memberAlbums = all.filter((a) => credit(a.contributedBy).byMember).length;
+  const coverOf = (a: GalleryAlbum) => a.coverImage ?? getAlbumPhotos(a.id).find((p) => p.url)?.url ?? null;
+  const withoutPhotos = published.filter((a) => !coverOf(a)).length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         eyebrow="Engagement"
         title="Gallery"
-        description="Albums from meets, convocations and departments, plus whatever graduates send in. An unpublished album is invisible to members — it has no page, and a direct link to it 404s."
+        description="Albums members can browse, and photos graduates send in."
         actions={
           <ButtonLink href="/admin/gallery/new">
             <ImagePlus className="size-4" aria-hidden="true" />
@@ -96,117 +78,82 @@ export default async function AdminGalleryPage({
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat
-          label="Published albums"
-          value={published.length}
-          hint={waiting.length ? `${waiting.length} not published` : 'Nothing unpublished'}
-          icon={<Images className="size-4" />}
+      <div className="space-y-2">
+        <SummaryLine
+          items={[
+            { value: published.length, label: 'published', href: '/admin/gallery?view=published' },
+            { value: waiting.length, label: 'waiting on you', href: '#waiting', tone: 'attention' },
+            { value: unpublished.length, label: 'not published', href: '/admin/gallery?view=review' },
+          ]}
         />
-        <Stat
-          label="Awaiting review"
-          value={contributed.length}
-          hint={contributed.length ? 'Sent in by graduates' : 'Queue is clear'}
-          icon={<Inbox className="size-4" />}
-        />
-        <Stat
-          label="Photographs recorded"
-          value={recorded.toLocaleString('en-IN')}
-          hint={`${files.toLocaleString('en-IN')} image files present`}
-          icon={<HardDriveUpload className="size-4" />}
-        />
-        <Stat
-          label="Contributed albums"
-          value={memberAlbums}
-          hint="Credited to a named graduate"
-          icon={<UserRound className="size-4" />}
-        />
+        {withoutPhotos > 0 ? (
+          <p className="flex items-center gap-2 text-sm text-secondary">
+            <ImageIcon className="size-4 shrink-0 text-muted" aria-hidden="true" />
+            {withoutPhotos === 1
+              ? '1 album has no photos yet, so members see it without photos.'
+              : `${withoutPhotos} albums have no photos yet, so members see them without photos.`}
+          </p>
+        ) : null}
       </div>
 
-      {files === 0 && recorded > 0 ? (
-        <Alert
-          tone="warning"
-          icon={<ImageOff className="size-4" />}
-          title={`${recorded.toLocaleString('en-IN')} photographs are recorded and none has an image file`}
-        >
-          <p>
-            The album records came across from the college&rsquo;s previous system; the image files did not. Members
-            see a labelled placeholder at the true shape of each photograph rather than a broken image, so the pages
-            read correctly in the meantime — but nothing here is worth publishing until the files land. Chase the
-            export before the retention window on the old contract closes.
-          </p>
-        </Alert>
-      ) : null}
-
-      {contributed.length > 0 ? (
-        <section aria-labelledby="review-queue" className="space-y-4">
-          <h2 id="review-queue" className="font-display text-xl font-semibold">
+      {waiting.length > 0 ? (
+        <section id="waiting" aria-labelledby="waiting-heading" className="scroll-mt-20 space-y-3">
+          <h2 id="waiting-heading" className="font-display text-xl font-semibold">
             Waiting on you
           </h2>
-
-          {contributed.map((album) => {
-            const by = credit(album.contributedBy);
-            const preview = getAlbumPhotos(album.id).slice(0, 6);
-
+          {waiting.map((album) => {
+            const who = parseContributor(album.contributedBy)!;
+            const photos = getAlbumPhotos(album.id);
+            // Only photos with a file: a row of blank squares under "First 6"
+            // says nothing about what the graduate sent.
+            const strip = photos.filter((p) => p.url).slice(0, 6);
             return (
-              <Card key={album.id}>
-                <CardBody className="space-y-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0 space-y-1">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <Badge tone="warning" dot>
-                          Awaiting review
-                        </Badge>
-                        <Badge tone="accent">Contributed</Badge>
-                        <Badge tone={album.departmentCode ? 'brand' : 'outline'}>
-                          {album.departmentCode ?? 'All branches'}
-                        </Badge>
-                        {album.batchYear ? <Badge tone="neutral">Batch of {album.batchYear}</Badge> : null}
-                      </div>
-                      <h3 className="font-display text-lg font-semibold">{album.title}</h3>
-                      <p className="text-sm text-secondary">
-                        {by.name}
-                        {by.line ? <span className="text-muted"> · {by.line}</span> : null} · submitted{' '}
-                        {formatRelative(album.takenOn)} ·{' '}
-                        <span className="tabular">{album.photoCount.toLocaleString('en-IN')}</span> photographs
-                      </p>
-                    </div>
-                  </div>
-
-                  {album.description ? (
-                    <p className="max-w-prose rounded border border-line bg-surface-sunken p-3 text-sm text-secondary">
-                      {album.description}
-                    </p>
-                  ) : null}
-
-                  {preview.length > 0 ? (
-                    <div>
-                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
-                        First {preview.length} of {album.photoCount.toLocaleString('en-IN')}
-                      </p>
-                      <ul className="flex flex-wrap gap-2">
-                        {preview.map((photo) => (
-                          <li
-                            key={photo.id}
-                            style={{ aspectRatio: `${photo.width} / ${photo.height}` }}
-                            className="flex h-20 flex-col items-center justify-center gap-0.5 rounded border border-dashed border-line-strong bg-surface-sunken p-1 text-center"
-                          >
-                            <ImageOff className="size-4 text-muted" aria-hidden="true" />
-                            <span className="font-mono text-xs tabular text-muted">
-                              {photo.width}×{photo.height}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-
-                  <ReviewActions
-                    albumId={album.id}
-                    albumTitle={album.title}
-                    contributorName={by.name}
-                    photoCount={album.photoCount}
+              <Card key={album.id} id={`review-${album.id}`}>
+                <CardBody className="grid gap-5 md:grid-cols-[minmax(0,15rem)_minmax(0,1fr)]">
+                  <AlbumCard
+                    album={album}
+                    coverSrc={coverOf(album)}
+                    href={`#review-${album.id}`}
+                    locale={pack.locale}
+                    variant="large"
+                    className="sm:col-span-1"
+                    credit={`Sent in by ${who.name.split(/\s+/)[0]} · ${who.branch} ’${String(who.year).slice(-2)}`}
+                    state={<Badge tone="warning">Waiting for review</Badge>}
                   />
+                  <div className="min-w-0 space-y-4">
+                    <div className="space-y-1.5">
+                      <p className="text-sm text-primary">
+                        Sent by {who.name} ({who.branch} ’{String(who.year).slice(-2)}) · photos from{' '}
+                        {formatDate(album.takenOn, timing)}
+                      </p>
+                      {album.description ? <p className="text-sm text-secondary">{album.description}</p> : null}
+                      <p className="text-sm text-secondary">
+                        Link once published: <span className="break-all text-primary">/gallery/{album.slug}</span>
+                      </p>
+                    </div>
+
+                    {strip.length > 0 ? (
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-medium text-secondary">
+                          First {strip.length} of {album.photoCount.toLocaleString('en-IN')} photos
+                        </p>
+                        <ul className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+                          {strip.map((photo) => (
+                            <li key={photo.id} className="min-w-0">
+                              <MediaFrame src={photo.url} alt={photo.caption ?? ''} aspect="1/1" />
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+
+                    <ReviewActions
+                      albumId={album.id}
+                      albumTitle={album.title}
+                      contributorName={who.name}
+                      photoCount={album.photoCount}
+                    />
+                  </div>
                 </CardBody>
               </Card>
             );
@@ -214,175 +161,84 @@ export default async function AdminGalleryPage({
         </section>
       ) : null}
 
-      <Tabs
-        ariaLabel="Album lists"
-        items={[
-          { label: 'Every album', href: '/admin/gallery', count: all.length, active: view === 'all' },
-          {
-            label: 'Published',
-            href: '/admin/gallery?view=published',
-            count: published.length,
-            active: view === 'published',
-          },
-          {
-            label: 'Not published',
-            href: '/admin/gallery?view=review',
-            count: waiting.length,
-            active: view === 'review',
-          },
-        ]}
-      />
-
-      {rows.length === 0 ? (
-        <EmptyState
-          icon={<Images className="size-5" />}
-          title={view === 'review' ? 'Nothing is waiting' : 'No albums yet'}
-          description={
-            view === 'review'
-              ? 'Every album is published. Contributions from graduates land here first, and they are the ones worth answering quickly.'
-              : 'Albums start here: create one for the next meet, or file the photographs a graduate has sent in under their name.'
-          }
-          action={
-            view !== 'review' ? (
-              <ButtonLink href="/admin/gallery/new" variant="secondary">
-                Create an album
-              </ButtonLink>
-            ) : undefined
-          }
+      <section aria-labelledby="albums-heading" className="space-y-4">
+        <h2 id="albums-heading" className="sr-only">
+          Albums
+        </h2>
+        <Tabs
+          ariaLabel="Albums"
+          items={[
+            { label: 'All albums', href: '/admin/gallery', count: published.length + unpublished.length, active: view === 'all' },
+            { label: 'Published', href: '/admin/gallery?view=published', count: published.length, active: view === 'published' },
+            { label: 'Not published', href: '/admin/gallery?view=review', count: unpublished.length, active: view === 'review' },
+          ]}
         />
-      ) : (
-        <>
-          <TableWrap caption="Albums with their photograph counts, contributor and publication state" className="hidden sm:block">
-            <Table>
-              <THead>
-                <TR>
-                  <TH>Album</TH>
-                  <TH>Scope</TH>
-                  <TH align="right">Photographs</TH>
-                  <TH align="right">Files</TH>
-                  <TH>Contributed by</TH>
-                  <TH>Taken</TH>
-                  <TH>State</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {rows.map((album) => {
-                  const by = credit(album.contributedBy);
-                  const withFiles = getAlbumPhotos(album.id).filter((p) => p.url).length;
 
-                  return (
-                    <TR key={album.id} interactive className={album.published ? undefined : 'bg-surface-sunken'}>
-                      <TD>
-                        {album.published ? (
-                          <Link
-                            href={`/gallery/${album.slug}`}
-                            className="font-semibold hover:text-brand-fg hover:underline"
-                          >
-                            {album.title}
-                          </Link>
-                        ) : (
-                          <span className="font-semibold">{album.title}</span>
-                        )}
-                        <p className="mt-0.5 font-mono text-xs text-muted">/{album.slug}</p>
-                      </TD>
-                      <TD>
-                        <p className="text-sm">{deptName(album.departmentCode)}</p>
-                        <p className="text-xs text-muted">
-                          {album.batchYear ? `Batch of ${album.batchYear}` : 'Not batch-specific'}
-                          {album.eventSlug ? ' · from an event' : ''}
-                        </p>
-                      </TD>
-                      <TD numeric>{album.photoCount.toLocaleString('en-IN')}</TD>
-                      <TD numeric>
-                        {withFiles > 0 ? (
-                          withFiles.toLocaleString('en-IN')
-                        ) : (
-                          <span className="text-muted">None</span>
-                        )}
-                      </TD>
-                      <TD>
-                        <p className="text-sm">{by.name}</p>
-                        <p className="text-xs text-muted">{by.byMember ? by.line : 'College record'}</p>
-                      </TD>
-                      <TD className="whitespace-nowrap text-secondary">{formatDate(album.takenOn, pack.locale)}</TD>
-                      <TD>
-                        <StateBadge album={album} />
-                      </TD>
-                    </TR>
-                  );
-                })}
-              </TBody>
-            </Table>
-          </TableWrap>
-
-          {/* Below sm a seven-column table is unreadable however it scrolls. */}
-          <div className="space-y-3 sm:hidden">
-            {rows.map((album) => {
-              const by = credit(album.contributedBy);
+        {catalogue.length === 0 ? (
+          view === 'all' ? (
+            <EmptyState
+              icon={<ImageIcon className="size-5" />}
+              title="No albums yet"
+              description="Create one for the next event, or file the photos a graduate has sent in."
+              action={
+                <ButtonLink href="/admin/gallery/new" variant="secondary">
+                  Create an album
+                </ButtonLink>
+              }
+            />
+          ) : (
+            <p className="text-sm text-secondary">
+              {view === 'review'
+                ? 'Every album the college made is published.'
+                : 'Nothing is published yet.'}
+            </p>
+          )
+        ) : (
+          <ul className="grid grid-cols-2 gap-x-4 gap-y-6 md:grid-cols-3 xl:grid-cols-4">
+            {catalogue.map((album) => {
+              const who = parseContributor(album.contributedBy);
+              const credit = who
+                ? `Sent in by ${who.name.split(/\s+/)[0]} · ${who.branch} ’${String(who.year).slice(-2)}`
+                : album.contributedBy
+                  ? `By ${album.contributedBy}`
+                  : `By the ${officeName}`;
+              const memberHref = album.published ? `/gallery/${album.slug}` : null;
               return (
-                <DefinitionCard
+                <li
                   key={album.id}
-                  title={album.title}
-                  subtitle={memberLine([deptName(album.departmentCode), album.batchYear])}
-                  rows={[
-                    { label: 'Photographs', value: album.photoCount.toLocaleString('en-IN') },
-                    { label: 'Contributed by', value: by.name },
-                    { label: 'Taken', value: formatDate(album.takenOn, pack.locale) },
-                    { label: 'State', value: <StateBadge album={album} /> },
-                  ]}
-                  actions={
-                    album.published ? (
-                      <ButtonLink href={`/gallery/${album.slug}`} variant="secondary" size="sm">
-                        Open the album
-                      </ButtonLink>
-                    ) : null
-                  }
-                />
+                  id={`album-${album.id}`}
+                  className="relative min-w-0 has-[[aria-expanded=true]]:z-20"
+                >
+                  <AlbumCard
+                    album={album}
+                    coverSrc={coverOf(album)}
+                    href={memberHref ?? `#album-${album.id}`}
+                    locale={pack.locale}
+                    credit={credit}
+                    // Without a photo the art is a slim label strip, as members see it.
+                    className={coverOf(album) ? undefined : '[&_figure>div]:aspect-[5/2]'}
+                    state={album.published ? undefined : <Badge tone="neutral">Not published</Badge>}
+                    action={
+                      <AlbumActionsMenu
+                        albumId={album.id}
+                        albumTitle={album.title}
+                        photoCount={album.photoCount}
+                        memberHref={memberHref}
+                        shareText={
+                          memberHref
+                            ? `${albumShareText(pack, album)} ${origin}${memberHref}`
+                            : null
+                        }
+                        canPublish={!album.published}
+                      />
+                    }
+                  />
+                </li>
               );
             })}
-          </div>
-        </>
-      )}
-
-      <MarginNote className="max-w-prose">
-        Publishing an album makes every photograph in it visible to every verified member, students included. That is
-        the point of an archive, and it is also why a face nobody can name is a reason to leave a photograph out
-        rather than a reason to caption it carefully.
-      </MarginNote>
+          </ul>
+        )}
+      </section>
     </div>
   );
-}
-
-// ---------------------------------------------------------------
-
-function StateBadge({ album }: { album: GalleryAlbum }) {
-  if (album.published) {
-    return (
-      <Badge tone="success" dot>
-        Live
-      </Badge>
-    );
-  }
-  if (credit(album.contributedBy).byMember) {
-    return (
-      <Badge tone="warning" dot>
-        Awaiting review
-      </Badge>
-    );
-  }
-  return (
-    <Badge tone="neutral" dot>
-      Draft — not visible to members
-    </Badge>
-  );
-}
-
-/** Same rule the member pages use: "Name (BRANCH, YEAR)" is a member credit. */
-const MEMBER_CREDIT = /^(.+?)\s*\(([A-Za-z]+),\s*(\d{4})\)$/;
-
-function credit(contributedBy: string | null): { name: string; byMember: boolean; line: string | null } {
-  if (!contributedBy) return { name: 'Alumni Cell', byMember: false, line: null };
-  const match = MEMBER_CREDIT.exec(contributedBy.trim());
-  if (!match) return { name: contributedBy, byMember: false, line: null };
-  return { name: match[1]!, byMember: true, line: `${match[2]} · Batch of ${match[3]}` };
 }

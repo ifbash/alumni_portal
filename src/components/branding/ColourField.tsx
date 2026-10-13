@@ -105,8 +105,10 @@ export function ColourField({
       notice={
         packOnly ? (
           <span className="inline-flex items-center gap-1.5">
-            <Badge tone="outline">pack file</Badge>
-            <span>Travels in the exported JSON, not in the browser form.</span>
+            <Badge tone="outline" className="shrink-0 whitespace-nowrap">
+              pack file
+            </Badge>
+            <span>Saved in the pack file, not by Publish.</span>
           </span>
         ) : undefined
       }
@@ -205,7 +207,7 @@ function ContrastChip({
 
   return (
     <p className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-0.5 text-xs text-secondary">
-      <Badge tone={passes ? 'success' : 'danger'} dot>
+      <Badge tone={passes ? 'success' : 'danger'} dot className="shrink-0 whitespace-nowrap">
         {ratio.toFixed(2)}:1 {passes ? 'passes' : 'fails'}
       </Badge>
       <span>

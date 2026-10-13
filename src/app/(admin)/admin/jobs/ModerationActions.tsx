@@ -2,21 +2,11 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, X, ShieldCheck } from 'lucide-react';
+import { Check, CheckCircle2, X } from 'lucide-react';
 
-import {
-  Button,
-  Badge,
-  Dialog,
-  Field,
-  describedBy,
-  Textarea,
-  Fieldset,
-  Radio,
-  Alert,
-  useToast,
-} from '@/components/ui';
+import { Button, Badge, Dialog, Field, describedBy, Textarea, Fieldset, Radio, useToast } from '@/components/ui';
 import { api, outcomeToast } from '@/lib/client/api';
+import { cn } from '@/lib/cn';
 
 /**
  * Approve, or reject with a reason. There is no third option and no silent
@@ -24,6 +14,14 @@ import { api, outcomeToast } from '@/lib/client/api';
  * attached to a named person, because the poster is told what happened and
  * the audit log has to be able to answer "who decided this, and why".
  */
+
+/** The board's policy: the Reject dialog and the queue's policy disclosure both show it. */
+const MODERATION_POLICY = [
+  'The employer is named. “A leading MNC” is not a name.',
+  'The posting comes from the employer, not a staffing firm.',
+  'No fee is asked of candidates, in any form.',
+  'The apply link reaches the hiring team, not a sign-up form.',
+] as const;
 
 const REASONS = [
   {
@@ -60,11 +58,18 @@ export function ModerationActions({
   jobTitle,
   company,
   posterName,
+  precedent = null,
+  rejectLabel = 'Reject',
+  className,
 }: {
   jobId: string;
   jobTitle: string;
   company: string;
   posterName: string;
+  /** The wording the last rejection on this board used, shown inside the Reject dialog. */
+  precedent?: string | null;
+  rejectLabel?: string;
+  className?: string;
 }) {
   const toast = useToast();
   const router = useRouter();
@@ -84,6 +89,7 @@ export function ModerationActions({
   const chosen = REASONS.find((r) => r.id === reason) ?? null;
   const finalText = reason === 'other' ? note.trim() : chosen?.text ?? '';
   const blocked = !reason || (reason === 'other' && note.trim().length < 12);
+  const noteShort = note.trim().length > 0 && note.trim().length < 12;
 
   /**
    * Approve or reject, both through the same guarded endpoint. A rejection
@@ -129,61 +135,53 @@ export function ModerationActions({
 
   if (decision) {
     return (
-      <div className="min-w-0 space-y-2">
-        <div className="flex flex-wrap items-center gap-3">
-          <Badge tone={decision.action === 'approved' ? 'success' : 'danger'} dot>
-            {decision.action === 'approved' ? 'Approved' : 'Rejected'}
-          </Badge>
-          <p className="text-sm text-secondary">{decision.note}</p>
+      <div className={cn('min-w-0 space-y-2', className)} role="status">
+        <div className="flex flex-wrap items-center gap-2">
+          {decision.persisted ? (
+            <Badge tone={decision.action === 'approved' ? 'success' : 'danger'} dot>
+              {decision.action === 'approved' ? 'Approved' : 'Rejected'}
+            </Badge>
+          ) : (
+            <Badge tone="neutral">Not saved</Badge>
+          )}
+          {decision.persisted ? <p className="text-sm text-secondary">{decision.note}</p> : null}
         </div>
-
         {decision.reasonText ? (
-          <p className="max-w-prose rounded border border-line bg-surface-sunken p-3 text-sm">
+          <p className="max-w-prose text-sm text-secondary">
+            <span className="font-medium text-primary">Reason: </span>
             {decision.reasonText}
           </p>
         ) : null}
-
-        <p className="text-xs text-muted">
-          In the audit log as <code className="font-mono text-xs">job.{decision.action === 'approved' ? 'approve' : 'reject'}</code>{' '}
-          against your name, with the before and after state of the posting.
-          {decision.persisted
-            ? ''
-            : ' Recorded on this screen only — this build has no database behind it, so the posting itself is unchanged and nothing has reached ' +
-              posterName +
-              '.'}
-        </p>
       </div>
     );
   }
 
   return (
     <>
-      <p className="mr-auto max-w-prose text-xs text-muted">
-        Both decisions are recorded against your name with the posting&rsquo;s before and after state. {posterName} is
-        told either way; a rejection sends them your reason verbatim.
-      </p>
+      <div className={cn('flex flex-wrap items-center justify-end gap-2', className)}>
+        {refusal ? (
+          <p role="alert" className="w-full text-sm font-medium text-danger-fg">
+            {refusal}
+          </p>
+        ) : null}
 
-      {refusal ? (
-        <p role="alert" className="w-full text-xs font-medium text-danger-fg">
-          {refusal}
-        </p>
-      ) : null}
+        <Button variant="secondary" onClick={() => setOpen(true)} disabled={pending !== null} className="min-h-11 sm:min-h-0">
+          <X className="size-4" aria-hidden="true" />
+          {rejectLabel}
+        </Button>
 
-      <Button variant="secondary" onClick={() => setOpen(true)} disabled={pending !== null}>
-        <X className="size-4" aria-hidden="true" />
-        Reject
-      </Button>
-
-      <Button onClick={() => void moderate('approve')} loading={pending === 'approve'}>
-        <Check className="size-4" aria-hidden="true" />
-        Approve and publish
-      </Button>
+        <Button onClick={() => void moderate('approve')} loading={pending === 'approve'} className="min-h-11 sm:min-h-0">
+          <Check className="size-4" aria-hidden="true" />
+          Approve and publish
+        </Button>
+      </div>
 
       <Dialog
         open={open}
         onClose={() => setOpen(false)}
         title="Reject this posting"
-        description={`${jobTitle} at ${company}, posted by ${posterName}.`}
+        description={`${jobTitle} at ${company}. ${posterName} reads the reason you choose.`}
+        size="lg"
         footer={
           <>
             <Button variant="secondary" onClick={() => setOpen(false)}>
@@ -195,20 +193,18 @@ export function ModerationActions({
               loading={pending === 'reject'}
               onClick={() => void moderate('reject')}
             >
-              Reject and notify
+              Reject with this reason
             </Button>
           </>
         }
       >
         <div className="space-y-5">
-          <Alert tone="info" title="The poster reads this">
-            <p>
-              A rejection without a reason reads as the college losing the submission. Pick the rule it breaks; the
-              wording below is what {posterName} receives.
-            </p>
-          </Alert>
+          <div className="rounded-lg border border-line bg-surface p-4">
+            <p className="text-sm font-medium text-primary">The board’s policy</p>
+            <ModerationPolicy className="mt-2" />
+          </div>
 
-          <Fieldset legend="Reason" hint="One reason is enough. The most specific one is the most useful.">
+          <Fieldset legend="Reason" hint="The most specific one is the most useful.">
             {REASONS.map((r) => (
               <Radio
                 key={r.id}
@@ -227,33 +223,45 @@ export function ModerationActions({
               htmlFor={`reject-note-${jobId}`}
               label="What is wrong with it"
               required
-              hint="Written to the poster as-is. At least a sentence."
-              error={note.trim().length > 0 && note.trim().length < 12 ? 'Give the poster something they can act on.' : undefined}
+              hint="Sent to the poster as written. At least a sentence."
+              error={noteShort ? 'Give the poster something they can act on.' : undefined}
             >
               <Textarea
                 id={`reject-note-${jobId}`}
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 rows={4}
-                placeholder="The salary range and the location contradict the description. Resubmit with the correct details."
-                invalid={note.trim().length > 0 && note.trim().length < 12}
-                aria-describedby={describedBy(`reject-note-${jobId}`, {
-                  hint: true,
-                  error: note.trim().length > 0 && note.trim().length < 12,
-                })}
+                placeholder="e.g. The salary and the location contradict the description. Resubmit with the correct details."
+                invalid={noteShort}
+                aria-describedby={describedBy(`reject-note-${jobId}`, { hint: true, error: noteShort })}
               />
             </Field>
           ) : null}
 
-          <p className="flex items-start gap-2 text-xs text-muted">
-            <ShieldCheck className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            <span>
-              The decision, your name and this reason are written to the audit log. Rejections are not deletions — the
-              posting stays on file and the poster can resubmit a corrected version.
-            </span>
-          </p>
+          {precedent ? (
+            <figure className="space-y-1.5">
+              <figcaption className="text-xs font-medium text-secondary">The last rejection on this board said</figcaption>
+              <blockquote className="rounded border-l-2 border-line-strong bg-surface-sunken px-3 py-2 text-sm text-secondary">
+                {precedent}
+              </blockquote>
+            </figure>
+          ) : null}
         </div>
       </Dialog>
     </>
+  );
+}
+
+/** The policy as a checklist. A client leaf, so a server page can render it too. */
+export function ModerationPolicy({ className }: { className?: string }) {
+  return (
+    <ul className={cn('space-y-1.5 text-sm text-secondary', className)}>
+      {MODERATION_POLICY.map((rule) => (
+        <li key={rule} className="flex gap-2">
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
+          <span>{rule}</span>
+        </li>
+      ))}
+    </ul>
   );
 }

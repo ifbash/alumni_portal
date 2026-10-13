@@ -1,25 +1,31 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { Info, SearchX, SlidersHorizontal, Users } from 'lucide-react';
+import { SearchX, Users } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap, can, type Session } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
-import { searchDirectory } from '@/lib/data/repo';
+import { getOwnProfile, searchDirectory } from '@/lib/data/repo';
 import type { DirectoryFacets, DirectoryQuery } from '@/lib/data/types';
+import { siteOrigin } from '@/lib/share';
+import { viewerBatchYear, viewerBranch } from '@/lib/identity';
 import {
   Alert,
   ButtonLink,
+  ChipNav,
+  CopyButton,
   EmptyState,
-  PageHeader,
   Pagination,
-  SegmentedNav,
+  StickyActionBar,
+  Tabs,
 } from '@/components/ui';
+import { PageBand } from '@/components/brand/PageBand';
 import { MemberCard } from '@/components/members/MemberCard';
-import { MarginNote } from '@/components/brand/Marks';
 import { FilterPanel } from '@/components/directory/FilterPanel';
-import { SearchBar } from '@/components/directory/SearchBar';
+import { FiltersSheet, SearchBar, SortMenu } from '@/components/directory/SearchBar';
 import { ActiveFilters } from '@/components/directory/ActiveFilters';
+import { StartHere, type StartTile } from '@/components/directory/StartHere';
+import { BrowseStrip } from '@/components/directory/BrowseStrip';
 import {
   AVAILABILITY,
   SORTS,
@@ -63,81 +69,124 @@ export default async function DirectoryPage({
   const result = searchDirectory(session, query);
   const facets = leaveOneOutFacets(session, query);
 
-  const { items, total, page, perPage, pageCount, tier } = result;
-  const firstOnPage = total === 0 ? 0 : (page - 1) * perPage + 1;
-  const lastOnPage = Math.min(page * perPage, total);
+  const { items, total, page, pageCount, tier } = result;
   const noun = cohortNoun(params.cohort, canSearchStudents);
   const filterCount = countFilters(params);
+  const filtering = activeFilterKeys(params).length > 0 || Boolean(params.q);
+  const { shortName } = pack.copy;
+  const studentTier = tier === 'student';
+
+  // The unfiltered alumni set, for the header's sentence and the browse
+  // strip. The same query the results run, with nothing narrowing it.
+  const everyone = searchDirectory(session, { cohort: 'alumni', perPage: 1 });
+  const years = everyone.facets.batches
+    .map((b) => Number(b.value))
+    .filter((n) => Number.isFinite(n))
+    .sort((a, b) => b - a);
+  const first = years[years.length - 1];
+  const last = years[0];
+
+  const lead = studentTier
+    ? `Graduates of ${shortName} who can help. Start with people marked Mentors: they have said yes to being asked.`
+    : `${everyone.total.toLocaleString('en-IN')} graduates${
+        years.length >= 2 ? ` from ${first}–${last}` : ''
+      }. Search by batch, branch, company or city.`;
+
+  const origin = await siteOrigin();
+  const searchLink = `${origin}${buildDirectoryHref(params)}`;
+
+  const sortItems = SORTS.map((s) => ({
+    label: s.label,
+    href: buildDirectoryHref(params, { sort: s.value === 'relevance' ? null : s.value }),
+    active: (params.sort ?? 'relevance') === s.value,
+  }));
+
+  // One availability at a time: the chip row reads as a choice of whom to
+  // look for. Combinations still arrive intact from a shared link.
+  const noAvailability = AVAILABILITY.every((a) => params[a.key] !== '1');
+  const availabilityNav = [
+    {
+      label: 'Everyone',
+      href: buildDirectoryHref(params, { mentoring: null, referrals: null, speaking: null }),
+      active: noAvailability,
+    },
+    ...AVAILABILITY.map((a) => ({
+      label: a.chip,
+      href: buildDirectoryHref(params, {
+        mentoring: null,
+        referrals: null,
+        speaking: null,
+        [a.key]: '1',
+      }),
+      active: params[a.key] === '1',
+    })),
+  ];
+
+  const cohortTabs = canSearchStudents
+    ? [
+        { label: 'Alumni', value: 'alumni' },
+        { label: 'Final-year students', value: 'students' },
+        { label: 'Everyone', value: 'all' },
+      ].map((c) => ({
+        label: c.label,
+        href: buildDirectoryHref(params, { cohort: c.value === 'all' ? null : c.value }),
+        active: (params.cohort ?? 'all') === c.value,
+      }))
+    : null;
+
+  const start = !filtering && !canSearchStudents ? startTiles(session, everyone.facets, studentTier) : null;
+
+  const browse = !filtering ? (
+    <BrowseStrip
+      batches={years}
+      branches={everyone.facets.departments.map((d) => ({ code: d.value, name: d.label }))}
+    />
+  ) : null;
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        eyebrow={pack.copy.shortName}
-        title="Directory"
-        description={`Everyone listed here is a verified member of the ${pack.copy.shortName} network. Filter by branch, batch, company, city or skill — the address bar holds the whole search, so a link you paste into WhatsApp opens the same result set for whoever receives it.`}
+      <PageBand
+        pack={pack}
+        size="compact"
+        eyebrow={`${shortName} directory`}
+        title="Find your people"
+        lead={lead}
       />
 
       <SearchBar params={params} />
 
       <ActiveFilters params={params} departments={facets.departments} />
 
-      <div className="grid gap-gutter lg:grid-cols-[18rem_minmax(0,1fr)]">
-        <div className="min-w-0">
-          {/* Below lg the panel is collapsed by default: on a 360px screen a
-              nine-section filter list pushes every result below the fold. */}
-          <details className="lg:hidden">
-            <summary className="flex h-control cursor-pointer list-none items-center justify-between gap-2 rounded border border-line bg-surface-raised px-4 text-sm font-semibold marker:hidden">
-              <span className="flex items-center gap-2">
-                <SlidersHorizontal className="size-4 text-muted" aria-hidden="true" />
-                Filters
-                {filterCount > 0 ? (
-                  <span className="rounded-full bg-brand-soft px-2 py-0.5 text-xs tabular text-brand-soft-fg">
-                    {filterCount}
-                  </span>
-                ) : null}
-              </span>
-              <span className="text-xs font-medium text-muted">Open</span>
-            </summary>
-            <FilterPanel
-              className="mt-3"
-              params={params}
-              facets={facets}
-              canSearchStudents={canSearchStudents}
-              idPrefix="m-"
-            />
-          </details>
-
-          <div className="hidden lg:sticky lg:top-6 lg:block">
+      <div className="grid grid-cols-1 gap-gutter lg:grid-cols-[18rem_minmax(0,1fr)]">
+        <div className="hidden min-w-0 lg:block">
+          <div className="lg:sticky lg:top-20">
             <FilterPanel
               params={params}
               facets={facets}
               canSearchStudents={canSearchStudents}
+              studentTier={studentTier}
             />
           </div>
         </div>
 
-        <section aria-label="Search results" className="min-w-0 space-y-4">
-          {tier === 'student' ? (
-            <Alert
-              tone="info"
-              title="You are seeing alumni who have opted in to being contacted"
-              icon={<Info className="size-4" />}
-            >
-              <p>
-                Other students are not listed, and contact details are not shown here. An
-                alumnus&apos;s email or number is released only after they accept a request from
-                you — that is their choice, not a restriction the college applies to you.
-              </p>
-            </Alert>
+        <section aria-label="Search results" className="flex min-w-0 flex-col gap-4 lg:gap-5">
+          {cohortTabs ? <Tabs items={cohortTabs} ariaLabel="Who to show" /> : null}
+
+          {/* Ways in, shown only before any search. On a phone they follow
+              the results: the first screen there is for people. */}
+          {start || browse ? (
+            <div className="order-last space-y-4 border-t border-line pt-4 sm:order-none sm:border-0 sm:pt-0">
+              {start ? <StartHere tiles={start.tiles} employers={start.employers} /> : null}
+              {browse}
+            </div>
           ) : null}
 
           {/* A search link is meant to be shared, which means it will be
               opened by someone with narrower access than whoever made it. */}
           {params.cohort === 'students' && !canSearchStudents ? (
-            <Alert tone="warning" title="This link filters for final-year students">
+            <Alert tone="warning" title="This link searches final-year students">
               <p>
-                Whoever shared it can see the student cohort; your account cannot, so nothing
-                matches.{' '}
+                Your account searches alumni.{' '}
                 <Link href={buildDirectoryHref(params, { cohort: null })} className="link">
                   Run the same search over alumni
                 </Link>
@@ -146,39 +195,39 @@ export default async function DirectoryPage({
             </Alert>
           ) : null}
 
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-secondary">
-              {total === 0 ? (
-                <>No {noun} match</>
-              ) : (
-                <>
-                  Showing{' '}
-                  <span className="tabular font-medium text-primary">
-                    {firstOnPage.toLocaleString('en-IN')}–{lastOnPage.toLocaleString('en-IN')}
-                  </span>{' '}
-                  of <span className="tabular font-medium text-primary">{total.toLocaleString('en-IN')}</span>{' '}
-                  {noun}
-                </>
-              )}
-            </p>
-
-            <div className="-mx-1 max-w-full overflow-x-auto px-1">
-              <SegmentedNav
-                items={SORTS.map((s) => ({
-                  label: s.label,
-                  href: buildDirectoryHref(params, {
-                    sort: s.value === 'relevance' ? null : s.value,
-                  }),
-                  active: (params.sort ?? 'relevance') === s.value,
-                }))}
-              />
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+              <h2 className="font-display text-lg font-semibold">
+                {total === 0 ? (
+                  <>No {noun} match</>
+                ) : (
+                  <>
+                    <span className="tabular">{total.toLocaleString('en-IN')}</span>{' '}
+                    {total === 1 ? 'person' : 'people'}
+                  </>
+                )}
+              </h2>
+              <div className="flex items-center gap-2">
+                <CopyButton
+                  text={searchLink}
+                  label="Copy link to this search"
+                  copiedLabel="Link copied"
+                  variant="ghost"
+                  size="sm"
+                />
+                <SortMenu id="directory-sort" items={sortItems} className="hidden lg:block" />
+              </div>
             </div>
+
+            {/* Final-year students do not mentor or refer; the row would only ever empty the list. */}
+            {params.cohort !== 'students' ? (
+              <ChipNav items={availabilityNav} ariaLabel="Who is open to being asked" />
+            ) : null}
           </div>
 
           {items.length === 0 && total > 0 ? (
-            <Alert tone="warning" title={`Page ${page} is past the end of this result set`}>
+            <Alert tone="warning" title={`Page ${page} is past the end of these results`}>
               <p>
-                There are {total.toLocaleString('en-IN')} {noun} in total.{' '}
                 <Link href={buildDirectoryHref(params, { page: null })} className="link">
                   Go back to the first page
                 </Link>
@@ -188,15 +237,33 @@ export default async function DirectoryPage({
           ) : null}
 
           {items.length > 0 ? (
-            <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {items.map((member) => (
-                // `relative` so the card's overlay link covers the card and
-                // nothing else — the whole tile is the hit target on a phone.
-                <li key={member.id} className="relative">
-                  <MemberCard member={member} className="h-full" />
-                </li>
-              ))}
-            </ul>
+            <>
+              {/* Phones get the compact row: a full card per person made this
+                  page seven thousand pixels tall at 390. */}
+              <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface-raised shadow-sm sm:hidden">
+                {items.map((member) => (
+                  <li key={member.id} className="relative min-w-0">
+                    <MemberCard
+                      member={member}
+                      variant="row"
+                      isViewer={member.id === session.memberId}
+                      className="min-h-0 rounded-none border-0 py-2 shadow-none hover:bg-surface-sunken hover:shadow-none"
+                    />
+                  </li>
+                ))}
+              </ul>
+              {/* Two across beside the filter rail: three left each card
+                  about 260px, which wrapped names and broke the chips. */}
+              <ul className="hidden gap-4 sm:grid sm:grid-cols-2 2xl:grid-cols-3">
+                {items.map((member) => (
+                  // `relative` so the card's overlay link covers the card and
+                  // nothing else — the whole tile is the hit target.
+                  <li key={member.id} className="relative min-w-0">
+                    <MemberCard member={member} className="h-full" isViewer={member.id === session.memberId} />
+                  </li>
+                ))}
+              </ul>
+            </>
           ) : null}
 
           {total === 0 ? <NoResults params={params} noun={noun} /> : null}
@@ -213,18 +280,114 @@ export default async function DirectoryPage({
             />
           ) : null}
 
-          <MarginNote className="max-w-prose border-t border-line pt-4">
-            Contact details are never listed on this page. They are released when the member has
-            consented <em>and</em> the viewer is entitled to see them — both, never either. Bulk
-            export is a college-admin action and is logged with a reason.
-          </MarginNote>
+          {can(session, 'member.export') ? (
+            <p className="text-sm text-secondary">
+              Contact exports are run from the{' '}
+              <Link href="/admin/members" className="link">
+                staff console
+              </Link>
+              .
+            </p>
+          ) : null}
         </section>
       </div>
+
+      <StickyActionBar label="Filters and sort">
+        <FiltersSheet count={filterCount}>
+          <FilterPanel
+            params={params}
+            facets={facets}
+            canSearchStudents={canSearchStudents}
+            studentTier={studentTier}
+            idPrefix="m-"
+            framed={false}
+          />
+        </FiltersSheet>
+        <SortMenu id="directory-sort-bar" items={sortItems} placement="above" />
+      </StickyActionBar>
     </div>
   );
 }
 
 // ---------------------------------------------------------------
+
+/**
+ * The viewer's own starting points. Students are offered mentors, their
+ * branch and the employers alumni work at; everyone else their batch,
+ * their branch, people near them and mentors. Counts come from the same
+ * unfiltered search as the header and one `perPage: 1` count each.
+ */
+function startTiles(
+  session: Session,
+  facets: DirectoryFacets,
+  studentTier: boolean,
+): { tiles: StartTile[]; employers?: Array<{ label: string; href: string }> } {
+  const mentors = searchDirectory(session, { mentoring: true, perPage: 1 }).total;
+  const branch = viewerBranch(session);
+
+  if (studentTier) {
+    const tiles: StartTile[] = [
+      { key: 'mentor', label: 'Alumni who mentor', count: mentors, href: '/directory?mentoring=1', icon: 'mentor' },
+    ];
+    if (branch) {
+      tiles.push({
+        key: 'branch',
+        label: 'From your branch',
+        detail: branch,
+        count: facets.departments.find((d) => d.value === branch)?.count ?? null,
+        href: buildDirectoryHref({}, { department: branch }),
+        icon: 'branch',
+      });
+    }
+    const employers = facets.companies.slice(0, 3).map((c) => ({
+      label: c.label,
+      href: buildDirectoryHref({}, { company: c.value }),
+    }));
+    return { tiles, employers };
+  }
+
+  const tiles: StartTile[] = [];
+  const year = viewerBatchYear(session);
+  if (year) {
+    tiles.push({
+      key: 'batch',
+      label: 'Your batch',
+      detail: String(year),
+      count: facets.batches.find((b) => b.value === String(year))?.count ?? null,
+      href: `/directory/batch/${year}`,
+      icon: 'batch',
+    });
+  }
+  if (branch) {
+    tiles.push({
+      key: 'branch',
+      label: 'Your branch',
+      detail: branch,
+      count: facets.departments.find((d) => d.value === branch)?.count ?? null,
+      href: `/directory/branch/${encodeURIComponent(branch)}`,
+      icon: 'branch',
+    });
+  }
+  const city = getOwnProfile(session)?.city ?? null;
+  if (city) {
+    tiles.push({
+      key: 'near',
+      label: 'Near you',
+      detail: city,
+      count: searchDirectory(session, { city, perPage: 1 }).total,
+      href: buildDirectoryHref({}, { city }),
+      icon: 'near',
+    });
+  }
+  tiles.push({
+    key: 'mentor',
+    label: 'Open to mentoring',
+    count: mentors,
+    href: '/directory?mentoring=1',
+    icon: 'mentor',
+  });
+  return { tiles };
+}
 
 /**
  * Facet counts, computed leave-one-out.
@@ -310,8 +473,8 @@ function NoResults({ params, noun }: { params: DirectoryParams; noun: string }) 
   }
 
   const description = params.q
-    ? `Nothing matches “${params.q}” with the filters you have on. Spelling in the register varies — try a surname on its own, or a company instead of a person.`
-    : `That combination of filters has no ${noun} in it. Removing one usually brings the list back.`;
+    ? `Nothing matches “${params.q}” with these filters. Try a surname on its own, or a company.`
+    : `No ${noun} match this combination of filters. Removing one usually brings the list back.`;
 
   return (
     <EmptyState
@@ -322,20 +485,15 @@ function NoResults({ params, noun }: { params: DirectoryParams; noun: string }) 
         suggestions.length ? (
           <div className="flex max-w-xl flex-wrap justify-center gap-2">
             {suggestions.slice(0, 5).map((s) => (
-              <ButtonLink key={s.href + s.label} href={s.href} variant="secondary" size="sm">
+              <ButtonLink key={s.href + s.label} href={s.href} variant="secondary" size="sm" className="min-h-11 sm:min-h-0">
                 {s.label}
               </ButtonLink>
             ))}
-            <ButtonLink href="/directory" variant="ghost" size="sm">
+            <ButtonLink href="/directory" variant="ghost" size="sm" className="min-h-11 sm:min-h-0">
               Start over
             </ButtonLink>
           </div>
-        ) : (
-          <p className="max-w-sm text-sm text-secondary">
-            The directory fills up as members verify their degree records. If you expected to see
-            your batch here, they may not have registered yet.
-          </p>
-        )
+        ) : null
       }
     />
   );
@@ -343,7 +501,7 @@ function NoResults({ params, noun }: { params: DirectoryParams; noun: string }) 
 
 function describeFilter(key: DirectoryParamKey, value: string): string {
   const availability = AVAILABILITY.find((a) => a.key === key);
-  if (availability) return `“${availability.label}”`;
-  if (key === 'cohort') return value === 'students' ? 'the final-years-only filter' : 'the alumni-only filter';
+  if (availability) return `“${availability.chip}”`;
+  if (key === 'cohort') return value === 'students' ? 'the final-year filter' : 'the alumni-only filter';
   return `“${value}”`;
 }

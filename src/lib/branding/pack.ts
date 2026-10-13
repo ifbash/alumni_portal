@@ -36,13 +36,86 @@ const hex = z
   .regex(/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, 'Must be a hex colour like #B23A2B')
   .transform((h) => (h.startsWith('#') ? h : `#${h}`));
 
+/**
+ * Anything that ends up inside a CSS `url("...")` or an HTML attribute must
+ * not be able to close the quote, the parenthesis or the element around it.
+ * Real asset paths and base64 data URIs contain none of these.
+ */
+const NO_BREAKOUT_CHARS = /["'()\\<>\s;{}]/;
+
+/** A site-relative path ("/x", never "//host/x") or an https URL. */
+export function isSafeUrl(v: string): boolean {
+  if (NO_BREAKOUT_CHARS.test(v)) return false;
+  return v.startsWith('https://') || (v.startsWith('/') && !v.startsWith('//'));
+}
+
 const assetRef = z
   .string()
   .min(1)
   .refine(
-    (v) => v.startsWith('/') || v.startsWith('https://') || v.startsWith('data:'),
-    'Assets must be a site-relative path, an https URL, or a data URI',
+    (v) => !NO_BREAKOUT_CHARS.test(v) && (isSafeUrl(v) || v.startsWith('data:')),
+    'Assets must be a site-relative path, an https URL, or a data URI, with no quotes, brackets or spaces',
   );
+
+/**
+ * A typeface name as it appears in a stylesheet and a Google Fonts query.
+ * Letters, digits, spaces, dots, underscores and hyphens: every real font
+ * family, and nothing that can close a string or a rule.
+ */
+export const fontFamilyName = z
+  .string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,59}$/, 'A font name may contain only letters, digits, spaces, dots, underscores and hyphens');
+
+/**
+ * The right-hand side of a colour override: hex, rgb(), hsl(), oklch(),
+ * var(). No `;`, braces, quotes, backslashes or angle brackets - the
+ * characters needed to leave the declaration and write a rule of one's own.
+ */
+export const cssColourValue = z
+  .string()
+  .max(80)
+  .regex(/^[#A-Za-z0-9(),.%/\s-]+$/, 'An override must be a colour value such as #9E2A4B or oklch(0.5 0.1 20)');
+
+/** CSS `object-position` for a photograph: which part of it survives the crop. */
+const focusPoint = z.string().regex(/^\d{1,3}% \d{1,3}%$/, 'Use "x% y%", for example "50% 35%"');
+
+/**
+ * A direct video file, never a page that embeds one. `frame-src` stays
+ * `'none'`, and a YouTube link would need it opened for every tenant.
+ */
+const videoRef = z
+  .string()
+  .min(1)
+  .refine((v) => v.startsWith('/') || v.startsWith('https://'), 'A hero video must be a site-relative path or an https URL')
+  .refine(
+    (v) => /\.(mp4|webm)(\?[^#]*)?$/i.test(v),
+    'A hero video must be a direct .mp4 or .webm file. YouTube, Vimeo and other embed links are not supported.',
+  );
+
+/**
+ * One photograph for the landing page's campus band. Alt text is
+ * required: these carry content (what the campus looks like), so they are
+ * never decorative.
+ */
+export const CampusPhoto = z.object({
+  src: assetRef,
+  alt: z.string().trim().min(1, 'Every campus photo needs alt text describing what it shows').max(160),
+  caption: z.string().trim().max(120).optional(),
+  focus: focusPoint.optional(),
+
+  // Where a photo may appear after sign-in. Tag a photo only when the tag
+  // is true of what it shows: a photo tagged `batchYear: 2015` heads the
+  // 2015 batch page, so it has to be of that batch. An untagged photo is
+  // only ever dealt to the college-level bands (home, giving, profile),
+  // and a tagged one leaves that pool. See `src/lib/branding/media.ts`.
+
+  /** Signed-in bands this photo is chosen for, first match wins. Tag a photo only when the tag is true of what it shows. */
+  use: z.array(z.enum(['home', 'giving', 'profile'])).max(3).optional(),
+  /** The graduating batch this photo shows. Tag a photo only when the tag is true of what it shows. */
+  batchYear: z.number().int().min(1950).max(2100).optional(),
+  /** The branch (department code) this photo shows. Tag a photo only when the tag is true of what it shows. */
+  departmentCode: z.string().trim().min(1).max(12).optional(),
+});
 
 /** Token names an override is allowed to set. Anything else is rejected. */
 export const OVERRIDABLE_TOKENS = [
@@ -73,12 +146,14 @@ export const OVERRIDABLE_TOKENS = [
   '--danger',
   '--info',
   '--shadow-color',
+  /** The college band. Hex only; any other value is ignored with a warning. */
+  '--band',
 ] as const;
 
 export type OverridableToken = (typeof OVERRIDABLE_TOKENS)[number];
 
 const overrides = z
-  .record(z.string(), z.string().max(80))
+  .record(z.string(), cssColourValue)
   .refine(
     (o) => Object.keys(o).every((k) => (OVERRIDABLE_TOKENS as readonly string[]).includes(k)),
     { message: `Only these tokens may be overridden: ${OVERRIDABLE_TOKENS.join(', ')}` },
@@ -136,9 +211,9 @@ export const ColorSpec = z.object({
 });
 
 export const TypeSpec = z.object({
-  display: z.string().min(1).default('Fraunces'),
-  body: z.string().min(1).default('Inter'),
-  mono: z.string().min(1).default('IBM Plex Mono'),
+  display: fontFamilyName.default('Fraunces'),
+  body: fontFamilyName.default('Inter'),
+  mono: fontFamilyName.default('IBM Plex Mono'),
   /**
    * `local` self-hosts from `/public/fonts` (declared in `fontFaces`);
    * `google` fetches at runtime. Runtime matters: `next/font` resolves at
@@ -150,7 +225,7 @@ export const TypeSpec = z.object({
   fontFaces: z
     .array(
       z.object({
-        family: z.string(),
+        family: fontFamilyName,
         src: assetRef,
         weight: z.string().default('400'),
         style: z.enum(['normal', 'italic']).default('normal'),
@@ -172,17 +247,47 @@ export const ShapeSpec = z.object({
   elevation: z.enum(['flat', 'soft', 'lifted']).default('soft'),
 });
 
-export const AssetSpec = z.object({
-  logoPrimary: assetRef.optional(),
-  logoInverse: assetRef.optional(),
-  logoMark: assetRef.optional(),
-  crest: assetRef.optional(),
-  favicon: assetRef.optional(),
-  ogImage: assetRef.optional(),
-  heroImage: assetRef.optional(),
-  /** Rendered behind the sign-in card. Falls back to a generated gradient. */
-  authImage: assetRef.optional(),
-});
+/**
+ * Every media slot renders nothing when it is absent: no empty frame, no
+ * "photo coming soon", no stand-in art. A college with no photographs yet
+ * gets the solid college band, which is designed, not a gap.
+ */
+export const AssetSpec = z
+  .object({
+    logoPrimary: assetRef.optional(),
+    logoInverse: assetRef.optional(),
+    logoMark: assetRef.optional(),
+    crest: assetRef.optional(),
+    favicon: assetRef.optional(),
+    ogImage: assetRef.optional(),
+    /** Landing hero photograph. Landscape, 2400×1350 or larger, WebP/AVIF/JPEG under 350 KB. */
+    heroImage: assetRef.optional(),
+    /** One sentence on what the hero photograph shows. Absent means decorative (`alt=""`). */
+    heroImageAlt: z.string().trim().min(1).max(160).optional(),
+    /** `object-position` for heroImage and heroVideo. */
+    heroFocus: focusPoint.default('50% 50%'),
+    /**
+     * Muted desktop loop (.mp4/.webm, 10–20 s, ≤ 6 MB). Never loaded below
+     * 1024px, with reduced motion, or with Save-Data. heroImage is its poster.
+     */
+    heroVideo: videoRef.optional(),
+    /** The landing page's "Around the campus" band. Empty means the section is omitted. */
+    campusPhotos: z.array(CampusPhoto).max(8, 'At most eight campus photos').default([]),
+    /** Desktop sign-in panel photograph. Falls back to heroImage, then to the solid college band. */
+    authImage: assetRef.optional(),
+    /** `object-position` for the sign-in panel photograph. */
+    authFocus: focusPoint.default('50% 50%'),
+  })
+  .superRefine((a, ctx) => {
+    if (a.heroVideo && !a.heroImage) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['heroVideo'],
+        message:
+          'heroVideo needs heroImage: it is the poster, the phone fallback, and what reduced-motion and Save-Data visitors see.',
+      });
+    }
+  });
 
 export const CopySpec = z.object({
   portalName: z.string().min(2).max(60),
@@ -191,15 +296,97 @@ export const CopySpec = z.object({
   tagline: z.string().max(160).optional(),
   heroHeadline: z.string().max(120).optional(),
   heroSubhead: z.string().max(320).optional(),
-  /** Circled by a marker stroke in the hero. Must appear inside heroHeadline. */
+  /**
+   * Set in the band's accent colour in the hero (underlined in it over a
+   * photo). Must appear inside heroHeadline.
+   */
   heroEmphasis: z.string().max(60).optional(),
   supportEmail: z.string().email().optional(),
   supportPhone: z.string().max(24).optional(),
   addressLines: z.array(z.string().max(120)).max(5).default([]),
-  websiteUrl: z.string().url().optional(),
+  websiteUrl: z.string().url().refine((v) => v.startsWith('https://') || v.startsWith('http://'), 'Use an http(s) address').optional(),
   /** Footer credit. Kept configurable so a reseller can white-label us too. */
   poweredBy: z.string().max(60).optional(),
-  poweredByUrl: z.string().url().optional(),
+  poweredByUrl: z.string().url().refine((v) => v.startsWith('https://') || v.startsWith('http://'), 'Use an http(s) address').optional(),
+
+  /** The office that runs the portal. Used mid-sentence, as in "Contact the {officeName}". */
+  officeName: z.string().trim().min(2).max(60).default('alumni cell'),
+  /** The college's own affiliation wording, shown in the footer and the sign-in panel. Absent means not shown. */
+  affiliationLine: z.string().trim().max(160).optional(),
+  /** What the college calls the number on its certificates ("Roll number", "USN", "Hall ticket number"). */
+  rollNumberLabel: z.string().trim().min(2).max(40).default('Roll number'),
+  /** The printed format, confirmed by the examinations branch. Absent means no example anywhere. */
+  rollNumberExample: z.string().trim().min(4).max(24).optional(),
+  /** Documents the number is printed on, most likely first. */
+  rollNumberSources: z
+    .array(z.string().trim().min(2).max(60))
+    .min(2)
+    .max(6)
+    .default(['Degree certificate', 'Marks memos', 'Provisional certificate', 'Hall tickets']),
+  /** How long a manual review takes, for example "three working days". Absent means no promise is made. */
+  reviewTurnaround: z.string().trim().min(3).max(40).optional(),
+  /**
+   * How long the office takes to answer a sign-in problem, for example "one
+   * working day". Absent means /contact states no time for it.
+   */
+  supportTurnaround: z.string().trim().min(3).max(40).optional(),
+  /** The line prefilled into a WhatsApp share. */
+  shareText: z.string().trim().max(200).optional(),
+  /** College-authored notices for the landing page. Never generated from member rows. */
+  announcements: z
+    .array(
+      z.object({
+        title: z.string().trim().min(2).max(90),
+        body: z.string().trim().max(200).optional(),
+        date: z.string().date().optional(),
+        until: z.string().date().optional(),
+        href: z
+          .string()
+          .max(300)
+          .refine(isSafeUrl, 'Site-relative path or https URL')
+          .optional(),
+        linkLabel: z.string().trim().max(40).optional(),
+      }),
+    )
+    .max(3)
+    .default([]),
+  /** A message from the college (usually the Principal), text only. Renders nothing when absent. */
+  collegeMessage: z
+    .object({
+      heading: z.string().trim().max(80).optional(),
+      body: z.string().trim().min(40).max(900),
+      name: z.string().trim().min(2).max(80),
+      role: z.string().trim().min(2).max(80),
+    })
+    .optional(),
+
+  // ---- Signed-in copy ------------------------------------------------
+
+  /** The greeting on the signed-in home, before the member's first name. */
+  greeting: z.string().trim().min(2).max(24).default('Namaste'),
+  /**
+   * Who a staff role publishes news as ("Placement cell"). Absent keys
+   * fall back to generic desk names; see `deskFor()` in `copy.ts`.
+   */
+  newsDesks: z
+    .object({
+      college_admin: z.string().trim().min(2).max(60).optional(),
+      alumni_cell_operator: z.string().trim().min(2).max(60).optional(),
+      placement_officer: z.string().trim().min(2).max(60).optional(),
+    })
+    .default({}),
+  /**
+   * How long the placement cell takes to review a job posting, for example
+   * "two working days". Absent means no promise is made anywhere.
+   */
+  jobReviewTurnaround: z.string().trim().min(3).max(40).optional(),
+  /**
+   * The trust's own member-facing words about donation receipts. Absent
+   * means no receipt or tax claim appears anywhere a member reads.
+   */
+  donationReceiptNote: z.string().trim().min(3).max(120).optional(),
+  /** What the trust calls its receipt, for example "80G receipt". Absent means "Receipt". */
+  receiptLabel: z.string().trim().min(2).max(40).optional(),
 });
 
 /**

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getSession } from '@/lib/auth/session';
+import { safeNextParam } from '@/lib/auth/route-policy';
 import { getTenantBrand } from '@/lib/tenant';
 import { IS_FIXTURE, OTP_MAX_ATTEMPTS, OTP_TTL_SECONDS } from '@/lib/config';
 import { OtpForm } from './OtpForm';
@@ -32,7 +33,10 @@ export default async function VerifyPage({
   if (!email) redirect('/login');
 
   const rawNext = typeof sp.next === 'string' ? sp.next : undefined;
-  const next = rawNext && /^\/(?!\/)/.test(rawNext) ? rawNext : undefined;
+  // The same allowlist the middleware applies when it builds this URL. A bare
+  // "starts with one slash" test lets `/\evil.example` through, which a browser
+  // reads as `//evil.example` - an open redirect after a real sign-in.
+  const next = (rawNext && safeNextParam(rawNext)) || undefined;
 
   const { brand } = (await getTenantBrand())!;
   const copy = brand.pack.copy;

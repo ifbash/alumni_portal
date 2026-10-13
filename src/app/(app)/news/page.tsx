@@ -1,41 +1,47 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { ArrowRight, Newspaper, Pin } from 'lucide-react';
+import { Newspaper } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
+import { can, isActive } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
 import { getNews, type NewsItem } from '@/lib/data/content';
-import { getDepartments } from '@/lib/data/repo';
-import {
-  Alert,
-  Badge,
-  ButtonLink,
-  Card,
-  CardBody,
-  EmptyState,
-  PageHeader,
-  Tabs,
-  type TabItem,
-} from '@/components/ui';
-import { MarginNote } from '@/components/brand/Marks';
-import { formatDate, formatRelative, memberLine } from '@/lib/format';
+import { findMemberById, getMemberBySlug } from '@/lib/data/repo';
+import { ChipNav, EmptyState, PageHeader, ShareActions } from '@/components/ui';
+import { StoryCard } from '@/components/content';
+import { mailto } from '@/lib/mailto';
+import { cn } from '@/lib/cn';
+import { storyShareText } from '@/lib/share-text';
+import { siteOrigin, whatsappShareUrl } from '@/lib/share';
 import { KIND_META, KIND_ORDER, isNewsKind, newsHref } from './kinds';
 
 /**
- * The news feed.
+ * The news feed, laid out like a front page: one lead story, two beside
+ * it, the rest as a list.
  *
  * Two rules hold this page together. Drafts are never requested — the
  * member route calls `getNews()` without `includeDrafts`, so an
  * unpublished item is not merely hidden here, it is not in the array. And
- * an obituary is rendered by a different branch from everything else: no
- * badge, no icon, no hover lift, no read-more arrow. The restraint lives
- * in `KIND_META.restrained` rather than in a condition somebody has to
- * remember to write on the next screen.
+ * an obituary is never dressed: it is never the lead, never a card with
+ * art beside it, and the shared `StoryCard` draws it with no tint and no
+ * colour. The restraint lives in `KIND_META.restrained` rather than in a
+ * condition somebody has to remember to write on the next screen.
  */
+
+/**
+ * Beside the lead, a card's photo is a 21:9 strip rather than the default
+ * 3:2, so the two cards stack to about the lead's height instead of
+ * leaving a hole under it.
+ *
+ * A story with no photo of its own gets no art at all. A large tile that
+ * holds only a year or a branch code reads as a picture that failed to
+ * load, so the front page is set in type until the college adds photos.
+ */
+const SLIM_ART = '[&_figure>div]:aspect-[21/9]';
 
 export const metadata: Metadata = {
   title: 'News',
-  description: 'Announcements, achievements, milestones and press from the college and its graduates.',
+  description: 'What the college and its graduates have been up to.',
 };
 
 export default async function NewsPage({
@@ -45,6 +51,7 @@ export default async function NewsPage({
 }) {
   const session = await getSession();
   if (!session) redirect('/login');
+  if (!isActive(session)) redirect('/pending');
 
   const resolved = await getTenantBrand();
   if (!resolved) notFound();
@@ -63,182 +70,188 @@ export default async function NewsPage({
   const total = getNews().length;
   const countFor = (k: (typeof KIND_ORDER)[number]) => getNews({ kind: k }).length;
 
-  const departments = getDepartments();
-  const deptName = (code: string | null) =>
-    code ? (departments.find((d) => d.code === code)?.name ?? code) : null;
+  const locale = pack.locale;
+  const office = pack.copy.officeName;
+  const origin = await siteOrigin();
 
-  const tabs: TabItem[] = [
-    { label: 'Everything', href: newsHref(null), count: total, active: kind === null },
-    ...KIND_ORDER.map((k) => ({
+  /**
+   * An achievement may borrow the photo of the graduate it is about — but
+   * only through the directory's own guarded lookup, and only for a viewer
+   * who could have found that profile by searching. A news story does not
+   * become the way around the directory's rules.
+   */
+  const canOpenDirectory = pack.features.directory && can(session, 'directory.search.alumni');
+  const withPhoto = (item: NewsItem): NewsItem => {
+    if (item.coverImage || item.kind !== 'achievement' || !item.aboutMemberId || !canOpenDirectory) return item;
+    const seed = findMemberById(item.aboutMemberId);
+    const member = seed ? getMemberBySlug(session, seed.slug) : null;
+    return member?.photoUrl ? { ...item, coverImage: member.photoUrl } : item;
+  };
+
+  // Chips: every kind with something in it, plus the active one. In
+  // memoriam carries no count and always comes last.
+  const chips = [
+    { label: 'Everything', href: newsHref(null), active: kind === null, count: total },
+    ...KIND_ORDER.filter((k) => k === kind || countFor(k) > 0).map((k) => ({
       label: KIND_META[k].tab,
       href: newsHref(k),
-      count: countFor(k),
       active: kind === k,
+      count: KIND_META[k].restrained ? undefined : countFor(k),
     })),
   ];
 
-  const pinned = items.filter((n) => n.pinned).length;
+  // The front page. The lead is the first pinned story that is not a
+  // notice, else the first that is not; two more sit beside it.
+  const dressed = items.filter((n) => !KIND_META[n.kind].restrained);
+  const lead = dressed.find((n) => n.pinned) ?? dressed[0] ?? null;
+  const cards = dressed.filter((n) => n.id !== lead?.id).slice(0, 2);
+  const shown = new Set([lead?.id, ...cards.map((c) => c.id)]);
+  const rows = items.filter((n) => !shown.has(n.id));
+  const leadHasPhoto = Boolean(lead && withPhoto(lead).coverImage);
+
+  const eyebrow = (item: NewsItem) => {
+    const meta = KIND_META[item.kind];
+    const Icon = meta.icon;
+    return (
+      <>
+        {Icon ? <Icon className="text-muted" aria-hidden="true" /> : null}
+        {meta.label}
+      </>
+    );
+  };
+
+  const tellHref = pack.copy.supportEmail
+    ? mailto(pack.copy.supportEmail, 'An achievement to share', [
+        'Who it is about:',
+        'Their branch and batch:',
+        'What happened:',
+        '',
+      ])
+    : null;
 
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow={pack.copy.shortName}
-        title="News"
-        description="What the alumni cell, the placement cell and the principal’s office have published — announcements, graduates’ achievements, what the network has funded, and press coverage. Every filter below is a link, so a story or a whole section can be forwarded as it stands."
+        eyebrow="News"
+        title={`News from ${pack.copy.shortName}`}
+        description="What the college and its graduates have been up to."
       />
 
-      {unknownKind ? (
-        <Alert tone="warning" title={`There is nothing published under “${requested}”`}>
-          <p>
-            The feed is filed under five kinds and that is not one of them. The tabs below are the
-            complete list;{' '}
-            <Link href={newsHref(null)} className="link">
-              everything published
-            </Link>{' '}
-            is the widest view.
+      <div className="space-y-2">
+        <ChipNav items={chips} ariaLabel="Kinds of story" />
+        {unknownKind ? (
+          <p className="text-sm text-secondary">
+            Nothing is filed under “{requested}”, so this is everything.
           </p>
-        </Alert>
-      ) : null}
-
-      <Tabs items={tabs} ariaLabel="Kinds of story" />
-
-      {kind ? (
-        <p className="max-w-prose text-sm text-secondary">{KIND_META[kind].blurb}</p>
-      ) : pinned > 0 ? (
-        <p className="flex items-center gap-1.5 text-sm text-secondary">
-          <Pin className="size-3.5 text-muted" aria-hidden="true" />
-          {pinned === 1
-            ? 'One story is pinned to the top by the alumni cell.'
-            : `${pinned} stories are pinned to the top by the alumni cell.`}
-        </p>
-      ) : null}
+        ) : kind ? (
+          <p className="text-sm text-secondary">{KIND_META[kind].blurb}</p>
+        ) : null}
+      </div>
 
       {items.length === 0 ? (
-        <EmptyState
-          icon={<Newspaper className="size-5" />}
-          title={kind ? `Nothing filed under ${KIND_META[kind].tab.toLowerCase()} yet` : 'Nothing published yet'}
-          description={
-            kind
-              ? KIND_META[kind].empty
-              : 'The alumni cell writes here. Until the first story goes up there is genuinely nothing to show — this is not a loading state.'
-          }
-          action={
-            kind ? (
-              <ButtonLink href={newsHref(null)} variant="secondary">
-                Read everything else
-              </ButtonLink>
-            ) : null
-          }
-        />
+        kind ? (
+          <EmptyState
+            variant="inline"
+            title={KIND_META[kind].empty}
+            action={
+              <Link href={newsHref(null)} className="link inline-flex min-h-11 items-center">
+                See all news
+              </Link>
+            }
+          />
+        ) : (
+          <EmptyState
+            icon={<Newspaper className="size-5" />}
+            title="No news yet"
+            description={`The ${office} posts reunions, achievements and what graduates have built together here.`}
+            action={
+              tellHref ? (
+                <a href={tellHref} className="link inline-flex min-h-11 items-center text-sm">
+                  Tell us about an achievement
+                </a>
+              ) : null
+            }
+          />
+        )
       ) : (
-        <ul className="space-y-4">
-          {items.map((item) => (
-            <li key={item.id}>
-              {KIND_META[item.kind].restrained ? (
-                <Notice item={item} departmentName={deptName(item.departmentCode)} />
-              ) : (
-                <StoryCard item={item} departmentName={deptName(item.departmentCode)} />
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <MarginNote className="max-w-prose border-t border-line pt-4">
-        Every story carries the desk that wrote it. Notices under <em>In memoriam</em> are published
-        to this page and are never sent as a notification — they are found by opening the portal,
-        not pushed at anybody.
-      </MarginNote>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------
-// Cards
-// ---------------------------------------------------------------
-
-function StoryCard({ item, departmentName }: { item: NewsItem; departmentName: string | null }) {
-  const meta = KIND_META[item.kind];
-  const Icon = meta.icon;
-
-  return (
-    <Card as="article" interactive className="relative">
-      <CardBody className="space-y-2.5">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge tone={meta.tone}>
-            {Icon ? <Icon className="size-3" /> : null}
-            {meta.label}
-          </Badge>
-          {item.pinned ? (
-            <span className="inline-flex items-center gap-1 text-xs font-semibold text-muted">
-              <Pin className="size-3" aria-hidden="true" />
-              Pinned
-            </span>
+        <>
+          {lead ? (
+            <section aria-labelledby="news-latest">
+              <h2 id="news-latest" className="sr-only">
+                Latest
+              </h2>
+              {/* With a photo the lead takes two columns and the cards stack
+                  beside it; set in type alone it runs the full width with the
+                  two cards side by side beneath, so no card stretches round
+                  empty space. */}
+              <div className={cn('grid grid-cols-1 gap-gutter', leadHasPhoto && 'lg:grid-cols-3')}>
+                <StoryCard
+                  story={withPhoto(lead)}
+                  href={`/news/${lead.slug}`}
+                  locale={locale}
+                  variant="lead"
+                  eyebrow={eyebrow(lead)}
+                  className={leadHasPhoto ? 'lg:col-span-2' : undefined}
+                  action={
+                    <ShareActions
+                      url={`${origin}/news/${lead.slug}`}
+                      whatsappHref={whatsappShareUrl(storyShareText(pack, lead), `${origin}/news/${lead.slug}`)}
+                      title={lead.title}
+                      size="sm"
+                    />
+                  }
+                />
+                {cards.length > 0 ? (
+                  <div className={cn('grid grid-cols-1 gap-gutter sm:grid-cols-2', leadHasPhoto && 'lg:grid-cols-1')}>
+                    {cards.map((item) => (
+                      <StoryCard
+                        key={item.id}
+                        story={withPhoto(item)}
+                        href={`/news/${item.slug}`}
+                        locale={locale}
+                        variant="card"
+                        eyebrow={eyebrow(item)}
+                        className={SLIM_ART}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </section>
           ) : null}
-        </div>
 
-        <h2 className="font-display text-lg font-semibold leading-snug">
-          {/* The whole card is the hit target on a phone; the arrow below is
-              the same destination for anyone who wants something to aim at. */}
-          <Link href={`/news/${item.slug}`} className="link-quiet after:absolute after:inset-0">
-            {item.title}
-          </Link>
-        </h2>
+          {rows.length > 0 ? (
+            <section aria-labelledby="news-more" className="space-y-1">
+              <h2 id="news-more" className={lead ? 'font-display text-xl font-semibold' : 'sr-only'}>
+                Earlier
+              </h2>
+              <ul className="divide-y divide-line">
+                {rows.map((item) => (
+                  <li key={item.id}>
+                    <StoryCard
+                      story={withPhoto(item)}
+                      href={`/news/${item.slug}`}
+                      locale={locale}
+                      variant="row"
+                      eyebrow={eyebrow(item)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
 
-        <p className="max-w-prose text-sm text-secondary">{item.summary}</p>
-
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 pt-0.5">
-          <p className="text-xs text-muted">
-            {memberLine([item.author, departmentName])}
-            {' · '}
-            <time dateTime={item.publishedAt ?? undefined}>{formatDate(item.publishedAt)}</time>
-            {' · '}
-            {formatRelative(item.publishedAt)}
-          </p>
-
-          <span className="relative">
-            <Link
-              href={`/news/${item.slug}`}
-              className="inline-flex items-center gap-1 text-xs font-semibold text-brand-fg hover:underline"
-            >
-              Read the story
-              <ArrowRight className="size-3.5" aria-hidden="true" />
-            </Link>
-          </span>
-        </div>
-      </CardBody>
-    </Card>
-  );
-}
-
-/**
- * An obituary in the feed.
- *
- * Deliberately not a `Card`: no raised surface, no hover lift, no
- * full-card overlay link, no arrow inviting a click. The heading is a
- * step quieter than its neighbours and the only affordance is the title
- * itself.
- */
-function Notice({ item, departmentName }: { item: NewsItem; departmentName: string | null }) {
-  return (
-    <article className="rounded-lg border border-line bg-surface p-card">
-      <p className="text-xs font-medium uppercase tracking-wider text-muted">
-        {KIND_META[item.kind].label}
-      </p>
-
-      <h2 className="mt-2 font-display text-md font-medium leading-snug">
-        <Link href={`/news/${item.slug}`} className="link-quiet">
-          {item.title}
-        </Link>
-      </h2>
-
-      <p className="mt-1.5 max-w-prose text-sm text-secondary">{item.summary}</p>
-
-      <p className="mt-3 text-xs text-muted">
-        {memberLine([item.author, departmentName])}
-        {' · '}
-        <time dateTime={item.publishedAt ?? undefined}>{formatDate(item.publishedAt)}</time>
-      </p>
-    </article>
+          {tellHref && !kind ? (
+            <p className="border-t border-line pt-4 text-sm text-secondary">
+              Know about something a graduate has done?{' '}
+              <a href={tellHref} className="link">
+                Tell the {office}
+              </a>
+              .
+            </p>
+          ) : null}
+        </>
+      )}
+    </div>
   );
 }

@@ -1,27 +1,34 @@
 import { redirect } from 'next/navigation';
-import { FileSpreadsheet, ShieldCheck } from 'lucide-react';
+import { MapPin } from 'lucide-react';
 
 import {
-  Alert,
   Breadcrumbs,
   ButtonLink,
   Card,
   CardBody,
-  CardDescription,
   CardHeader,
   CardTitle,
+  CopyButton,
+  Disclosure,
   PageHeader,
+  Section,
 } from '@/components/ui';
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap } from '@/lib/auth/guard';
+import { getTenantBrand } from '@/lib/tenant';
+import { capitalise } from '@/lib/branding/copy';
 import { getDegreeRegisterStats, getDepartments, searchDegreeRegister } from '@/lib/data/repo';
-import { formatNumber } from '@/lib/format';
+import { displayNow, formatNumber, yearIn } from '@/lib/format';
 import { UploadWizard } from './UploadWizard';
+import {
+  RegisterFilesGrid,
+  missingRegisterFiles,
+  registerRequestText,
+} from '../../_shared/RegisterFilesGrid';
 
-export const metadata = { title: 'Load a degree register file' };
+export const metadata = { title: 'Load a register file · Staff console' };
 
 const SAMPLE_YEAR = 2019;
-const SAMPLE_DEPT = 'CSE';
 
 /**
  * Builds a realistic file for the wizard to chew on.
@@ -32,8 +39,8 @@ const SAMPLE_DEPT = 'CSE';
  * contains: a roll typed as a serial number, a blank name, a year with a
  * letter in it, and two people who genuinely share a name.
  */
-function buildSampleCsv(): { fileName: string; csv: string } {
-  const existing = searchDegreeRegister('', { department: SAMPLE_DEPT, year: SAMPLE_YEAR, perPage: 4 }).items;
+function buildSampleCsv(shortName: string, dept: string): { fileName: string; csv: string } {
+  const existing = searchDegreeRegister('', { department: dept, year: SAMPLE_YEAR, perPage: 4 }).items;
 
   const header = 'Roll No,Student Name,Branch,Programme,Year of Admission,Year of Passing';
   const admitted = SAMPLE_YEAR - 4;
@@ -45,26 +52,26 @@ function buildSampleCsv(): { fileName: string; csv: string } {
       [
         r.rollNumber,
         r.name,
-        r.departmentCode ?? SAMPLE_DEPT,
+        r.departmentCode ?? dept,
         r.programme ?? 'B.Tech',
         r.admissionYear ?? admitted,
         r.yearOfPassing ?? SAMPLE_YEAR,
       ].join(','),
     ),
-    `${yy}JN1A0591,KOLLIPARA SAI KIRAN,CSE,B.Tech,${admitted},${SAMPLE_YEAR}`,
-    `${yy}JN1A0592,MADDIPATLA ANUSHA,CSE,B.Tech,${admitted},${SAMPLE_YEAR}`,
-    `${yy}JN1A0593,GUDIVADA RAMYA SREE,CSE,B.Tech,${admitted},${SAMPLE_YEAR}`,
-    `${yy}JN1A0594,GUDIVADA RAMYA SREE,CSE,B.Tech,${admitted},${SAMPLE_YEAR}`,
-    `${yy}JN1A0595,NALLAMOTHU HARIKA,CSE,B.Tech,${admitted},${SAMPLE_YEAR}`,
-    `${yy}JN1A0591,KOLLIPARA SAI KIRAN,CSE,B.Tech,${admitted},${SAMPLE_YEAR}`,
-    `01,BHOGIREDDY VENKATA SUBBA RAO,CSE,B.Tech,${admitted},${SAMPLE_YEAR}`,
-    `${yy}JN1A0596,,CSE,B.Tech,${admitted},${SAMPLE_YEAR}`,
-    `${yy}JN1A0597,CHINTALAPUDI LAKSHMI PRASANNA,CSE,B.Tech,${admitted},20l9`,
-    `${yy}JN1A0598,YALAMANCHILI DURGA PRASAD,CSE,B.Tech,${SAMPLE_YEAR + 1},${SAMPLE_YEAR}`,
+    `${yy}JN1A0591,KOLLIPARA SAI KIRAN,${dept},B.Tech,${admitted},${SAMPLE_YEAR}`,
+    `${yy}JN1A0592,MADDIPATLA ANUSHA,${dept},B.Tech,${admitted},${SAMPLE_YEAR}`,
+    `${yy}JN1A0593,GUDIVADA RAMYA SREE,${dept},B.Tech,${admitted},${SAMPLE_YEAR}`,
+    `${yy}JN1A0594,GUDIVADA RAMYA SREE,${dept},B.Tech,${admitted},${SAMPLE_YEAR}`,
+    `${yy}JN1A0595,NALLAMOTHU HARIKA,${dept},B.Tech,${admitted},${SAMPLE_YEAR}`,
+    `${yy}JN1A0591,KOLLIPARA SAI KIRAN,${dept},B.Tech,${admitted},${SAMPLE_YEAR}`,
+    `01,BHOGIREDDY VENKATA SUBBA RAO,${dept},B.Tech,${admitted},${SAMPLE_YEAR}`,
+    `${yy}JN1A0596,,${dept},B.Tech,${admitted},${SAMPLE_YEAR}`,
+    `${yy}JN1A0597,CHINTALAPUDI LAKSHMI PRASANNA,${dept},B.Tech,${admitted},20l9`,
+    `${yy}JN1A0598,YALAMANCHILI DURGA PRASAD,${dept},B.Tech,${SAMPLE_YEAR + 1},${SAMPLE_YEAR}`,
     `${yy}JN1A0599,PATHAN IMRAN KHAN,CSM,B.Tech,${admitted},${SAMPLE_YEAR}`,
   ];
 
-  return { fileName: `DIET_${SAMPLE_YEAR}_${SAMPLE_DEPT}.csv`, csv: lines.join('\n') };
+  return { fileName: `${shortName}_${SAMPLE_YEAR}_${dept}.csv`, csv: lines.join('\n') };
 }
 
 export default async function DegreeRegisterUploadPage() {
@@ -72,14 +79,32 @@ export default async function DegreeRegisterUploadPage() {
   if (!session) redirect('/login');
   requireCap(session, 'verification.review.any');
 
+  const resolved = await getTenantBrand();
+  if (!resolved) redirect('/login');
+  const pack = resolved.brand.pack;
+  const shortName = pack.copy.shortName;
+
   const stats = getDegreeRegisterStats();
   const departments = getDepartments();
+  const codes = departments.map((d) => d.code);
+  const sampleDept = codes[0] ?? 'BRANCH';
 
   const allRows = searchDegreeRegister('', { perPage: 100000 }).items;
-  const existingRolls = allRows.map((r) => r.rollNumber);
-  const loadedFiles = [...new Set(allRows.map((r) => r.sourceFile).filter((f): f is string => Boolean(f)))].sort();
+  const sourceFiles = allRows.map((r) => r.sourceFile);
+  const throughYear = yearIn(pack.locale.timeZone, displayNow());
+  const missing = missingRegisterFiles({ sourceFiles, branches: codes, throughYear });
+  const fileCount = new Set(sourceFiles.filter(Boolean)).size;
 
-  const sample = buildSampleCsv();
+  const request = registerRequestText({
+    shortName,
+    office: capitalise(pack.copy.officeName),
+    rollLabel: pack.copy.rollNumberLabel,
+    missing,
+    exampleYear: SAMPLE_YEAR,
+    exampleBranch: sampleDept,
+  });
+
+  const sample = buildSampleCsv(shortName, sampleDept);
 
   return (
     <div className="space-y-6">
@@ -87,101 +112,92 @@ export default async function DegreeRegisterUploadPage() {
         breadcrumbs={
           <Breadcrumbs
             items={[
-              { label: 'Admin', href: '/admin' },
+              { label: 'Staff console', href: '/admin' },
               { label: 'Degree register', href: '/admin/degree-register' },
               { label: 'Load a file' },
             ]}
           />
         }
-        eyebrow="Identity"
-        title="Load a degree register file"
-        description="Four steps: choose the file, map its columns, read the dry run, then commit. Nothing is written until the last step, and re-running the same file adds nothing the second time."
-        actions={
-          <ButtonLink href="/admin/imports" variant="secondary">
-            Import history
-          </ButtonLink>
-        }
+        eyebrow="People and records"
+        title="Load a register file"
+        description="Choose the file, check its columns, read the dry run, then commit. Nothing is written before the last step."
       />
 
-      <Alert tone="info" title="What to ask the examinations branch for" icon={<FileSpreadsheet className="size-4" />}>
-        <p>
-          One CSV per batch and branch, named like <span className="font-mono">DIET_2019_CSE.csv</span>, with a header
-          row and six columns: roll number, name exactly as printed on the memorandum of marks, branch code, programme,
-          year of admission and year of passing. An Excel file saved as CSV (UTF-8) is fine. Nothing else is needed —
-          the register holds no marks, no CGPA and no contact details, and asking for them would put data in the portal
-          that nobody here has a purpose for.
-        </p>
-      </Alert>
-
-      <div className="grid gap-gutter lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start">
-        <UploadWizard
-          departmentCodes={departments.map((d) => d.code)}
-          existingRolls={existingRolls}
-          registerTotal={stats.total}
-          loadedFiles={loadedFiles}
-          sampleFileName={sample.fileName}
-          sampleCsv={sample.csv}
-        />
-
-        <div className="space-y-gutter">
-          <Card>
-            <CardHeader>
-              <div className="space-y-1">
-                <CardTitle as="h2">Rules the loader applies</CardTitle>
-                <CardDescription>The same rules the verification matcher is scored against.</CardDescription>
-              </div>
-            </CardHeader>
-            <CardBody>
-              <ul className="space-y-3 text-sm text-secondary">
-                <li>
-                  <span className="font-medium text-primary">Roll number is the key.</span> Rows are matched on tenant
-                  and roll number. A roll already present is skipped, never inserted a second time and never silently
-                  overwritten.
-                </li>
-                <li>
-                  <span className="font-medium text-primary">The name is kept as printed.</span> Register spelling is
-                  the evidence; the matcher normalises at comparison time instead of at load time, so nothing is lost.
-                </li>
-                <li>
-                  <span className="font-medium text-primary">Bad rows are reported, not dropped.</span> Every rejection
-                  names the row and the reason, so the file can be fixed once and re-sent.
-                </li>
-                <li>
-                  <span className="font-medium text-primary">Two people may share a name.</span> Same name, same branch,
-                  same year is a warning, never a rejection — in a cohort of 240 it happens, and deleting one of them
-                  makes a graduate unverifiable forever.
-                </li>
-              </ul>
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <div className="space-y-1">
-                <CardTitle as="h2">Already loaded</CardTitle>
-                <CardDescription>{formatNumber(stats.total)} rows across {loadedFiles.length} files.</CardDescription>
-              </div>
-            </CardHeader>
-            <CardBody>
-              <ul className="max-h-64 space-y-1 overflow-y-auto font-mono text-xs text-secondary">
-                {loadedFiles.slice(0, 40).map((f) => (
-                  <li key={f}>{f}</li>
-                ))}
-              </ul>
-              {loadedFiles.length > 40 ? (
-                <p className="pt-2 text-xs text-muted">and {loadedFiles.length - 40} more.</p>
-              ) : null}
-            </CardBody>
-          </Card>
-
-          <Alert tone="neutral" icon={<ShieldCheck className="size-4" />}>
-            <p className="text-xs">
-              The file is read in your browser to build the preview — it is not uploaded anywhere until you commit, and
-              the register itself never leaves <span className="font-mono">ap-south-1</span>.
-            </p>
-          </Alert>
+      <div className="grid grid-cols-1 items-start gap-gutter lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <div className="min-w-0">
+          <UploadWizard
+            departmentCodes={codes}
+            registerTotal={stats.total}
+            sampleFileName={sample.fileName}
+            sampleCsv={sample.csv}
+          />
         </div>
+
+        <aside aria-label="About register files" className="min-w-0 space-y-gutter">
+          <Card>
+            <CardHeader variant="stack">
+              <CardTitle as="h2" className="text-md">
+                Ask the examinations branch
+              </CardTitle>
+            </CardHeader>
+            <CardBody className="space-y-3 pt-3">
+              <p className="text-sm text-secondary">
+                One CSV per batch and branch, with six columns.
+                {missing.length > 0
+                  ? ` ${missing.length} ${missing.length === 1 ? 'file is' : 'files are'} still missing; the request lists them.`
+                  : ''}
+              </p>
+              <CopyButton
+                text={request}
+                label="Copy request for the examinations branch"
+                copiedLabel="Request copied"
+                className="w-full [&>button]:h-auto [&>button]:w-full [&>button]:whitespace-normal [&>button]:py-2.5"
+              />
+            </CardBody>
+          </Card>
+
+          <Disclosure summary="Rules the loader applies">
+            <ul className="space-y-2">
+              <li>
+                <span className="font-medium text-primary">The roll number is the key.</span> A roll already in the
+                register is skipped, never added twice and never overwritten.
+              </li>
+              <li>
+                <span className="font-medium text-primary">Names are kept as printed.</span> Spelling differences are
+                handled when a registration is matched.
+              </li>
+              <li>
+                <span className="font-medium text-primary">Bad rows are reported, not dropped.</span> Each refusal names
+                the line and the reason.
+              </li>
+              <li>
+                <span className="font-medium text-primary">Two people may share a name.</span> Both go in; the roll
+                number tells them apart.
+              </li>
+            </ul>
+          </Disclosure>
+
+          <p className="flex items-start gap-2 px-1 text-xs text-secondary">
+            <MapPin className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            <span>
+              The file is read in your browser for the preview. The register is stored in India, and holds no marks and
+              no contact details.
+            </span>
+          </p>
+        </aside>
       </div>
+
+      <Section
+        title="Already loaded"
+        description={`${formatNumber(stats.total)} rows from ${formatNumber(fileCount)} files.`}
+        actions={
+          <ButtonLink href="/admin/imports" variant="ghost" size="sm" className="min-h-11 sm:min-h-0">
+            Imports
+          </ButtonLink>
+        }
+      >
+        <RegisterFilesGrid sourceFiles={sourceFiles} branches={codes} throughYear={throughYear} linkable />
+      </Section>
     </div>
   );
 }

@@ -76,7 +76,14 @@ test.describe('the donations module and the student cohort', () => {
     // The `<meta name="description">` survives this and is checked separately
     // below, because what is in it turned out to be its own small finding.
     const rendered = body.replace(/<script[\s\S]*?<\/script>/gi, '');
-    for (const marker of ['Give to the college', 'Campaigns run by the alumni cell', 'Contribute now']) {
+    for (const marker of [
+      'Give to the college',
+      'Campaigns run by the alumni cell',
+      'Contribute now',
+      'Give back to',
+      'What alumni giving has built',
+      'Other ways to give back',
+    ]) {
       expect(
         rendered.includes(marker),
         `The giving page's copy ("${marker}") reached a student. The module must be absent, not disabled.`,
@@ -109,8 +116,7 @@ test.describe('the donations module and the student cohort', () => {
         '  Anything that renders outside the guard — metadata, OpenGraph, the manifest — has to',
         '  consult the feature flag separately. generateMetadata() is where this belongs.',
         '',
-      ].join('
-'),
+      ].join('\n'),
     ).toBe(false);
   });
 

@@ -1,4 +1,4 @@
-import { can, type Session } from '../auth/guard';
+import { can, canInDepartment, departmentScopeFor, type Session } from '../auth/guard';
 import {
   project,
   tierFor,
@@ -422,7 +422,14 @@ export function getConnections(
     );
   }
 
-  return mine.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  // A block is never disclosed to the person who was blocked. Their copy of
+  // the request reads as an ordinary decline - "Closed" - so neither the
+  // label nor the API payload tells them it was a block. The member who did
+  // the blocking sees it for what it is.
+  const asSeenBy = (c: ConnectionRequest): ConnectionRequest =>
+    direction === 'sent' && c.state === 'blocked' ? { ...c, state: 'declined' } : c;
+
+  return mine.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(asSeenBy);
 }
 
 /**
@@ -496,6 +503,9 @@ export function getEventBySlug(session: Session | null, slug: string): EventItem
   if (!e) return null;
   const isStudent = session?.roles.some((r) => r.role === 'student') ?? false;
   if (e.alumniOnly && isStudent) return null;
+  // Same rule as the list: an event not open to students is not addressable
+  // by one, by slug or any other way.
+  if (isStudent && !e.studentEligible) return null;
   if (!e.published && !(session && can(session, 'event.create.any'))) return null;
   return withViewerRegistration(e, session);
 }
@@ -577,17 +587,16 @@ export function getVerificationClaims(
   session: Session,
   opts: { status?: VerificationClaim['status'] | 'all' } = {},
 ): VerificationClaim[] {
-  // An HOD holds `verification.review.department` and must only ever see
-  // their own department's claims — the scope check is not optional
-  // decoration on top of the capability.
-  const departmentScope = session.roles.find(
-    (r) => r.role === 'hod' && r.departmentId !== null,
-  )?.departmentId;
-
+  // Fails closed. An HOD holds `verification.review.department` and must
+  // only ever see their own department's claims; anyone holding neither
+  // review capability sees none. The scope test is the same `canInDepartment`
+  // the decision route applies on write, so what a reviewer can read and
+  // what they can decide cannot drift apart.
   const wide = can(session, 'verification.review.any');
+  if (!wide && !can(session, 'verification.review.department')) return [];
 
   return VERIFICATION_CLAIMS.filter((c) => {
-    if (!wide && departmentScope && c.claimedDepartmentCode !== departmentScope) return false;
+    if (!wide && !canInDepartment(session, 'verification.review.department', c.claimedDepartmentCode)) return false;
     if (opts.status && opts.status !== 'all' && c.status !== opts.status) return false;
     return true;
   });
@@ -716,13 +725,59 @@ export function getTenants(): TenantSummary[] {
   return TENANTS;
 }
 
-export function getMembersForAdmin(opts: {
+interface AdminMemberQuery {
   q?: string;
   status?: string;
   department?: string;
   page?: number;
   perPage?: number;
-}): Paged<MemberDetail> {
+}
+
+function adminDetail(m: SeedMember, reveal: { contact: boolean; academic: boolean }): MemberDetail {
+  return {
+    ...toSummary(m),
+    bio: m.bio,
+    preferredName: m.preferredName,
+    admissionYear: m.admissionYear,
+    programme: m.programme,
+    employment: m.employment,
+    education: m.education,
+    verifiedAt: m.verifiedAt,
+    verificationMethod: m.verificationMethod,
+    roles: m.roles,
+    contact: reveal.contact ? m.privateContact : null,
+    contactVisibility: m.privateContact.visibility,
+    hasAcceptedConnection: false,
+    rollNumber: m.rollNumber,
+    cgpa: reveal.academic ? m.cgpa : undefined,
+    placementStatus: reveal.academic ? m.placementStatus : undefined,
+  };
+}
+
+function pageOf<T>(rows: T[], opts: AdminMemberQuery): Paged<T> {
+  const page = Math.max(1, opts.page ?? 1);
+  const perPage = opts.perPage ?? 25;
+  const total = rows.length;
+  return {
+    items: rows.slice((page - 1) * perPage, page * perPage),
+    total,
+    page,
+    perPage,
+    pageCount: Math.max(1, Math.ceil(total / perPage)),
+  };
+}
+
+/**
+ * **Unscoped.** Every member, full contact record, CGPA and placement status.
+ *
+ * For internal bulk work that has to see everyone - the rollover preview,
+ * cross-referencing the degree register, the audited export - and only after
+ * the caller has passed its own capability guard. A page that *shows* member
+ * records to a person uses `getMembersForAdminView()` instead, which applies
+ * the viewer's department scope and withholds what their capabilities do not
+ * cover.
+ */
+export function getMembersForAdmin(opts: AdminMemberQuery): Paged<MemberDetail> {
   let rows = SEED.members;
 
   if (opts.q) {
@@ -736,34 +791,64 @@ export function getMembersForAdmin(opts: {
   if (opts.status && opts.status !== 'all') rows = rows.filter((m) => m.status === opts.status);
   if (opts.department) rows = rows.filter((m) => m.departmentCode === opts.department);
 
-  const page = Math.max(1, opts.page ?? 1);
-  const perPage = opts.perPage ?? 25;
-  const total = rows.length;
+  const paged = pageOf(rows, opts);
+  return { ...paged, items: paged.items.map((m) => adminDetail(m, { contact: true, academic: true })) };
+}
 
+/** What `session` may see of a member record in the staff console. */
+function adminViewFor(session: Session) {
   return {
-    items: rows.slice((page - 1) * perPage, page * perPage).map((m) => ({
-      ...toSummary(m),
-      bio: m.bio,
-      preferredName: m.preferredName,
-      admissionYear: m.admissionYear,
-      programme: m.programme,
-      employment: m.employment,
-      education: m.education,
-      verifiedAt: m.verifiedAt,
-      verificationMethod: m.verificationMethod,
-      roles: m.roles,
-      contact: m.privateContact,
-      contactVisibility: m.privateContact.visibility,
-      hasAcceptedConnection: false,
-      rollNumber: m.rollNumber,
-      cgpa: m.cgpa,
-      placementStatus: m.placementStatus,
-    })),
-    total,
-    page,
-    perPage,
-    pageCount: Math.max(1, Math.ceil(total / perPage)),
+    readable: can(session, 'profile.read.any'),
+    scope: departmentScopeFor(session, 'profile.read.any'),
+    reveal: {
+      contact: can(session, 'directory.view.contact'),
+      academic: can(session, 'directory.view.cgpa'),
+    },
   };
+}
+
+function inAdminScope(view: ReturnType<typeof adminViewFor>, m: SeedMember): boolean {
+  return view.scope.all || (m.departmentCode !== null && view.scope.departments.has(m.departmentCode));
+}
+
+/**
+ * Member records for a person looking at them in the staff console.
+ *
+ * Fails closed without `profile.read.any`. An HOD sees their own
+ * department's members and nobody else's. Contact details come only with
+ * `directory.view.contact`, CGPA and placement only with
+ * `directory.view.cgpa`; and the free-text search reaches contact fields
+ * only when the viewer may see them, because matching on a field you cannot
+ * read is a way of reading it.
+ */
+export function getMembersForAdminView(session: Session, opts: AdminMemberQuery): Paged<MemberDetail> {
+  const view = adminViewFor(session);
+  if (!view.readable) return pageOf<MemberDetail>([], opts);
+
+  let rows = SEED.members.filter((m) => inAdminScope(view, m));
+
+  if (opts.q) {
+    const t = opts.q.toLowerCase();
+    rows = rows.filter((m) =>
+      `${m.fullName} ${m.rollNumber ?? ''} ${view.reveal.contact ? (m.privateContact.email ?? '') : ''} ${m.currentCompany ?? ''}`
+        .toLowerCase()
+        .includes(t),
+    );
+  }
+  if (opts.status && opts.status !== 'all') rows = rows.filter((m) => m.status === opts.status);
+  if (opts.department) rows = rows.filter((m) => m.departmentCode === opts.department);
+
+  const paged = pageOf(rows, opts);
+  return { ...paged, items: paged.items.map((m) => adminDetail(m, view.reveal)) };
+}
+
+/** One member by id or slug, under the same rules as `getMembersForAdminView()`. */
+export function getMemberForAdminView(session: Session, idOrSlug: string): MemberDetail | null {
+  const view = adminViewFor(session);
+  if (!view.readable) return null;
+  const m = byId.get(idOrSlug) ?? bySlug.get(idOrSlug);
+  if (!m || !inAdminScope(view, m)) return null;
+  return adminDetail(m, view.reveal);
 }
 
 // ---------------------------------------------------------------

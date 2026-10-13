@@ -8,23 +8,26 @@ import {
   Button,
   Card,
   CardBody,
+  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
-  CardDescription,
+  Disclosure,
   Switch,
   useToast,
 } from '@/components/ui';
+import { api, outcomeToast } from '@/lib/client/api';
+import { cn } from '@/lib/cn';
+import { availabilityCopy, type AvailabilityKey } from '@/lib/availability-copy';
 
 /**
- * The three commitments, stated in full before the switch is flipped.
+ * What a graduate is open to, one switch per commitment.
  *
- * "Open to mentoring" is a checkbox on most alumni portals and it means
- * nothing to the person ticking it, which is why the ones who tick it stop
- * replying by March. Each switch here says what actually lands in your
- * inbox, how often, and what you are never being asked to do — because the
- * only version of this that survives a placement season is the one the
- * graduate understood when they agreed to it.
+ * Each switch carries one line on what it means, from the same copy the
+ * profile form and the directory chips use, with the longer detail in a
+ * disclosure for whoever wants it. Faculty without the alumni role get no
+ * referrals switch: a referral is an alumnus vouching for a student at
+ * their own employer.
  *
  * This is the one interactive leaf in the module. It receives its initial
  * state as props: a client component may not read the session or the
@@ -37,50 +40,30 @@ interface Availability {
   speaking: boolean;
 }
 
-const COMMITMENTS: Array<{
-  key: keyof Availability;
-  label: string;
-  icon: React.ReactNode;
-  commits: string;
-  doesNot: string;
-}> = [
-  {
-    key: 'mentoring',
-    label: 'Answer questions from final-years',
-    icon: <MessageSquare className="size-4" />,
-    commits:
-      'Your name appears under the topics your record already matches, and students may send you a written request. Each of them is rationed to five open requests at a time, so in practice this is a handful of messages a year outside placement season.',
-    doesNot:
-      'It does not publish your email or mobile, and it does not commit you to a call, a deadline or a reply at all.',
-  },
-  {
-    key: 'referrals',
-    label: 'Refer someone into your company',
-    icon: <Briefcase className="size-4" />,
-    commits:
-      'Students and junior alumni can ask you to put a name forward where you work. You see the request, their branch and batch, and whatever they wrote, before you decide anything.',
-    doesNot:
-      'It does not share your employer with anyone who could not already see it on your profile, and refusing costs you nothing — most referral requests are declined and none of them are recorded against you.',
-  },
-  {
-    key: 'speaking',
-    label: 'Come back and speak',
-    icon: <Megaphone className="size-4" />,
-    commits:
-      'The alumni cell and the heads of department can invite you to a session — Industry Connect, a workshop, a placement-prep talk. Invitations come from staff, never from students directly.',
-    doesNot:
-      'It does not add you to a roster or an obligation for the annual meet. Dates are always proposed to you, not assigned.',
-  },
-];
+const ICON: Record<AvailabilityKey, React.ReactNode> = {
+  mentoring: <MessageSquare className="size-4" />,
+  referrals: <Briefcase className="size-4" />,
+  speaking: <Megaphone className="size-4" />,
+};
 
 export function BecomeMentorCard({
   mentoring,
   referrals,
   speaking,
+  audience,
+  company,
+  officeName,
+  openLimit,
 }: {
   mentoring: boolean;
   referrals: boolean;
   speaking: boolean;
+  /** `faculty` means faculty without the alumni role. */
+  audience: 'alumni' | 'faculty';
+  company: string | null;
+  officeName: string;
+  /** The per-student open-request limit, from the server's configuration. */
+  openLimit: number;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -98,81 +81,73 @@ export function BecomeMentorCard({
   // so a save that succeeded elsewhere does not leave this form dirty.
   React.useEffect(() => setValue(initial), [initial]);
 
+  const ctx = { audience, company, officeName, openLimit };
+  const entries = (['mentoring', 'referrals', 'speaking'] as const).flatMap((key) => {
+    const copy = availabilityCopy(key, ctx);
+    return copy ? [{ key, ...copy }] : [];
+  });
+
   const dirty =
     value.mentoring !== initial.mentoring ||
     value.referrals !== initial.referrals ||
     value.speaking !== initial.speaking;
 
-  const onCount = Number(value.mentoring) + Number(value.referrals) + Number(value.speaking);
+  const onCount = entries.filter((e) => value[e.key]).length;
 
   async function save(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setSaving(true);
     setError(null);
 
-    try {
-      const res = await fetch('/api/profile', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          openToMentoring: value.mentoring,
-          openToReferrals: value.referrals,
-          openToSpeaking: value.speaking,
-        }),
-      });
+    const outcome = await api.patch('/api/profile', {
+      openToMentoring: value.mentoring,
+      openToReferrals: value.referrals,
+      openToSpeaking: value.speaking,
+    });
+    setSaving(false);
 
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? `The server refused the change (${res.status}).`);
-      }
+    const t = outcomeToast(
+      outcome,
+      onCount === 0 ? 'You are no longer offered to students' : 'What you are open to is saved',
+    );
+    if (t) toast.show(t);
 
-      toast.success(
-        onCount === 0 ? 'You are no longer being offered to students' : 'Availability updated',
-        onCount === 0
-          ? 'Your profile stays in the directory. Nothing else changed.'
-          : 'It takes effect on the next search. You can turn any of it off again at any time.',
-      );
-      router.refresh();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Nothing was changed.';
-      setError(message);
-      toast.error('That did not save', message);
-    } finally {
-      setSaving(false);
+    if (outcome.status !== 'ok') {
+      setError(outcome.message);
+      return;
     }
+    // A real write re-renders the page from the stored record. A write
+    // that was not stored leaves the switches where they are, still
+    // marked unsaved, rather than showing a success that reverts.
+    if (outcome.persisted) router.refresh();
   }
 
   return (
-    <Card as="section">
-      <CardHeader>
-        <div className="min-w-0 space-y-1.5">
-          <CardTitle as="h2">What you are open to</CardTitle>
-          <CardDescription>
-            Three separate commitments, and each one says exactly what it puts in your inbox.
-            Turning one on never releases your email or mobile — that stays with your privacy
-            setting, and it is a different decision.
-          </CardDescription>
-        </div>
+    <Card as="section" id="availability" aria-labelledby="availability-title" className="scroll-mt-20">
+      <CardHeader variant="stack">
+        <CardTitle as="h2" id="availability-title">
+          What you are open to
+        </CardTitle>
+        <CardDescription>Your email and phone stay with your privacy setting, whatever you switch on here.</CardDescription>
       </CardHeader>
 
       <form onSubmit={save}>
-        <CardBody className="space-y-4">
+        <CardBody className="space-y-3">
           {error ? (
-            <Alert tone="danger" title="Your availability was not changed">
+            <Alert tone="danger" title="Nothing was changed">
               {error}
             </Alert>
           ) : null}
 
-          {COMMITMENTS.map((c) => {
+          {entries.map((c) => {
             const on = value[c.key];
             return (
               <div
                 key={c.key}
-                className={
-                  on
-                    ? 'rounded-lg border border-[var(--button-primary-bg)] bg-surface-sunken p-3.5 transition-colors duration-fast ease-brand'
-                    : 'rounded-lg border border-line p-3.5 transition-colors duration-fast ease-brand hover:bg-surface-sunken'
-                }
+                className={cn(
+                  'rounded-lg border p-3.5 transition-colors duration-fast ease-brand',
+                  on ? 'border-[var(--button-primary-bg)] bg-surface-sunken' : 'border-line hover:bg-surface-sunken',
+                )}
               >
                 <Switch
                   id={`availability-${c.key}`}
@@ -182,34 +157,38 @@ export function BecomeMentorCard({
                   label={
                     <span className="flex items-center gap-2">
                       <span className="text-muted" aria-hidden="true">
-                        {c.icon}
+                        {ICON[c.key]}
                       </span>
                       {c.label}
                     </span>
                   }
+                  hint={c.line}
                 />
-
-                <div className="mt-2.5 space-y-1.5 border-t border-line pt-2.5 text-xs leading-relaxed">
-                  <p className="text-secondary">
-                    <span className="font-semibold text-primary">Turning this on means: </span>
-                    {c.commits}
-                  </p>
-                  <p className="text-muted">{c.doesNot}</p>
-                </div>
               </div>
             );
           })}
+
+          <Disclosure summary="What each one means in practice" className="bg-surface">
+            <dl className="space-y-3">
+              {entries.map((c) => (
+                <div key={c.key} className="space-y-0.5">
+                  <dt className="font-medium text-primary">{c.label}</dt>
+                  <dd>{c.detail}</dd>
+                </div>
+              ))}
+            </dl>
+          </Disclosure>
         </CardBody>
 
-        <CardFooter>
-          <p className="mr-auto text-xs text-muted">
+        <CardFooter className="flex-wrap rounded-b-lg">
+          <p className="mr-auto text-sm text-secondary">
             {dirty
               ? 'Not saved yet.'
               : onCount === 0
-                ? 'You are not currently offered to students.'
-                : `${onCount} of 3 switched on.`}
+                ? 'You are not offered to students at the moment.'
+                : `${onCount} of ${entries.length} switched on.`}
           </p>
-          <Button type="submit" loading={saving} disabled={!dirty}>
+          <Button type="submit" loading={saving} disabled={!dirty} className="min-h-11">
             Save what I am open to
           </Button>
         </CardFooter>

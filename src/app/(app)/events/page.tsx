@@ -1,35 +1,20 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import {
-  Armchair,
-  CalendarDays,
-  CalendarOff,
-  CircleCheck,
-  History,
-  MapPin,
-  Ticket,
-  Users,
-  Video,
-} from 'lucide-react';
+import { CalendarDays, Ticket } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap, can } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
-import { getEvents } from '@/lib/data/repo';
-import {
-  Badge,
-  ButtonLink,
-  Card,
-  CardBody,
-  EmptyState,
-  PageHeader,
-  Progress,
-  Tabs,
-  type TabItem,
-} from '@/components/ui';
-import { formatCurrency, formatDateRange, formatNumber, formatRelative } from '@/lib/format';
-import { cn } from '@/lib/cn';
+import { getDepartments, getEvents } from '@/lib/data/repo';
+import { getAlbumPhotos, getAlbums } from '@/lib/data/content';
+import { ButtonLink, ChipNav, EmptyState, PageHeader, Tabs, type TabItem } from '@/components/ui';
+import { isContributed } from '@/components/content';
+import { isOnlineVenue } from '@/lib/event-status';
+import { viewerBatchYear, viewerBranch } from '@/lib/identity';
+import { mailto } from '@/lib/mailto';
 import type { EventItem } from '@/lib/data/types';
+import { EventCard, NextUpCard, PastEventCard, eventAction, type PastAlbum } from './EventCard';
+import { dayLabel, whenLine } from './calendar';
 
 /**
  * Events.
@@ -37,12 +22,36 @@ import type { EventItem } from '@/lib/data/types';
  * The list does not decide who may see what — `getEvents()` already
  * applies the eligibility rules (alumni-only events are not addressable by
  * a student anywhere, and unpublished drafts need `event.create.any`).
- * What this page owes the viewer is the *reason*: a card that says "Alumni
- * only" or "Draft — members cannot see this yet" is the difference between
- * a filtered list and a list that looks broken.
+ * This page leads with the one event most people are coming to, puts the
+ * viewer's own tickets one tap away, and gives every other event a single
+ * action worked out from what the viewer holds.
  */
 
 export const metadata: Metadata = { title: 'Events' };
+
+type When = 'upcoming' | 'past';
+
+function eventsHref(when: When, branch: string | null): string {
+  const q = new URLSearchParams();
+  if (when === 'past') q.set('when', 'past');
+  if (branch) q.set('branch', branch);
+  const s = q.toString();
+  return s ? `/events?${s}` : '/events';
+}
+
+/**
+ * The event the hub leads with: the first upcoming in-person event for
+ * every branch, the biggest room (or a paid one) first. Failing that, the
+ * first upcoming event of any kind.
+ */
+function leadEvent(list: EventItem[]): EventItem | null {
+  const published = list.filter((e) => e.published);
+  const candidates = published.filter((e) => e.departmentCode === null && !isOnlineVenue(e.venue));
+  if (candidates.length === 0) return published[0] ?? null;
+  const weight = (e: EventItem) => (e.capacity ?? 0) + (e.ticketPrice > 0 ? 1 : 0);
+  const top = Math.max(...candidates.map(weight));
+  return candidates.find((e) => weight(e) === top) ?? candidates[0] ?? null;
+}
 
 export default async function EventsPage({
   searchParams,
@@ -69,327 +78,191 @@ export default async function EventsPage({
 
   const upcoming = getEvents(session, { when: 'upcoming', includeDrafts: canManage });
   const past = getEvents(session, { when: 'past', includeDrafts: canManage });
-  const list = when === 'past' ? past : upcoming;
 
-  const registeredCount = upcoming.filter((e) => e.viewerRegistration).length;
+  // Branch filter. College-wide events stay in the list under every
+  // branch; that rule lives in `getEvents`, which is why the filter is
+  // passed to it rather than applied here.
+  const codes = getDepartments().map((d) => d.code);
+  const rawBranch = (Array.isArray(params.branch) ? params.branch[0] : params.branch)?.trim().toUpperCase() ?? '';
+  const branch = codes.includes(rawBranch) ? rawBranch : null;
+  const list = branch
+    ? getEvents(session, { when, includeDrafts: canManage, department: branch })
+    : when === 'past'
+      ? past
+      : upcoming;
+
+  const locale = pack.locale;
+  const office = pack.copy.officeName;
+  const flags = { canRegister, canManage };
   const draftCount = upcoming.filter((e) => !e.published).length;
+  const tickets = upcoming.filter((e) => e.viewerRegistration && e.published);
 
   const tabs: TabItem[] = [
-    { label: 'Upcoming', href: '/events?when=upcoming', count: upcoming.length, active: when === 'upcoming' },
-    { label: 'Past', href: '/events?when=past', count: past.length, active: when === 'past' },
+    { label: 'Upcoming', href: eventsHref('upcoming', branch), count: upcoming.length, active: when === 'upcoming' },
+    { label: 'Past', href: eventsHref('past', branch), count: past.length, active: when === 'past' },
   ];
 
-  const locale = pack.locale.locale;
-  const timeZone = pack.locale.timeZone;
-  const currency = pack.locale.currency;
+  // "All · Mine: CSE · ECE …" — only branches that have an event in this tab.
+  const mine = viewerBranch(session);
+  const tabList = when === 'past' ? past : upcoming;
+  const withEvents = codes.filter((c) => c !== mine && tabList.some((e) => e.departmentCode === c));
+  const chips = [
+    { label: 'All', href: eventsHref(when, null), active: branch === null },
+    ...(mine ? [{ label: `Mine: ${mine}`, href: eventsHref(when, mine), active: branch === mine }] : []),
+    ...withEvents.map((c) => ({ label: c, href: eventsHref(when, c), active: branch === c })),
+  ];
+  const showChips = chips.length > 2 || branch !== null;
+
+  const lead = when === 'upcoming' ? leadEvent(list) : null;
+  const rest = lead ? list.filter((e) => e.id !== lead.id) : list;
+
+  // Past events: the album from the day, when the college has filed one.
+  const albums = pack.features.gallery ? getAlbums() : [];
+  const albumFor = (event: EventItem): PastAlbum | null => {
+    const album = albums.find((a) => a.eventSlug === event.slug);
+    if (!album) return null;
+    const firstPhoto = getAlbumPhotos(album.id).find((p) => p.url)?.url ?? null;
+    return {
+      href: `/gallery/${album.slug}`,
+      coverSrc: album.coverImage ?? firstPhoto,
+      photoCount: album.photoCount,
+      motif: String(album.batchYear ?? album.departmentCode ?? new Date(album.takenOn).getUTCFullYear()),
+      contributed: isContributed(album),
+    };
+  };
+
+  const batch = viewerBatchYear(session);
+  const suggestHref = pack.copy.supportEmail
+    ? mailto(pack.copy.supportEmail, batch ? `Suggesting a meet — Batch of ${batch}` : 'Suggesting a meet', [
+        'What I would like to see:',
+        '',
+        'Where and roughly when:',
+        '',
+      ])
+    : null;
 
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow={pack.copy.shortName ? `${pack.copy.shortName} campus and chapter events` : undefined}
+        eyebrow="Events"
         title="Events"
-        description={
-          when === 'past'
-            ? 'What has already happened, kept so a batch can find the reunion they attended and the alumni cell can point at attendance.'
-            : 'Reunions, department sessions and online panels. Register here — the alumni cell works from this list at the gate.'
-        }
-        actions={
-          canManage ? (
-            <ButtonLink href="/admin/events" variant="secondary">
-              Manage events
-            </ButtonLink>
-          ) : null
-        }
+        description={`Reunions, department sessions and talks from ${pack.copy.shortName}.`}
       />
 
-      {when === 'upcoming' && (registeredCount > 0 || draftCount > 0) ? (
-        <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-secondary">
-          {registeredCount > 0 ? (
-            <span className="inline-flex items-center gap-1.5">
-              <CircleCheck className="size-4 text-success-fg" aria-hidden="true" />
-              You are registered for {registeredCount} of {upcoming.length}
-            </span>
-          ) : null}
-          {draftCount > 0 ? (
-            <span className="inline-flex items-center gap-1.5">
-              <CalendarOff className="size-4 text-warning-fg" aria-hidden="true" />
-              {draftCount} draft {draftCount === 1 ? 'event is' : 'events are'} visible only to you
-            </span>
-          ) : null}
-        </p>
+      {canManage ? (
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-line bg-surface-sunken px-4 py-2">
+          <p className="text-sm text-secondary">
+            <span className="font-medium text-primary">Organiser view.</span>{' '}
+            {draftCount > 0
+              ? `${draftCount} ${draftCount === 1 ? 'draft is' : 'drafts are'} listed that members cannot see yet.`
+              : 'Drafts you create show here before members can see them.'}
+          </p>
+          <ButtonLink href="/admin/events" variant="secondary" size="sm" className="min-h-11 sm:min-h-0">
+            Manage events
+          </ButtonLink>
+        </div>
       ) : null}
 
-      <Tabs items={tabs} ariaLabel="Event periods" />
+      {tickets.length > 0 ? (
+        <section aria-labelledby="your-tickets" className="space-y-2">
+          <h2 id="your-tickets" className="text-sm font-semibold">
+            Your tickets
+          </h2>
+          <ul className="scroll-fade-x flex gap-2 overflow-x-auto pb-1">
+            {tickets.map((e) => (
+              <li key={e.id} className="shrink-0">
+                <Link
+                  href={`/events/${e.slug}/ticket`}
+                  className="inline-flex min-h-11 items-center gap-2 whitespace-nowrap rounded-full border border-line bg-surface-raised px-4 text-sm transition-colors duration-fast ease-brand hover:border-line-strong"
+                >
+                  <Ticket className="size-4 text-brand-fg" aria-hidden="true" />
+                  <span className="font-medium">{dayLabel(e.startsAt, locale.locale, locale.timeZone)}</span>
+                  <span className="text-secondary">· {e.title} —</span>
+                  <span className="font-semibold text-brand-fg">Show ticket</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {lead ? (
+        <NextUpCard
+          event={lead}
+          locale={locale}
+          eyebrow={!lead.venue || lead.venue.includes(',') ? 'Next up' : 'Next on campus'}
+          when={whenLine(lead, locale.locale, locale.timeZone)}
+          action={eventAction(lead, flags)}
+        />
+      ) : null}
+
+      <div className="space-y-3">
+        <Tabs items={tabs} ariaLabel="Event periods" />
+        {showChips ? <ChipNav items={chips} ariaLabel="Branch" /> : null}
+      </div>
 
       {list.length === 0 ? (
         when === 'past' ? (
           <EmptyState
-            icon={<History className="size-5" />}
-            title="Nothing in the archive yet"
-            description="Past events appear here after they finish, with the final registration count. The first one to land will be whatever is next on the calendar."
+            variant="inline"
+            title="Past events and their photos appear here once they have happened."
             action={
-              <ButtonLink href="/events?when=upcoming" variant="secondary">
+              <Link href={eventsHref('upcoming', branch)} className="link inline-flex min-h-11 items-center">
                 See what is coming up
-              </ButtonLink>
+              </Link>
             }
           />
         ) : (
           <EmptyState
             icon={<CalendarDays className="size-5" />}
-            title="Nothing on the calendar right now"
-            description="The alumni cell publishes reunions, department sessions and online panels here. Meanwhile the archive has what the last few months looked like."
+            title="Nothing is scheduled yet"
+            description={`New dates appear here as soon as the ${office} fixes them.`}
             action={
-              <ButtonLink href="/events?when=past" variant="secondary">
-                Browse past events
-              </ButtonLink>
+              <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+                {pack.features.gallery ? (
+                  <ButtonLink href="/gallery" variant="secondary" className="min-h-11">
+                    See photos from past events
+                  </ButtonLink>
+                ) : null}
+                {suggestHref ? (
+                  <a href={suggestHref} className="link inline-flex min-h-11 items-center text-sm">
+                    Suggest a meet
+                  </a>
+                ) : null}
+              </div>
             }
           />
         )
-      ) : (
-        <ul className="space-y-4">
+      ) : when === 'past' ? (
+        <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {list.map((event) => (
-            <li key={event.id}>
-              <EventCard
-                event={event}
-                past={when === 'past'}
-                locale={locale}
-                timeZone={timeZone}
-                currency={currency}
-              />
+            <li key={event.id} className="min-w-0">
+              <PastEventCard event={event} locale={locale} album={albumFor(event)} />
             </li>
           ))}
         </ul>
-      )}
+      ) : rest.length > 0 ? (
+        <section aria-labelledby="more-events" className="space-y-3">
+          <h2 id="more-events" className="sr-only">
+            {lead ? 'More events' : 'Upcoming events'}
+          </h2>
+          <ul className="hidden grid-cols-1 gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-3">
+            {rest.map((event) => (
+              <li key={event.id} className="min-w-0">
+                <EventCard event={event} locale={locale} flags={flags} layout="card" />
+              </li>
+            ))}
+          </ul>
+          <ul className="divide-y divide-line sm:hidden">
+            {rest.map((event) => (
+              <li key={event.id} className="min-w-0">
+                <EventCard event={event} locale={locale} flags={flags} layout="row" />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
     </div>
   );
 }
 
-// ---------------------------------------------------------------
-// Card
-// ---------------------------------------------------------------
-
-function EventCard({
-  event,
-  past,
-  locale,
-  timeZone,
-  currency,
-}: {
-  event: EventItem;
-  past: boolean;
-  locale: string;
-  timeZone: string;
-  currency: string;
-}) {
-  const parts = dateParts(event.startsAt, locale, timeZone);
-  const seats = seatState(event);
-  const online = isOnline(event.venue);
-
-  return (
-    <Card as="article" interactive className="relative">
-      <CardBody className="flex flex-col gap-4 sm:flex-row">
-        <div
-          className={cn(
-            'flex w-full shrink-0 flex-row items-center gap-3 rounded border border-line',
-            'bg-surface-sunken px-3 py-2 sm:w-20 sm:flex-col sm:gap-0 sm:py-3',
-          )}
-        >
-          <span className="text-xs font-semibold uppercase tracking-wider text-brand-fg">
-            {parts.month}
-          </span>
-          <span className="font-display text-xl font-bold tabular leading-none">{parts.day}</span>
-          <span className="text-xs text-muted">{parts.weekday}</span>
-        </div>
-
-        <div className="min-w-0 flex-1 space-y-2.5">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Badge tone={event.departmentCode ? 'brand' : 'outline'}>
-              {event.departmentCode ?? 'All branches'}
-            </Badge>
-
-            {event.ticketPrice > 0 ? (
-              <Badge tone="neutral">
-                <Ticket className="size-3" aria-hidden="true" />
-                {formatCurrency(event.ticketPrice, { locale, currency })}
-              </Badge>
-            ) : (
-              <Badge tone="success">Free</Badge>
-            )}
-
-            {event.alumniOnly ? <Badge tone="accent">Alumni only</Badge> : null}
-            {!event.alumniOnly && !event.studentEligible ? (
-              <Badge tone="neutral">Not open to students</Badge>
-            ) : null}
-            {!event.published ? <Badge tone="warning">Draft — not published</Badge> : null}
-            {event.viewerRegistration ? (
-              <Badge tone="info" dot>
-                {past
-                  ? event.viewerRegistration.checkedIn
-                    ? 'You attended'
-                    : 'You registered'
-                  : 'You are registered'}
-              </Badge>
-            ) : null}
-          </div>
-
-          <h2 className="font-display text-lg font-semibold leading-snug">
-            <Link href={`/events/${event.slug}`} className="link-quiet after:absolute after:inset-0">
-              {event.title}
-            </Link>
-          </h2>
-
-          <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-secondary">
-            <span className="inline-flex items-center gap-1.5">
-              <CalendarDays className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
-              {formatDateRange(event.startsAt, event.endsAt, { locale, timeZone })}
-            </span>
-            {event.venue ? (
-              <span className="inline-flex min-w-0 items-center gap-1.5">
-                {online ? (
-                  <Video className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
-                ) : (
-                  <MapPin className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
-                )}
-                <span className="truncate">{event.venue}</span>
-              </span>
-            ) : (
-              <span className="text-muted">Venue to be announced</span>
-            )}
-          </p>
-
-          {event.description ? (
-            <p className="line-clamp-2 text-sm text-secondary">{event.description}</p>
-          ) : null}
-        </div>
-
-        <div className="w-full shrink-0 space-y-2 border-t border-line pt-3 sm:w-52 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
-          {past ? (
-            <div className="space-y-1">
-              <p className="text-sm font-medium">
-                {formatNumber(event.registeredCount, { locale })} registered
-              </p>
-              <p className="text-xs text-muted">
-                Held {formatRelative(event.startsAt, { locale })}.
-                {event.viewerRegistration?.checkedIn
-                  ? ' You were checked in at the gate.'
-                  : event.viewerRegistration
-                    ? ' Your registration is on record; no check-in was scanned.'
-                    : ''}
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              <p className={cn('text-sm font-medium', seats.emphasis)}>{seats.headline}</p>
-              {seats.max !== null ? (
-                <Progress
-                  value={seats.taken}
-                  max={seats.max}
-                  tone={seats.tone}
-                  label={`${seats.taken} of ${seats.max} seats taken`}
-                />
-              ) : null}
-              <p className="flex items-center gap-1.5 text-xs text-muted">
-                <Users className="size-3.5" aria-hidden="true" />
-                {seats.detail}
-              </p>
-            </div>
-          )}
-
-          {/* Positioned so it sits above the title link's full-card overlay;
-              both go to the same place, so a stray click is never wrong. */}
-          <div className="relative pt-1">
-            {past ? (
-              <ButtonLink href={`/events/${event.slug}`} variant="secondary" size="sm">
-                <History className="size-4" aria-hidden="true" />
-                Event record
-              </ButtonLink>
-            ) : event.viewerRegistration ? (
-              <ButtonLink href={`/events/${event.slug}`} variant="secondary" size="sm">
-                View your registration
-              </ButtonLink>
-            ) : seats.full ? (
-              <ButtonLink href={`/events/${event.slug}`} variant="secondary" size="sm">
-                <Armchair className="size-4" aria-hidden="true" />
-                Join the waiting list
-              </ButtonLink>
-            ) : (
-              <ButtonLink href={`/events/${event.slug}`} size="sm">
-                Register
-              </ButtonLink>
-            )}
-          </div>
-        </div>
-      </CardBody>
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------
-
-function dateParts(iso: string, locale: string, timeZone: string) {
-  const d = new Date(iso);
-  return {
-    day: new Intl.DateTimeFormat(locale, { day: '2-digit', timeZone }).format(d),
-    month: new Intl.DateTimeFormat(locale, { month: 'short', timeZone }).format(d),
-    weekday: new Intl.DateTimeFormat(locale, { weekday: 'short', timeZone }).format(d),
-  };
-}
-
-function isOnline(venue: string | null): boolean {
-  return Boolean(venue && /online|zoom|meet|webinar|link/i.test(venue));
-}
-
-function seatState(event: EventItem) {
-  const taken = event.registeredCount;
-  const max = event.capacity;
-
-  if (max === null) {
-    return {
-      taken,
-      max: null as number | null,
-      full: false,
-      tone: 'brand' as const,
-      emphasis: '',
-      headline: `${taken} registered`,
-      detail: 'No seat limit on this one — bring whoever you like.',
-    };
-  }
-
-  const left = Math.max(0, max - taken);
-
-  if (left === 0) {
-    return {
-      taken,
-      max,
-      full: true,
-      tone: 'warning' as const,
-      emphasis: 'text-warning-fg',
-      headline: 'Full — join the waiting list',
-      detail: `All ${max} seats are taken. Returned seats go to the waiting list in order.`,
-    };
-  }
-
-  if (left <= Math.max(3, Math.round(max * 0.05))) {
-    return {
-      taken,
-      max,
-      full: false,
-      tone: 'warning' as const,
-      emphasis: 'text-warning-fg',
-      headline: `Only ${left} ${left === 1 ? 'seat' : 'seats'} left`,
-      detail: `${taken} of ${max} registered.`,
-    };
-  }
-
-  return {
-    taken,
-    max,
-    full: false,
-    tone: 'brand' as const,
-    emphasis: '',
-    headline: `${taken} of ${max} registered`,
-    detail: `${left} seats still open.`,
-  };
-}

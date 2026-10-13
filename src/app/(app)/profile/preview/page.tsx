@@ -1,23 +1,18 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { Eye, EyeOff, Lock, ShieldCheck, UserCheck } from 'lucide-react';
+import { Eye, EyeOff, Pencil } from 'lucide-react';
 import {
-  Alert,
-  Badge,
   Breadcrumbs,
   ButtonLink,
   Card,
   CardBody,
-  CardDescription,
-  CardHeader,
   CardTitle,
-  DetailRow,
+  Disclosure,
   PageHeader,
-  SegmentedNav,
-  Section,
   Table,
   TableWrap,
+  Tabs,
   TBody,
   TD,
   TH,
@@ -33,31 +28,26 @@ import { tierFor, visibleStatusesFor } from '@/lib/members/projection';
 import { getTenantBrand } from '@/lib/tenant';
 import { getMemberBySlug, getOwnProfile } from '@/lib/data/repo';
 import { memberLine } from '@/lib/format';
-import type { MemberDetail, MemberStatus, Role } from '@/lib/data/types';
+import { capitalise, inSentence, joinList } from '@/lib/branding/copy';
+import { visibilityOption } from '@/lib/visibility-copy';
+import type { ContactVisibility, MemberDetail, MemberStatus, Role } from '@/lib/data/types';
 
 /**
  * What others see.
  *
- * The most reassuring screen in the product for somebody who signed up
- * reluctantly — and the easiest one in the world to get quietly wrong.
+ * Nothing on this page is written from the rules; it is the rules, run.
+ * For each kind of viewer the page builds a session and calls
+ * `getMemberBySlug()`, the same function the directory calls, so the card,
+ * the contact block, the "Sees" and "Does not see" lines and the
+ * field-by-field table are all read off what that call returned. Only the
+ * "Can" line is written, and it follows `VISIBILITY_OPTIONS`.
  *
- * It would be trivial to hand-write "students do not see your email" into
- * this page. The moment the projection or the release rule changes, that
- * sentence becomes a lie printed in the one place a member went looking for
- * the truth. So nothing here is described; everything is *run*. The page
- * builds a session for each viewer role and calls `getMemberBySlug()` —
- * the same function the directory calls, applying the same tier projection
- * and the same two contact-release gates. If a field is missing from the
- * table below, it is missing because the projection did not carry it, not
- * because this file said so.
- *
- * The simulated viewer has no accepted connection with you, which is the
- * floor rather than the average: it is what a member who has never spoken
- * to you can reach.
+ * The simulated viewer has no accepted request with you: the floor, not
+ * the average, and what a member who has never spoken to you can reach.
  */
 
 export const metadata: Metadata = {
-  title: 'Profile preview',
+  title: 'What others see',
 };
 
 type ViewerKind = 'student' | 'alumni' | 'admin';
@@ -67,26 +57,25 @@ const VIEWERS: Record<
   { tab: string; who: string; role: Role; status: MemberStatus; standing: string }
 > = {
   student: {
-    tab: 'A student',
+    tab: 'Final-year student',
     who: 'a final-year student',
     role: 'student',
     status: 'active_student',
-    standing: 'Browsing the alumni directory looking for someone to ask. Has never met you.',
+    standing: 'Has never been in touch with you.',
   },
   alumni: {
-    tab: 'A fellow alumnus',
+    tab: 'Fellow alumnus',
     who: 'a fellow alumnus',
     role: 'alumni',
     status: 'active_alumni',
-    standing: 'Another verified graduate of the college. No connection request between you.',
+    standing: 'Another verified graduate you have not accepted a request from.',
   },
   admin: {
-    tab: 'The college admin',
+    tab: 'College admin',
     who: 'the college admin',
     role: 'college_admin',
     status: 'active_alumni',
-    standing:
-      'The alumni cell head, holding the one role that can read contact details outright and export them in bulk. Every one of those reads is attributable.',
+    standing: 'Runs the portal for the college.',
   },
 };
 
@@ -139,7 +128,7 @@ export default async function ProfilePreviewPage({
   const viewerSpec = VIEWERS[kind];
 
   const viewer = previewSession(kind, session.tenantId, profile.departmentCode);
-  // The real read path. Tier projection and both contact gates run inside.
+  // The real read path. The field projection and contact release run inside.
   const seen = getMemberBySlug(viewer, profile.slug);
 
   const tier = tierFor(viewer);
@@ -153,63 +142,91 @@ export default async function ProfilePreviewPage({
   }));
 
   const ownContact = profile.contact ?? {};
+  const visibility: ContactVisibility = profile.contact?.visibility ?? 'on_accept';
+  const option = visibilityOption(visibility);
+  const rollMid = inSentence(pack.copy.rollNumberLabel);
+  const editable = can(session, 'profile.write.own');
+
+  // A request needs the viewer to be able to send one and the owner to be
+  // able to receive it, on a college with requests switched on.
+  const mayRequest =
+    pack.features.connections && can(viewer, 'connection.send') && can(session, 'connection.receive');
+
+  const summary = seen
+    ? summarise({ kind, seen, profile, ownContact, rollMid, visibility, mayRequest, staffView: tier === 'privileged' })
+    : null;
+
+  const releasedBecause =
+    seen?.contact == null
+      ? undefined
+      : kind === 'admin'
+        ? ('role' as const)
+        : seen.hasAcceptedConnection
+          ? ('connection' as const)
+          : ('visibility' as const);
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs
-        items={[
-          { label: 'My profile', href: '/profile' },
-          { label: 'What others see' },
-        ]}
-      />
-
       <PageHeader
-        eyebrow="Profile preview"
-        title="What others see"
-        description="Your own record, read back through the same code the directory uses for each kind of viewer. Nothing on this page is a description of the rules — it is the rules, run against your profile, a moment ago."
-        actions={
-          <ButtonLink href="/settings/privacy" variant="secondary">
-            <ShieldCheck className="size-4" aria-hidden="true" />
-            Privacy settings
-          </ButtonLink>
+        breadcrumbs={
+          <Breadcrumbs
+            items={[
+              { label: 'My profile', href: '/profile' },
+              { label: 'What others see' },
+            ]}
+          />
         }
+        title="What others see"
+        description="Your profile as each kind of member sees it, before any request is accepted."
       />
 
-      <div className="space-y-3">
-        <SegmentedNav items={tabs} />
-        <p className="text-sm text-secondary">
-          <span className="font-medium text-primary">Viewing as {viewerSpec.who}.</span>{' '}
-          {viewerSpec.standing}
-        </p>
-      </div>
+      <Tabs items={tabs} ariaLabel="Viewer" />
 
-      {seen ? (
-        <>
-          <div className="grid gap-gutter lg:grid-cols-[minmax(0,1fr)_20rem]">
-            <div className="min-w-0 space-y-6">
-              <Section
-                title="In the directory list"
-                description="The card itself, rendered by the same component the search results use."
-              >
-                <div className="sm:max-w-sm">
+      <div className="grid grid-cols-1 gap-gutter lg:grid-cols-[minmax(0,1fr)_18rem]">
+        <div className="min-w-0 space-y-6">
+          {seen && summary ? (
+            <>
+              <section aria-labelledby="seen-as" className="space-y-3">
+                <h2 id="seen-as" className="text-sm font-semibold text-secondary">
+                  As {viewerSpec.who} sees you
+                </h2>
+                <div className="grid grid-cols-1 items-start gap-gutter md:grid-cols-2">
                   <MemberCard member={seen} />
+                  <ContactBlock
+                    contact={seen.contact}
+                    ownerName={profile.fullName}
+                    // The owner's setting travels with the refusal, so the
+                    // block can say why instead of showing a dead end.
+                    visibility={seen.contactVisibility}
+                    hasAcceptedConnection={seen.hasAcceptedConnection}
+                    releasedBecause={releasedBecause}
+                    viewerIsStudent={kind === 'student'}
+                    shortName={pack.copy.shortName}
+                  />
                 </div>
-                <p className="text-xs text-muted">
-                  Opening the card takes you to your own profile page as you normally see it — not
-                  as {viewerSpec.who} sees it. Use the switcher above for that.
-                </p>
-              </Section>
+              </section>
 
-              <Section
-                title="Field by field"
-                description={`Anything marked withheld was never selected into the response. It is not hidden by the page — it never left the server.`}
-              >
-                <TableWrap caption={`What ${viewerSpec.who} receives for each field of your profile`}>
+              <Card>
+                <CardBody>
+                  <dl className="divide-y divide-line">
+                    <SummaryRow label="Sees" tone="seen">
+                      {summary.sees}
+                    </SummaryRow>
+                    <SummaryRow label="Does not see" tone="hidden">
+                      {summary.hidden}
+                    </SummaryRow>
+                    <SummaryRow label="Can">{summary.can}</SummaryRow>
+                  </dl>
+                </CardBody>
+              </Card>
+
+              <Disclosure id="field-by-field" summary="Field by field">
+                <TableWrap caption={`What ${viewerSpec.who} is shown from each part of your profile`}>
                   <Table>
                     <THead>
                       <TR>
-                        <TH className="min-w-40">Field</TH>
-                        <TH>What {viewerSpec.who} gets</TH>
+                        <TH className="min-w-36">Field</TH>
+                        <TH>What {viewerSpec.who} sees</TH>
                       </TR>
                     </THead>
                     <TBody>
@@ -217,97 +234,63 @@ export default async function ProfilePreviewPage({
                       <FieldRow
                         label="Photo"
                         value={seen.photoUrl ? 'Shown' : null}
-                        absent={profile.photoUrl ? 'Withheld at this tier' : 'You have not uploaded one'}
+                        absent={profile.photoUrl ? 'Not shown' : 'You have not added one'}
                       />
                       <FieldRow
                         label="Branch and batch"
                         value={
                           memberLine([
                             seen.departmentCode,
-                            seen.batchYear ? `batch of ${seen.batchYear}` : null,
+                            seen.batchYear ? `Batch of ${seen.batchYear}` : null,
                           ]) || null
                         }
                         absent="Not on your record"
                       />
                       <FieldRow
-                        label="Employer and designation"
+                        label="Work"
                         value={memberLine([seen.designation, seen.currentCompany]) || null}
-                        absent={
-                          profile.currentCompany || profile.designation
-                            ? 'Withheld at this tier'
-                            : 'You have not added one'
-                        }
+                        absent={profile.currentCompany || profile.designation ? 'Not shown' : 'You have not added any'}
                       />
                       <FieldRow
-                        label="Short introduction"
+                        label="Introduction"
                         value={seen.bio ? truncate(seen.bio) : null}
-                        absent={profile.bio ? 'Withheld at this tier' : 'You have not written one'}
+                        absent={profile.bio ? 'Not shown' : 'You have not written one'}
                       />
                       <FieldRow
                         label="Skills"
                         value={seen.skills.length ? seen.skills.join(', ') : null}
-                        absent={profile.skills.length ? 'Withheld at this tier' : 'None added'}
+                        absent={profile.skills.length ? 'Not shown' : 'None added'}
                       />
                       <FieldRow
-                        label="City, state, country"
+                        label="City"
                         value={memberLine([seen.city, seen.state, seen.country]) || null}
-                        absent={
-                          profile.city
-                            ? 'Withheld — location is not in the field list for this viewer'
-                            : 'You have not added a city'
-                        }
+                        absent={profile.city ? 'Not shown' : 'You have not added one'}
                       />
                       <FieldRow
                         label="Industry"
                         value={seen.industry ?? null}
+                        absent={profile.industry ? 'Not shown' : 'You have not added one'}
+                      />
+                      <FieldRow label="Open to" value={availabilityLine(seen) || 'Nothing switched on'} />
+                      <FieldRow
+                        label="Email and mobile"
+                        value={contactLine(seen)}
+                        absent={ownContact.email || ownContact.mobile ? 'Not shown' : 'Not on your record'}
+                        mono
+                      />
+                      <FieldRow
+                        label="LinkedIn, GitHub, website"
+                        value={seen.contact?.linkedin || seen.contact?.github || seen.contact?.portfolio ? 'Shown' : null}
                         absent={
-                          profile.industry
-                            ? 'Withheld — not in the field list for this viewer'
-                            : 'You have not added one'
+                          ownContact.linkedin || ownContact.github || ownContact.portfolio
+                            ? 'Not shown'
+                            : 'You have not added any'
                         }
                       />
                       <FieldRow
-                        label="Open to mentoring, referrals, speaking"
-                        value={
-                          availabilityLine(seen) ||
-                          'All three off — the profile says you are not taking requests'
-                        }
-                      />
-
-                      <ContactFieldRow
-                        label="Email"
-                        ownValue={ownContact.email ?? null}
-                        released={seen.contact?.email ?? null}
-                        seen={seen}
-                        viewer={viewerSpec.who}
-                      />
-                      <ContactFieldRow
-                        label="Mobile"
-                        ownValue={ownContact.mobile ?? null}
-                        released={seen.contact?.mobile ?? null}
-                        seen={seen}
-                        viewer={viewerSpec.who}
-                        neverBulk
-                      />
-                      <ContactFieldRow
-                        label="LinkedIn"
-                        ownValue={ownContact.linkedin ?? null}
-                        released={seen.contact?.linkedin ?? null}
-                        seen={seen}
-                        viewer={viewerSpec.who}
-                      />
-                      <ContactFieldRow
-                        label="GitHub or portfolio"
-                        ownValue={ownContact.github ?? ownContact.portfolio ?? null}
-                        released={seen.contact?.github ?? seen.contact?.portfolio ?? null}
-                        seen={seen}
-                        viewer={viewerSpec.who}
-                      />
-
-                      <FieldRow
-                        label="Roll number"
+                        label={pack.copy.rollNumberLabel}
                         value={seen.rollNumber ?? null}
-                        absent="Withheld — released only to a role that can read the college record"
+                        absent="Not shown"
                         mono
                       />
                       {profile.isStudent ? (
@@ -321,164 +304,191 @@ export default async function ProfilePreviewPage({
                                 ])
                               : null
                           }
-                          absent="Withheld — placement-side data, never shown to alumni"
+                          absent="Not shown. Only the placement cell and the college admin see these."
                         />
                       ) : null}
                     </TBody>
                   </Table>
                 </TableWrap>
-              </Section>
-            </div>
+              </Disclosure>
+            </>
+          ) : (
+            <Card>
+              <CardBody className="space-y-2">
+                <CardTitle as="h2" className="text-md">
+                  {capitalise(viewerSpec.who)} cannot find your profile
+                </CardTitle>
+                <p className="max-w-prose text-sm text-secondary">
+                  {invisibleReason(kind, profile, allowedStatuses, viewerSeesStudents)}
+                </p>
+              </CardBody>
+            </Card>
+          )}
+        </div>
 
-            <aside className="min-w-0 space-y-6">
-              <ContactBlock
-                contact={seen.contact}
-                ownerName={profile.fullName}
-                // The owner's setting travels with the refusal, so the block
-                // can name which gate is closed instead of showing a dead
-                // end. `seen.contact?.visibility` would be null exactly when
-                // the reason matters most.
-                visibility={seen.contactVisibility}
-                hasAcceptedConnection={seen.hasAcceptedConnection}
-              />
-
-              <Card>
-                <CardHeader>
-                  <div className="space-y-1">
-                    <CardTitle as="h2" className="text-md">
-                      Why that block says what it says
-                    </CardTitle>
-                    <CardDescription>
-                      Contact release needs both gates to pass, every time.
-                    </CardDescription>
-                  </div>
-                  {seen.contact ? (
-                    <Badge tone="warning" dot>
-                      Released
-                    </Badge>
-                  ) : (
-                    <Badge tone="success" dot>
-                      Withheld
-                    </Badge>
-                  )}
-                </CardHeader>
-
-                <CardBody className="space-y-3">
-                  <dl className="divide-y divide-line">
-                    <DetailRow label="Gate 1 — entitled">
-                      {kind === 'admin'
-                        ? 'Yes. The college admin holds an explicit capability to read contact details.'
-                        : tier === 'member'
-                          ? 'Depends on your setting below — alumni and faculty are the tier your setting can open to.'
-                          : 'Students are never entitled outright. Only an accepted request reaches them.'}
-                    </DetailRow>
-                    <DetailRow label="Gate 2 — you consented">
-                      {VISIBILITY_PLAIN[seen.contactVisibility ?? 'on_accept']}
-                    </DetailRow>
-                    <DetailRow label="Connection between you">
-                      {seen.hasAcceptedConnection
-                        ? 'Accepted'
-                        : 'None — this preview assumes a viewer you have never accepted'}
-                    </DetailRow>
-                    <DetailRow label="Field tier applied">
-                      <span className="font-mono">{tier}</span>
-                    </DetailRow>
-                  </dl>
-
-                  <ButtonLink href="/settings/privacy" variant="secondary" size="sm" className="w-full">
-                    <ShieldCheck className="size-4" aria-hidden="true" />
-                    Change who can reach you
-                  </ButtonLink>
-                </CardBody>
-              </Card>
-
-              {kind === 'admin' ? (
-                <Alert tone="neutral" title="What the admin cannot do" icon={<Lock className="size-4" />}>
-                  <ul className="mt-1 list-disc space-y-1 pl-5">
-                    <li>
-                      Read a private message. There is no capability for it, for any role, and the
-                      absence is deliberate.
-                    </li>
-                    <li>
-                      Export in bulk without leaving a trace. Every export writes the actor, the
-                      scope and a stated reason to the audit log, and you can ask for the entries
-                      about you.
-                    </li>
-                  </ul>
-                </Alert>
-              ) : null}
-
-              {kind === 'student' ? (
-                <Alert tone="neutral" title="What a student can still do" icon={<UserCheck className="size-4" />}>
-                  Send you one connection request with a message — five open at a time, ten a month
-                  across the whole portal. You see their name, branch and batch before you decide,
-                  and declining is silent.
-                </Alert>
-              ) : null}
-
-              <ButtonLink href="/profile/edit" variant="secondary" size="sm" className="w-full">
-                Edit what is on the profile
-              </ButtonLink>
-            </aside>
-          </div>
-        </>
-      ) : (
-        <Section title={`${capitalise(viewerSpec.who)} cannot see your profile at all`}>
+        <aside aria-label="About this preview" className="min-w-0 space-y-gutter">
           <Card>
-            <CardBody className="space-y-4">
-              <p className="max-w-prose text-sm text-secondary">
-                {invisibleReason(kind, profile, allowedStatuses, viewerSeesStudents)}
-              </p>
-
-              <dl className="divide-y divide-line">
-                <DetailRow label="Your membership status">
-                  <span className="font-mono">{profile.status}</span>
-                </DetailRow>
-                <DetailRow label="Statuses this viewer may list">
-                  <span className="font-mono">{allowedStatuses.join(', ')}</span>
-                </DetailRow>
+            <CardBody>
+              <dl className="space-y-4 text-sm">
+                <div className="space-y-0.5">
+                  <dt className="text-xs text-secondary">Viewer</dt>
+                  <dd>
+                    <span className="font-medium">{capitalise(viewerSpec.who)}.</span>{' '}
+                    <span className="text-secondary">{viewerSpec.standing}</span>
+                  </dd>
+                </div>
+                <div className="space-y-0.5">
+                  <dt className="text-xs text-secondary">Your contact setting</dt>
+                  <dd className="flex flex-wrap items-baseline justify-between gap-x-3">
+                    <span className="font-medium">{option?.label ?? 'Not chosen'}</span>
+                    <Link href="/settings/privacy" className="link inline-flex min-h-11 items-center">
+                      Change
+                    </Link>
+                  </dd>
+                </div>
+                <div className="space-y-0.5">
+                  <dt className="text-xs text-secondary">Request between you</dt>
+                  <dd className="font-medium">None accepted</dd>
+                </div>
               </dl>
-
-              <p className="text-xs text-muted">
-                This is the directory read path refusing, not a page hiding something. The refusal
-                happens before any field of your record is selected, so there is nothing for a
-                careless query to leak.
-              </p>
             </CardBody>
           </Card>
-        </Section>
-      )}
 
-      <Card>
-        <CardBody className="space-y-2">
-          <CardTitle as="h2" className="text-md">
-            One thing this preview does not show you
-          </CardTitle>
-          <p className="max-w-prose text-sm text-secondary">
-            The simulated viewer has never had a connection request accepted by you. If your setting
-            is &ldquo;only people whose request I accept&rdquo;, that is why the contact block is
-            closed here — accepting one person&rsquo;s request opens it for that person and nobody
-            else. Changing the setting afterwards narrows what is released next; it does not take
-            back an address already given.{' '}
-            <Link href="/settings/privacy" className="link">
-              Read the full rule and your consent history
-            </Link>
-            .
-          </p>
-        </CardBody>
-      </Card>
+          {editable ? (
+            <ButtonLink href="/profile/edit" variant="secondary" className="min-h-11 w-full">
+              <Pencil className="size-4" aria-hidden="true" />
+              Edit profile
+            </ButtonLink>
+          ) : null}
+        </aside>
+      </div>
     </div>
   );
+}
+
+// ---------------------------------------------------------------
+// The three lines
+// ---------------------------------------------------------------
+
+function summarise({
+  kind,
+  seen,
+  profile,
+  ownContact,
+  rollMid,
+  visibility,
+  mayRequest,
+  staffView,
+}: {
+  kind: ViewerKind;
+  seen: MemberDetail;
+  profile: MemberDetail;
+  ownContact: Partial<NonNullable<MemberDetail['contact']>>;
+  rollMid: string;
+  visibility: ContactVisibility;
+  mayRequest: boolean;
+  staffView: boolean;
+}): { sees: string; hidden: string; can: string } {
+  const c = seen.contact;
+  const parts: Array<{ label: string; own: boolean; seen: boolean }> = [
+    { label: 'photo', own: Boolean(profile.photoUrl), seen: Boolean(seen.photoUrl) },
+    {
+      label: 'branch and batch',
+      own: Boolean(profile.departmentCode || profile.batchYear),
+      seen: Boolean(seen.departmentCode || seen.batchYear),
+    },
+    {
+      label: 'work',
+      own: Boolean(profile.designation || profile.currentCompany),
+      seen: Boolean(seen.designation || seen.currentCompany),
+    },
+    { label: 'introduction', own: Boolean(profile.bio), seen: Boolean(seen.bio) },
+    { label: 'skills', own: profile.skills.length > 0, seen: seen.skills.length > 0 },
+    { label: 'city', own: Boolean(profile.city), seen: Boolean(seen.city) },
+    { label: 'industry', own: Boolean(profile.industry), seen: Boolean(seen.industry) },
+    { label: 'email', own: Boolean(ownContact.email), seen: Boolean(c?.email) },
+    { label: 'mobile', own: Boolean(ownContact.mobile), seen: Boolean(c?.mobile) },
+    {
+      label: 'profile links',
+      own: Boolean(ownContact.linkedin || ownContact.github || ownContact.portfolio),
+      seen: Boolean(c?.linkedin || c?.github || c?.portfolio),
+    },
+    { label: rollMid, own: Boolean(profile.rollNumber), seen: Boolean(seen.rollNumber) },
+    ...(profile.isStudent
+      ? [
+          {
+            label: 'CGPA and placement status',
+            own: profile.cgpa != null || Boolean(profile.placementStatus),
+            seen: seen.cgpa != null || Boolean(seen.placementStatus),
+          },
+        ]
+      : []),
+  ];
+
+  const seesList = ['name', ...parts.filter((p) => p.own && p.seen).map((p) => p.label)];
+  const hiddenList = parts.filter((p) => p.own && !p.seen).map((p) => p.label);
+  // No role can read the text of a request or reply, the admin included.
+  if (staffView) hiddenList.push('messages');
+
+  const sees = `Your ${joinList(seesList)}.`;
+  const hidden = hiddenList.length ? `Your ${joinList(hiddenList)}.` : 'Nothing else on your profile.';
+
+  let canLine: string;
+  if (kind === 'admin') {
+    canLine = 'Correct your record, and export contact details with a written reason that is logged.';
+  } else {
+    const released = Boolean(c?.email || c?.mobile);
+    const direct = c?.mobile ? 'Email or call you directly' : 'Email you directly';
+    if (released && mayRequest) canLine = `${direct}, or send you a request.`;
+    else if (released) canLine = `${direct}.`;
+    else if (mayRequest) {
+      const after: Record<ContactVisibility, string> = {
+        private: 'Your email and mobile stay private even if you accept.',
+        on_accept: 'If you accept it, they see your email and mobile.',
+        alumni_only: 'Accepting it does not show them your email or mobile.',
+        all_members: 'Accepting it does not show them your email or mobile.',
+      };
+      canLine = `Send you a request. ${after[visibility]}`;
+    } else canLine = 'Read your profile. Nothing more.';
+  }
+
+  return { sees, hidden, can: canLine };
 }
 
 // ---------------------------------------------------------------
 // Rows
 // ---------------------------------------------------------------
 
+function SummaryRow({
+  label,
+  tone,
+  children,
+}: {
+  label: string;
+  tone?: 'seen' | 'hidden';
+  children: React.ReactNode;
+}) {
+  const Icon = tone === 'seen' ? Eye : tone === 'hidden' ? EyeOff : null;
+  return (
+    <div className="grid grid-cols-1 gap-1 py-3 first:pt-0 last:pb-0 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-4">
+      <dt className="flex items-center gap-2 text-sm font-semibold">
+        {Icon ? (
+          <Icon
+            className={tone === 'seen' ? 'size-4 shrink-0 text-brand-fg' : 'size-4 shrink-0 text-muted'}
+            aria-hidden="true"
+          />
+        ) : null}
+        {label}
+      </dt>
+      <dd className="text-sm text-secondary">{children}</dd>
+    </div>
+  );
+}
+
 function FieldRow({
   label,
   value,
-  absent = 'Withheld at this tier',
+  absent = 'Not shown',
   mono,
 }: {
   label: string;
@@ -495,75 +505,16 @@ function FieldRow({
         {value ? (
           <span className="inline-flex items-start gap-2">
             <Eye className="mt-0.5 size-3.5 shrink-0 text-brand-fg" aria-hidden="true" />
-            <span className={mono ? 'font-mono' : undefined}>{value}</span>
+            <span className={mono ? 'min-w-0 break-words font-mono' : 'min-w-0'}>{value}</span>
           </span>
         ) : (
-          <Withheld>{absent}</Withheld>
+          <span className="inline-flex items-start gap-2 text-secondary">
+            <EyeOff className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden="true" />
+            <span className="min-w-0">{absent}</span>
+          </span>
         )}
       </TD>
     </TR>
-  );
-}
-
-function ContactFieldRow({
-  label,
-  ownValue,
-  released,
-  seen,
-  viewer,
-  neverBulk,
-}: {
-  label: string;
-  ownValue: string | null;
-  released: string | null;
-  seen: MemberDetail;
-  viewer: string;
-  neverBulk?: boolean;
-}) {
-  if (!ownValue) {
-    return (
-      <TR>
-        <TH scope="row" className="text-left font-semibold normal-case tracking-normal text-primary">
-          {label}
-        </TH>
-        <TD>
-          <span className="text-sm text-muted">Not on your record — nothing to release.</span>
-        </TD>
-      </TR>
-    );
-  }
-
-  return (
-    <TR>
-      <TH scope="row" className="text-left font-semibold normal-case tracking-normal text-primary">
-        {label}
-      </TH>
-      <TD>
-        {released ? (
-          <span className="inline-flex items-start gap-2">
-            <Eye className="mt-0.5 size-3.5 shrink-0 text-warning-fg" aria-hidden="true" />
-            <span className="min-w-0 break-words font-mono">{released}</span>
-          </span>
-        ) : (
-          <Withheld>
-            {!seen.contact
-              ? releaseReason(seen, viewer)
-              : neverBulk
-                ? 'Withheld. A mobile number is never released in bulk, at any setting — only on a request you have accepted, or to the college admin.'
-                : 'Withheld by the release rule for this viewer.'}
-          </Withheld>
-        )}
-      </TD>
-    </TR>
-  );
-}
-
-function Withheld({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-start gap-2 text-secondary">
-      <EyeOff className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden="true" />
-      <span className="min-w-0">{children}</span>
-    </span>
   );
 }
 
@@ -571,27 +522,15 @@ function Withheld({ children }: { children: React.ReactNode }) {
 // Copy
 // ---------------------------------------------------------------
 
-function releaseReason(seen: MemberDetail, viewer: string): string {
-  switch (seen.contactVisibility) {
-    case 'private':
-      return `Withheld. You have chosen that nobody sees your contact details, so ${viewer} gets nothing — not even after an accepted request.`;
-    case 'on_accept':
-      return `Withheld. Your setting releases contact details only to somebody whose request you have accepted, and ${viewer} is not that person here.`;
-    case 'alumni_only':
-      return `Withheld. Your setting releases contact details to alumni and faculty, and ${viewer} is outside that group.`;
-    case 'all_members':
-      return `Withheld. "Every verified member" means every alumnus and faculty member — students reach you through a request you accept, never through the directory.`;
-    default:
-      return 'Withheld. Release needs you to have consented and the viewer to be entitled. Both must be true.';
-  }
+/** "alumni@example.com · +91 …", or the email alone with a note, or null. */
+function contactLine(seen: MemberDetail): string | null {
+  const email = seen.contact?.email ?? null;
+  const mobile = seen.contact?.mobile ?? null;
+  if (email && mobile) return `${email} · ${mobile}`;
+  if (email) return `${email} (mobile not shown)`;
+  if (mobile) return `${mobile} (email not shown)`;
+  return null;
 }
-
-const VISIBILITY_PLAIN: Record<string, string> = {
-  private: 'No. You have chosen that nobody sees your email or mobile through the portal.',
-  on_accept: 'Only for someone whose connection request you have accepted.',
-  alumni_only: 'Yes, for alumni and faculty. No, for students.',
-  all_members: 'Yes, for every verified alumnus and faculty member. Students still have to ask.',
-};
 
 function invisibleReason(
   kind: ViewerKind,
@@ -602,12 +541,12 @@ function invisibleReason(
   if (!allowedStatuses.includes(profile.status)) {
     if (profile.status === 'active_student' && !viewerSeesStudents) {
       return kind === 'student'
-        ? 'Students are not listed to other students. A final-year cannot browse their own cohort here — the directory exists to reach alumni, and a searchable list of classmates is not something anybody consented to.'
-        : 'Alumni do not browse the student list. Your record is not in the results an alumnus can page through; they see you when you write to them, with your name, branch and batch attached to the message. That is the only route, and it is on purpose.';
+        ? 'Final-year students are not listed to each other. The directory is for reaching alumni.'
+        : 'Alumni cannot browse final-year students. They see your name, branch and batch when you send them a request.';
     }
-    return 'Your membership is not active in the directory yet. Until your claim is matched against the degree register, your record is reachable by the alumni cell through the admin console for exactly that purpose — and by nobody else.';
+    return 'Your profile is not in the directory yet. It appears once your registration is verified.';
   }
-  return 'The directory read path refused this viewer. Nothing about your record was selected.';
+  return 'Your profile is not shown to this viewer.';
 }
 
 function availabilityLine(m: MemberDetail): string {
@@ -622,8 +561,4 @@ function availabilityLine(m: MemberDetail): string {
 
 function truncate(s: string): string {
   return s.length > 140 ? `${s.slice(0, 137)}…` : s;
-}
-
-function capitalise(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { type BrandPackInput, type DeepPartial } from './pack';
+import { fontFamilyName, isSafeUrl, type BrandPackInput, type DeepPartial } from './pack';
 import { resolvePack } from './registry';
 import { buildTokens, contrastReport, tokensToCss, googleFontsHref } from './tokens';
 
@@ -22,7 +22,7 @@ const hex = z
   .regex(/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, 'Must be a hex colour')
   .transform((h) => (h.startsWith('#') ? h : `#${h}`));
 
-const url = z.string().url().or(z.string().startsWith('/'));
+const url = z.string().refine(isSafeUrl, 'Use a site-relative path or an https address');
 
 export const BrandingInput = z.object({
   /** Which pack to build on. Everything below is a delta from it. */
@@ -40,8 +40,8 @@ export const BrandingInput = z.object({
   ogImage: url.optional(),
   heroImage: url.optional(),
 
-  fontDisplay: z.string().min(1).default('Fraunces'),
-  fontBody: z.string().min(1).default('Inter'),
+  fontDisplay: fontFamilyName.default('Fraunces'),
+  fontBody: fontFamilyName.default('Inter'),
 
   portalName: z.string().min(2).max(60),
   institutionName: z.string().min(2).max(120).optional(),

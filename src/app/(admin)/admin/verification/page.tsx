@@ -1,35 +1,19 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import {
-  AlertTriangle,
-  ArrowRight,
-  CircleSlash,
-  FileSearch,
-  Inbox,
-  Scale,
-  Search,
-  ShieldCheck,
-} from 'lucide-react';
+import { ArrowLeftRight, ArrowRight, Building2, ChevronRight, CircleSlash, FileSearch, Search } from 'lucide-react';
 
 import {
-  Alert,
+  Avatar,
   Badge,
+  Breadcrumbs,
   Button,
   ButtonLink,
-  Card,
-  CardBody,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  DefinitionCard,
-  Disclosure,
+  ChipNav,
   EmptyState,
-  Field,
+  HowThisWorks,
   Input,
   PageHeader,
-  Progress,
-  Section,
   Select,
-  Stat,
   Table,
   TableWrap,
   TBody,
@@ -38,17 +22,24 @@ import {
   THead,
   TR,
   Tabs,
+  TrustChip,
 } from '@/components/ui';
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap, can } from '@/lib/auth/guard';
-import { getDepartments, getVerificationClaims } from '@/lib/data/repo';
+import { getTenantBrand } from '@/lib/tenant';
+import { canOpen } from '@/lib/navigation';
+import { getDegreeRegisterStats, getDepartments, getVerificationClaims } from '@/lib/data/repo';
 import type { VerificationClaim } from '@/lib/data/types';
 import { AUTO_APPROVE_AT, REVIEW_AT, nameTokens } from '@/lib/verification/matcher';
-import { formatDate, formatRelative, memberLine } from '@/lib/format';
+import { daysUntil, formatRelative, memberLine } from '@/lib/format';
+import { cn } from '@/lib/cn';
+import { evidenceWords, rescoredCandidates } from '../_shared/verification-labels';
+import { batchCommsHref, weakestBatches } from '../_shared/RegisterFilesGrid';
 
-export const metadata = { title: 'Verification queue' };
+export const metadata = { title: 'Verification queue · Staff console' };
 
 type StatusKey = 'queued' | 'approved' | 'rejected' | 'all';
+type ShowKey = 'all' | 'contested' | 'no-row' | 'overdue';
 
 const STATUS_TABS: Array<{ key: StatusKey; label: string }> = [
   { key: 'queued', label: 'Waiting' },
@@ -56,6 +47,9 @@ const STATUS_TABS: Array<{ key: StatusKey; label: string }> = [
   { key: 'rejected', label: 'Rejected' },
   { key: 'all', label: 'Everything' },
 ];
+
+/** A registration waiting longer than this is late, and the row says so. */
+const LATE_AFTER_DAYS = 14;
 
 /**
  * The queue's whole reason to exist: an approver must never be asked to
@@ -77,7 +71,7 @@ function identityKey(name: string, dept: string | null, year: number | null): st
 }
 
 function signalsFor(claim: VerificationClaim): Signal {
-  const ranked = [...claim.candidates].sort((a, b) => b.confidence - a.confidence);
+  const ranked = rescoredCandidates(claim).sort((a, b) => b.confidence - a.confidence);
   const top = ranked[0] ?? null;
   const runnerUp = ranked[1] ?? null;
 
@@ -92,56 +86,45 @@ function signalsFor(claim: VerificationClaim): Signal {
   };
 }
 
-function toneFor(confidence: number): 'success' | 'warning' | 'danger' {
-  if (confidence >= AUTO_APPROVE_AT) return 'success';
-  if (confidence >= REVIEW_AT) return 'warning';
-  return 'danger';
-}
-
-function ConfidenceMeter({ value }: { value: number }) {
-  const pct = Math.round(value * 100);
-  return (
-    <div className="w-36 space-y-1">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-xs text-secondary">Best match</span>
-        <span className="text-sm font-semibold tabular">{pct}%</span>
-      </div>
-      <Progress value={pct} tone={toneFor(value)} label={`Match confidence ${pct} per cent`} />
-    </div>
-  );
-}
-
-function EvidenceCell({ claim, signal }: { claim: VerificationClaim; signal: Signal }) {
+function EvidenceCell({ signal }: { signal: Signal }) {
   if (!signal.top) {
     return (
-      <div className="space-y-1.5">
-        <Badge tone="danger" dot>
-          No register row
-        </Badge>
-        <p className="text-xs text-secondary">Nothing to approve against.</p>
-      </div>
+      <span className="inline-flex items-center gap-1.5 text-sm font-medium text-danger-fg">
+        <CircleSlash className="size-4 shrink-0" aria-hidden="true" />
+        No register row
+      </span>
     );
   }
 
+  if (signal.ambiguous || signal.homonym) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-sm font-medium text-warning-fg">
+        <ArrowLeftRight className="size-4 shrink-0" aria-hidden="true" />
+        Two rows too close
+      </span>
+    );
+  }
+
+  const pct = Math.round(signal.top.confidence * 100);
   return (
-    <div className="space-y-1.5">
-      <ConfidenceMeter value={signal.top.confidence} />
-      <p className="text-xs text-secondary">
-        {claim.candidates.length === 1
-          ? 'One candidate row'
-          : `${claim.candidates.length} candidate rows`}
-        {signal.homonym ? ' · same name, same branch, same year' : signal.ambiguous ? ' · scores too close to separate' : ''}
-      </p>
-    </div>
+    <span className="block w-40 max-w-full space-y-1">
+      <span className="flex items-baseline justify-between gap-2 text-sm">
+        <span className="font-medium">{evidenceWords(signal.top.confidence)}</span>
+        <span className="tabular text-secondary">{pct}%</span>
+      </span>
+      <span className="block h-1.5 overflow-hidden rounded-full bg-chart-track" aria-hidden="true">
+        <span className="block h-full rounded-full bg-chart-bar" style={{ width: `${pct}%` }} />
+      </span>
+    </span>
   );
 }
 
 function StatusBadge({ claim }: { claim: VerificationClaim }) {
   if (claim.status === 'approved') return <Badge tone="success">Approved</Badge>;
   if (claim.status === 'rejected') return <Badge tone="danger">Rejected</Badge>;
-  if (claim.decision === 'auto_approve') return <Badge tone="info">Auto-approve suggested</Badge>;
-  if (claim.decision === 'reject') return <Badge tone="warning">Reject suggested</Badge>;
-  return <Badge tone="neutral">Needs a human</Badge>;
+  if (claim.decision === 'auto_approve') return <Badge tone="brand">Likely match</Badge>;
+  if (claim.decision === 'reject') return <Badge tone="warning">Likely no match</Badge>;
+  return <Badge tone="neutral">Needs review</Badge>;
 }
 
 export default async function VerificationQueuePage({
@@ -165,6 +148,10 @@ export default async function VerificationQueuePage({
   const activeStatus: StatusKey = STATUS_TABS.some((t) => t.key === status) ? status : 'queued';
   const q = (first(params.q) ?? '').trim();
   const branch = first(params.branch) ?? '';
+  const showRaw = first(params.show) ?? 'all';
+  const show: ShowKey = (['all', 'contested', 'no-row', 'overdue'] as const).includes(showRaw as ShowKey)
+    ? (showRaw as ShowKey)
+    : 'all';
 
   const departments = getDepartments();
   const all = getVerificationClaims(session, { status: 'all' });
@@ -174,6 +161,12 @@ export default async function VerificationQueuePage({
   const scopedTo = !wide && hodScope ? hodScope : null;
   const scopeName = departments.find((d) => d.code === scopedTo)?.name ?? scopedTo;
 
+  const resolved = await getTenantBrand();
+  if (!resolved) redirect('/login');
+  const pack = resolved.brand.pack;
+  const tz = pack.locale.timeZone;
+  const fmt = { locale: pack.locale.locale, timeZone: tz };
+
   const counts = {
     queued: all.filter((c) => c.status === 'queued').length,
     approved: all.filter((c) => c.status === 'approved').length,
@@ -181,23 +174,32 @@ export default async function VerificationQueuePage({
     all: all.length,
   };
 
+  const waitedDays = (c: VerificationClaim) => -daysUntil(c.submittedAt, tz);
+  const isLate = (c: VerificationClaim) => c.status === 'queued' && waitedDays(c) > LATE_AFTER_DAYS;
+
   const withSignals = all.map((claim) => ({ claim, signal: signalsFor(claim) }));
+  const contested = (r: (typeof withSignals)[number]) => Boolean(r.signal.top && (r.signal.ambiguous || r.signal.homonym));
 
-  const waiting = withSignals.filter((r) => r.claim.status === 'queued');
-  const noEvidence = waiting.filter((r) => !r.signal.top).length;
-  const contested = waiting.filter((r) => r.signal.ambiguous || r.signal.homonym).length;
-  const oldest = waiting
-    .map((r) => r.claim.submittedAt)
-    .sort((a, b) => a.localeCompare(b))[0];
-
-  let rows = withSignals.filter((r) => activeStatus === 'all' || r.claim.status === activeStatus);
-  if (branch) rows = rows.filter((r) => r.claim.claimedDepartmentCode === branch);
+  // The fetched claims for this tab and search, before the chip filter.
+  let fetched = withSignals.filter((r) => activeStatus === 'all' || r.claim.status === activeStatus);
+  if (branch && !scopedTo) fetched = fetched.filter((r) => r.claim.claimedDepartmentCode === branch);
   if (q) {
     const t = q.toLowerCase();
-    rows = rows.filter((r) =>
+    fetched = fetched.filter((r) =>
       `${r.claim.claimedName} ${r.claim.claimedRoll} ${r.claim.email}`.toLowerCase().includes(t),
     );
   }
+
+  const showCounts: Record<ShowKey, number> = {
+    all: fetched.length,
+    contested: fetched.filter(contested).length,
+    'no-row': fetched.filter((r) => !r.signal.top).length,
+    overdue: fetched.filter((r) => isLate(r.claim)).length,
+  };
+
+  let rows = fetched.filter((r) =>
+    show === 'contested' ? contested(r) : show === 'no-row' ? !r.signal.top : show === 'overdue' ? isLate(r.claim) : true,
+  );
 
   // A queue is first-in-first-out; the person who has waited longest is
   // the one the college is failing. Decided claims read newest first.
@@ -207,306 +209,276 @@ export default async function VerificationQueuePage({
       : b.claim.submittedAt.localeCompare(a.claim.submittedAt),
   );
 
-  const tabHref = (key: StatusKey) => {
+  const oldest = [...all].filter((c) => c.status === 'queued').sort((a, b) => a.submittedAt.localeCompare(b.submittedAt))[0];
+
+  const hrefWith = (next: { status?: StatusKey; show?: ShowKey }) => {
     const sp = new URLSearchParams();
-    sp.set('status', key);
+    sp.set('status', next.status ?? activeStatus);
+    const s = next.show ?? show;
+    if (s !== 'all') sp.set('show', s);
     if (q) sp.set('q', q);
-    if (branch) sp.set('branch', branch);
+    if (branch && !scopedTo) sp.set('branch', branch);
     return `/admin/verification?${sp.toString()}`;
   };
 
+  const chips: Array<{ key: ShowKey; label: string }> = [
+    { key: 'all', label: 'All' },
+    { key: 'contested', label: 'Contested' },
+    { key: 'no-row', label: 'No register row' },
+    { key: 'overdue', label: `Waiting over ${LATE_AFTER_DAYS} days` },
+  ];
+
+  const openRegister = canOpen(session, pack, '/admin/degree-register');
+  const openComms = canOpen(session, pack, '/admin/comms');
+  const decidedTab = activeStatus !== 'queued';
+  const filtered = Boolean(q || (branch && !scopedTo) || show !== 'all');
+
+  // "While it is quiet": the batches furthest behind, for the empty queue.
+  const register = getDegreeRegisterStats();
+  const under20 = register.byYear.filter((y) => y.total && y.claimed / y.total < 0.2);
+  const weakest = weakestBatches(register.byYear, 1)[0];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <PageHeader
-        eyebrow="Identity"
-        title="Verification queue"
-        description="Every claim is decided against the degree register from the examinations branch — never against a hunch. Open a claim to see the applicant's answers and the register rows side by side, field by field."
+        breadcrumbs={
+          <Breadcrumbs items={[{ label: 'Staff console', href: '/admin' }, { label: 'Verification queue' }]} />
+        }
+        eyebrow="People and records"
+        title="Registrations to review"
+        description="Oldest first. Open one to compare it with the degree register."
+        meta={
+          <TrustChip icon={<Building2 />}>{scopedTo ? `${scopeName} only` : 'All branches'}</TrustChip>
+        }
         actions={
           <>
-            <ButtonLink href="/admin/degree-register" variant="secondary">
-              <FileSearch className="size-4" aria-hidden="true" />
-              Search the register
-            </ButtonLink>
+            {openRegister ? (
+              // Phones keep the one primary action; the register is a tap away in the menu.
+              <ButtonLink href="/admin/degree-register" variant="secondary" className="hidden sm:inline-flex">
+                <FileSearch className="size-4" aria-hidden="true" />
+                Search the register
+              </ButtonLink>
+            ) : null}
+            {oldest ? (
+              <ButtonLink href={`/admin/verification/${oldest.id}`}>
+                Start with the oldest
+                <ArrowRight className="size-4" aria-hidden="true" />
+              </ButtonLink>
+            ) : null}
           </>
         }
       />
 
-      {scopedTo ? (
-        <Alert
-          tone="info"
-          title={`This view is scoped to ${scopeName}`}
-          icon={<ShieldCheck className="size-4" />}
-        >
-          <p>
-            You hold <span className="font-mono">verification.review.department</span> for {scopeName} ({scopedTo}).
-            Claims from every other branch are filtered out before this page is rendered — a short queue here does not
-            mean the college has a short queue. The alumni cell reviews the rest.
-          </p>
-        </Alert>
-      ) : (
-        <p className="text-xs text-muted">
-          You hold <span className="font-mono">verification.review.any</span> — this queue covers every branch. An HOD
-          sees only their own department.
-        </p>
-      )}
+      <Tabs
+        ariaLabel="Registration status"
+        items={STATUS_TABS.map((t) => ({
+          label: t.label,
+          href: hrefWith({ status: t.key, show: 'all' }),
+          count: counts[t.key],
+          active: t.key === activeStatus,
+        }))}
+      />
 
-      <div className="grid gap-gutter sm:grid-cols-2 xl:grid-cols-4">
-        <Stat
-          label="Waiting for a decision"
-          value={counts.queued}
-          hint={oldest ? `Oldest submitted ${formatRelative(oldest)}` : 'Nothing waiting'}
-          icon={<Inbox className="size-4" />}
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <ChipNav
+          ariaLabel="Show"
+          className="lg:flex-1"
+          items={chips
+            .filter((c) => c.key === 'all' || c.key === show || showCounts[c.key] > 0)
+            .map((c) => ({
+              label: c.label,
+              href: hrefWith({ show: c.key }),
+              count: showCounts[c.key],
+              active: c.key === show,
+            }))}
         />
-        <Stat
-          label="Contested"
-          value={contested}
-          hint="Two register rows the score cannot separate"
-          icon={<Scale className="size-4" />}
-        />
-        <Stat
-          label="No register match"
-          value={noEvidence}
-          hint="Cannot be approved until the batch file is loaded"
-          icon={<CircleSlash className="size-4" />}
-        />
-        <Stat
-          label="Decided so far"
-          value={counts.approved + counts.rejected}
-          hint={`${counts.approved} approved · ${counts.rejected} rejected`}
-          icon={<ShieldCheck className="size-4" />}
-        />
-      </div>
 
-      {noEvidence > 0 ? (
-        <Alert tone="warning" title="Some claims have no evidence behind them" icon={<AlertTriangle className="size-4" />}>
-          <p>
-            {noEvidence} {noEvidence === 1 ? 'claim carries' : 'claims carry'} a roll number with no row in the degree
-            register. Approving one would put an unverified person into the alumni directory. Either the batch file has
-            not been loaded yet, or the roll number is wrong — ask the applicant for their provisional certificate
-            before doing anything else.
-          </p>
-        </Alert>
-      ) : null}
-
-      <form action="/admin/verification">
-        <Card className="p-card">
+        <form action="/admin/verification" role="search" className="flex min-w-0 flex-wrap items-center gap-2">
           <input type="hidden" name="status" value={activeStatus} />
-          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_12rem_auto] sm:items-end">
-            <Field htmlFor="q" label="Search this queue" hint="Name, roll number or email address">
-              <Input
-                id="q"
-                name="q"
-                defaultValue={q}
-                placeholder="e.g. 18JN1A0521 or Sravani"
-                leading={<Search className="size-4" />}
-                autoComplete="off"
-              />
-            </Field>
-
-            <Field
-              htmlFor="branch"
-              label="Branch"
-              hint={scopedTo ? 'Fixed to your department.' : undefined}
-            >
-              <Select id="branch" name="branch" defaultValue={branch} disabled={Boolean(scopedTo)}>
-                <option value="">{scopedTo ? `${scopedTo} only` : 'All branches'}</option>
+          {show !== 'all' ? <input type="hidden" name="show" value={show} /> : null}
+          <label htmlFor="q" className="sr-only">
+            Search by name, roll number or email
+          </label>
+          <div className="min-w-0 flex-1 basis-48 sm:w-64 sm:flex-none">
+            <Input
+              id="q"
+              name="q"
+              type="search"
+              defaultValue={q}
+              placeholder="Name, roll number or email"
+              leading={<Search className="size-4" />}
+              autoComplete="off"
+            />
+          </div>
+          {scopedTo ? null : (
+            <div className="w-36">
+              <label htmlFor="branch" className="sr-only">
+                Branch
+              </label>
+              <Select id="branch" name="branch" defaultValue={branch}>
+                <option value="">All branches</option>
                 {departments.map((d) => (
                   <option key={d.code} value={d.code}>
-                    {d.code} — {d.name}
+                    {d.code}
                   </option>
                 ))}
               </Select>
-            </Field>
-
-            <div className="flex gap-2">
-              <Button type="submit" variant="secondary">
-                Apply
-              </Button>
-              {q || branch ? (
-                <ButtonLink href={`/admin/verification?status=${activeStatus}`} variant="ghost">
-                  Clear
-                </ButtonLink>
-              ) : null}
             </div>
-          </div>
-        </Card>
-      </form>
+          )}
+          <Button type="submit" variant="secondary">
+            Apply
+          </Button>
+          {q || (branch && !scopedTo) ? (
+            <ButtonLink href={`/admin/verification?status=${activeStatus}`} variant="ghost">
+              Clear
+            </ButtonLink>
+          ) : null}
+        </form>
+      </div>
 
-      <Section>
-        <Tabs
-          ariaLabel="Claim status"
-          items={STATUS_TABS.map((t) => ({
-            label: t.label,
-            href: tabHref(t.key),
-            count: counts[t.key],
-            active: t.key === activeStatus,
-          }))}
-        />
-
-        {rows.length === 0 ? (
+      {rows.length === 0 ? (
+        filtered ? (
           <EmptyState
-            icon={<Inbox className="size-5" />}
-            title={
-              q || branch
-                ? 'No claim matches that filter'
-                : activeStatus === 'queued'
-                  ? 'Nothing is waiting for you'
-                  : `No ${activeStatus} claims yet`
+            icon={<Search className="size-5" />}
+            title="No registration matches that"
+            description="Search covers the name, roll number and email of registrations you can review."
+            action={
+              <ButtonLink href={`/admin/verification?status=${activeStatus}`} variant="secondary">
+                Clear the filter
+              </ButtonLink>
             }
+          />
+        ) : activeStatus === 'queued' ? (
+          <EmptyState
+            title="All caught up."
             description={
-              q || branch
-                ? 'Search runs over the applicant name, roll number and email address of claims already inside your review scope.'
-                : activeStatus === 'queued'
-                  ? scopedTo
-                    ? `Every ${scopedTo} claim has been decided. New registrations from ${scopedTo} land here within a minute of the applicant submitting their roll number.`
-                    : 'Every claim has been decided. New registrations land here within a minute of the applicant submitting their roll number.'
-                  : 'Claims appear here once someone has decided them. Each decision keeps the reviewer, the timestamp and the reason.'
+              under20.length > 0 && openComms && weakest
+                ? `While it is quiet: ${under20.length} ${under20.length === 1 ? 'batch is' : 'batches are'} under 20%.`
+                : 'New registrations land here as soon as they are submitted.'
             }
             action={
-              q || branch ? (
-                <ButtonLink href={`/admin/verification?status=${activeStatus}`} variant="secondary">
-                  Clear the filter
+              under20.length > 0 && openComms && weakest ? (
+                <ButtonLink href={batchCommsHref(weakest.year)} variant="secondary">
+                  Write to the {weakest.year} batch
                 </ButtonLink>
               ) : null
             }
           />
         ) : (
-          <>
-            <TableWrap
-              className="hidden sm:block"
-              caption={`Verification claims — ${activeStatus === 'all' ? 'all statuses' : activeStatus}`}
-            >
-              <Table>
-                <THead>
-                  <TR>
-                    <TH>Applicant</TH>
-                    <TH>Claimed branch &amp; batch</TH>
-                    <TH>Submitted</TH>
-                    <TH>Evidence</TH>
-                    <TH>Status</TH>
-                    <TH align="right">Review</TH>
-                  </TR>
-                </THead>
-                <TBody>
-                  {rows.map(({ claim, signal }) => (
-                    <TR key={claim.id} interactive>
-                      <TD>
-                        <p className="font-medium">{claim.claimedName}</p>
-                        <p className="font-mono text-xs text-secondary">{claim.claimedRoll}</p>
-                        <p className="truncate text-xs text-muted">{claim.email}</p>
-                      </TD>
-                      <TD>
-                        <p className="text-sm">
-                          {memberLine([claim.claimedDepartmentCode, claim.claimedBatchYear])}
-                        </p>
-                        <p className="text-xs text-muted">
-                          {departments.find((d) => d.code === claim.claimedDepartmentCode)?.name ?? 'Branch not stated'}
-                        </p>
-                      </TD>
-                      <TD>
-                        <p className="text-sm">{formatRelative(claim.submittedAt)}</p>
-                        <p className="text-xs text-muted tabular">{formatDate(claim.submittedAt)}</p>
-                      </TD>
-                      <TD>
-                        <EvidenceCell claim={claim} signal={signal} />
-                      </TD>
+          <EmptyState
+            title={`No ${activeStatus === 'all' ? '' : `${activeStatus} `}registrations yet`}
+            description="Each decision keeps the reviewer, the date and the reason."
+          />
+        )
+      ) : (
+        <>
+          <TableWrap className="hidden sm:block" caption="Registrations to review">
+            <Table>
+              <THead>
+                <TR>
+                  <TH>Applicant</TH>
+                  <TH>Batch</TH>
+                  <TH>{decidedTab ? 'Submitted' : 'Waiting'}</TH>
+                  <TH>Evidence</TH>
+                  {decidedTab ? <TH>Status</TH> : null}
+                  <TH className="w-8">
+                    <span className="sr-only">Open</span>
+                  </TH>
+                </TR>
+              </THead>
+              <TBody>
+                {rows.map(({ claim, signal }) => (
+                  <TR key={claim.id} interactive className="relative">
+                    <TD>
+                      <div className="flex items-center gap-3">
+                        <Avatar name={claim.claimedName} size="sm" />
+                        <div className="min-w-0">
+                          <Link
+                            href={`/admin/verification/${claim.id}`}
+                            className="block font-medium text-primary after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:rounded focus-visible:after:ring-2 focus-visible:after:ring-[var(--focus-ring)]"
+                          >
+                            {claim.claimedName}
+                          </Link>
+                          <span className="block font-mono text-xs text-secondary">{claim.claimedRoll}</span>
+                        </div>
+                      </div>
+                    </TD>
+                    <TD className="whitespace-nowrap">
+                      {memberLine([claim.claimedDepartmentCode, claim.claimedBatchYear]) || '—'}
+                    </TD>
+                    <TD className="whitespace-nowrap">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="text-secondary">{formatRelative(claim.submittedAt, fmt)}</span>
+                        {isLate(claim) ? <Badge tone="warning">Over {LATE_AFTER_DAYS} days</Badge> : null}
+                      </span>
+                    </TD>
+                    <TD>
+                      <EvidenceCell signal={signal} />
+                    </TD>
+                    {decidedTab ? (
                       <TD>
                         <StatusBadge claim={claim} />
                       </TD>
-                      <TD align="right">
-                        <ButtonLink href={`/admin/verification/${claim.id}`} variant="secondary" size="sm">
-                          Open
-                          <ArrowRight className="size-4" aria-hidden="true" />
-                        </ButtonLink>
-                      </TD>
-                    </TR>
-                  ))}
-                </TBody>
-              </Table>
-            </TableWrap>
+                    ) : null}
+                    <TD align="right">
+                      <ChevronRight className="size-4 text-muted" aria-hidden="true" />
+                    </TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          </TableWrap>
 
-            <ul className="space-y-3 sm:hidden">
-              {rows.map(({ claim, signal }) => (
-                <li key={claim.id}>
-                  <DefinitionCard
-                    title={claim.claimedName}
-                    subtitle={
-                      <span className="font-mono">
-                        {claim.claimedRoll} · {memberLine([claim.claimedDepartmentCode, claim.claimedBatchYear])}
-                      </span>
-                    }
-                    rows={[
-                      { label: 'Submitted', value: formatRelative(claim.submittedAt) },
-                      {
-                        label: 'Evidence',
-                        value: signal.top
-                          ? `${Math.round(signal.top.confidence * 100)}% · ${claim.candidates.length} candidate${claim.candidates.length === 1 ? '' : 's'}`
-                          : 'No register row',
-                      },
-                      { label: 'Status', value: <StatusBadge claim={claim} /> },
-                    ]}
-                    actions={
-                      <ButtonLink href={`/admin/verification/${claim.id}`} variant="secondary" size="sm">
-                        Open the claim
-                        <ArrowRight className="size-4" aria-hidden="true" />
-                      </ButtonLink>
-                    }
-                  />
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-      </Section>
+          <ul className="space-y-2 sm:hidden" aria-label="Registrations to review">
+            {rows.map(({ claim, signal }) => (
+              <li key={claim.id}>
+                <Link
+                  href={`/admin/verification/${claim.id}`}
+                  className="flex min-h-11 items-start gap-3 rounded-lg border border-line bg-surface-raised p-3 transition-colors duration-fast ease-brand hover:border-line-strong"
+                >
+                  <Avatar name={claim.claimedName} size="sm" />
+                  <span className="min-w-0 flex-1 space-y-1">
+                    <span className="flex items-start justify-between gap-2">
+                      <span className="min-w-0 font-medium text-primary">{claim.claimedName}</span>
+                      {decidedTab ? <StatusBadge claim={claim} /> : null}
+                    </span>
+                    <span className="block text-xs text-secondary">
+                      <span className="font-mono">{claim.claimedRoll}</span>
+                      {' · '}
+                      {memberLine([claim.claimedDepartmentCode, claim.claimedBatchYear])}
+                      {' · '}
+                      {formatRelative(claim.submittedAt, fmt)}
+                    </span>
+                    <span className="flex flex-wrap items-center gap-2 pt-1">
+                      <EvidenceCell signal={signal} />
+                      {isLate(claim) ? <Badge tone="warning">Over {LATE_AFTER_DAYS} days</Badge> : null}
+                    </span>
+                  </span>
+                  <ChevronRight className="mt-1 size-4 shrink-0 text-muted" aria-hidden="true" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
-      <Card>
-        <CardHeader>
-          <div className="space-y-1">
-            <CardTitle as="h2">How a claim reaches this queue</CardTitle>
-            <CardDescription>
-              The matcher decides what needs a person. These thresholds are provisional until the full register lands.
-            </CardDescription>
-          </div>
-        </CardHeader>
-        <CardBody className="space-y-3">
-          <dl className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded border border-line bg-surface p-3">
-              <dt className="text-xs font-semibold uppercase tracking-wide text-secondary">Auto-approve</dt>
-              <dd className="mt-1 text-sm">
-                Confidence at or above <span className="font-mono tabular">{AUTO_APPROVE_AT.toFixed(2)}</span> with no
-                runner-up nearby. Roll number exact, name matching after normalisation, year of passing agreeing.
-              </dd>
-            </div>
-            <div className="rounded border border-line bg-surface p-3">
-              <dt className="text-xs font-semibold uppercase tracking-wide text-secondary">Sent here</dt>
-              <dd className="mt-1 text-sm">
-                Between <span className="font-mono tabular">{REVIEW_AT.toFixed(2)}</span> and{' '}
-                <span className="font-mono tabular">{AUTO_APPROVE_AT.toFixed(2)}</span>, or any score at all when two
-                rows sit within <span className="font-mono tabular">0.15</span> of each other.
-              </dd>
-            </div>
-            <div className="rounded border border-line bg-surface p-3">
-              <dt className="text-xs font-semibold uppercase tracking-wide text-secondary">Rejected at intake</dt>
-              <dd className="mt-1 text-sm">
-                Roll numbers that are not JNTU-shaped, and claims with no register row within two years of the batch
-                claimed. These still appear here so a person can overturn them.
-              </dd>
-            </div>
-          </dl>
-
-          <Disclosure summary="Why an approval is never one click">
-            <p>
-              Approving a claim writes the member&rsquo;s status from <span className="font-mono">pending</span> to{' '}
-              <span className="font-mono">active_alumni</span>, links their account to a row in{' '}
-              <span className="font-mono">degree_register</span>, and grants them the alumni role — which is what opens
-              the directory to them. Every one of those changes is recorded in{' '}
-              <span className="font-mono">audit_log</span> with the before and after snapshot, your name, and the reason
-              you gave. Retuning the thresholds against the real register is tracked in{' '}
-              <span className="font-mono">test-matcher.ts</span>.
-            </p>
-          </Disclosure>
-        </CardBody>
-      </Card>
+      <HowThisWorks summary="How matching works" className={cn(rows.length === 0 && 'mt-2')}>
+        <p>
+          When someone registers, the portal looks for their row in the degree register by roll number, then compares
+          the name, branch and year of passing. A close match on every field is approved without anyone looking.
+          Anything less certain waits here, oldest first, with the rows it could be.
+        </p>
+        <p>
+          Approve against the row that is theirs. Ask for a document when you are not sure. Reject only when no row can
+          be theirs. Register names are typed by hand, so spelling and word order often differ; the roll number
+          carries the match.
+        </p>
+      </HowThisWorks>
     </div>
   );
 }
+
+// The matcher's own bands stay the single source of what is approved
+// automatically; this page shows their outcome in words, never the numbers.
+void AUTO_APPROVE_AT;
+void REVIEW_AT;

@@ -1,7 +1,9 @@
+import Link from 'next/link';
 import { Briefcase, GraduationCap } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui';
 import { memberLine } from '@/lib/format';
+import { firstNameOf } from '@/lib/identity';
 import type { EducationEntry, EmploymentEntry } from '@/lib/data/types';
 
 /**
@@ -14,7 +16,8 @@ import type { EducationEntry, EmploymentEntry } from '@/lib/data/types';
  *
  * A record with one line, or none, is the normal case for anyone who
  * graduated before about 2018. Neither list is allowed to look broken
- * when it is empty.
+ * when it is empty: it says so in one neutral line, and on the owner's
+ * own view it offers the edit that fills it (`addHref`).
  */
 
 interface Timing {
@@ -26,16 +29,20 @@ export function ExperienceTimeline({
   entries,
   ownerName,
   timing,
+  addHref,
 }: {
   entries: EmploymentEntry[];
   ownerName: string;
   timing: Timing;
+  /** The owner's own view: where to add the first entry. */
+  addHref?: string;
 }) {
   if (entries.length === 0) {
     return (
       <EmptyLine
         icon={<Briefcase className="size-4" />}
-        text={`${firstName(ownerName)} has not added any work history. What they do now, if anything, is only on their profile if they put it there.`}
+        text={addHref ? 'You have not added work history.' : `${firstNameOf(ownerName)} has not added work history.`}
+        add={addHref ? { href: addHref, label: 'Add work history' } : undefined}
       />
     );
   }
@@ -64,10 +71,10 @@ export function ExperienceTimeline({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <p className="font-medium">{entry.designation ?? 'Role not stated'}</p>
-              {entry.isCurrent ? <Badge tone="success">Current</Badge> : null}
+              {entry.isCurrent ? <Badge tone="outline">Current</Badge> : null}
             </div>
             <p className="text-sm text-secondary">{entry.company}</p>
-            <p className="mt-0.5 text-xs text-muted">
+            <p className="mt-0.5 text-xs text-secondary">
               {memberLine([period(entry.startedOn, entry.endedOn, entry.isCurrent, timing), entry.location])}
             </p>
           </div>
@@ -81,16 +88,19 @@ export function EducationTimeline({
   entries,
   ownerName,
   timing,
+  addHref,
 }: {
   entries: EducationEntry[];
   ownerName: string;
   timing: Timing;
+  addHref?: string;
 }) {
   if (entries.length === 0) {
     return (
       <EmptyLine
         icon={<GraduationCap className="size-4" />}
-        text={`No education history beyond the degree register entry for ${firstName(ownerName)}.`}
+        text={addHref ? 'You have not added education history.' : `${firstNameOf(ownerName)} has not added education history.`}
+        add={addHref ? { href: addHref, label: 'Add education' } : undefined}
       />
     );
   }
@@ -105,7 +115,7 @@ export function EducationTimeline({
             <p className="text-sm text-secondary">
               {memberLine([entry.qualification, entry.field]) || 'Programme not stated'}
             </p>
-            <p className="mt-0.5 text-xs text-muted">
+            <p className="mt-0.5 text-xs text-secondary">
               {period(entry.startedOn, entry.endedOn, !entry.endedOn, timing)}
             </p>
           </div>
@@ -115,14 +125,29 @@ export function EducationTimeline({
   );
 }
 
-function EmptyLine({ icon, text }: { icon: React.ReactNode; text: string }) {
+function EmptyLine({
+  icon,
+  text,
+  add,
+}: {
+  icon: React.ReactNode;
+  text: string;
+  add?: { href: string; label: string };
+}) {
   return (
-    <p className="flex gap-3 text-sm text-secondary">
-      <span className="mt-0.5 shrink-0 text-muted" aria-hidden="true">
-        {icon}
-      </span>
-      <span className="min-w-0">{text}</span>
-    </p>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-secondary">
+      <p className="flex gap-3">
+        <span className="mt-0.5 shrink-0 text-muted" aria-hidden="true">
+          {icon}
+        </span>
+        <span className="min-w-0">{text}</span>
+      </p>
+      {add ? (
+        <Link href={add.href} className="link inline-flex min-h-11 items-center font-medium sm:min-h-0">
+          {add.label}
+        </Link>
+      ) : null}
+    </div>
   );
 }
 
@@ -157,8 +182,4 @@ function monthYear(iso: string | null, timing: Timing): string | null {
     year: 'numeric',
     timeZone: timing.timeZone,
   }).format(d);
-}
-
-function firstName(name: string): string {
-  return name.split(' ')[0] ?? name;
 }

@@ -1,6 +1,7 @@
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { BellOff, FileText, Newspaper, PenLine, Pin, Send } from 'lucide-react';
+import { BellOff, Eye, Newspaper, PenLine } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap } from '@/lib/auth/guard';
@@ -11,23 +12,26 @@ import {
   Alert,
   Badge,
   ButtonLink,
-  DefinitionCard,
+  Card,
+  ChipNav,
+  CopyButton,
   EmptyState,
   PageHeader,
-  Stat,
+  SegmentedNav,
+  SummaryLine,
   Table,
   TableWrap,
-  Tabs,
   TBody,
   TD,
   TH,
   THead,
   TR,
-  type TabItem,
 } from '@/components/ui';
-import { MarginNote } from '@/components/brand/Marks';
-import { formatDate, formatRelative, memberLine } from '@/lib/format';
-import { KIND_META } from './kinds';
+import { StoryCard } from '@/components/content';
+import { daysUntil, formatDate } from '@/lib/format';
+import { siteOrigin } from '@/lib/share';
+import { storyShareText } from '@/lib/share-text';
+import { KIND_ICON, KIND_META, PINNED_CAP } from './kinds';
 
 /**
  * The news desk.
@@ -36,15 +40,13 @@ import { KIND_META } from './kinds';
  * portal where `includeDrafts` is passed, and the member routes are
  * written so that they could not pass it by accident.
  *
- * The console owes the desk two facts on every row: whether members can
- * see it, and whether publishing it would send anything. They are not the
- * same question, and the second one is the reason an obituary is treated
- * differently from everything else here.
+ * The list is the feed as members see it, so the desk judges a story by
+ * the card it will actually become. A compact table stays one toggle away.
  */
 
-export const metadata = { title: 'News' };
+export const metadata = { title: 'News · Staff console' };
 
-type View = 'all' | 'published' | 'drafts' | 'pinned';
+type Show = 'all' | 'published' | 'drafts';
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
@@ -67,47 +69,50 @@ export default async function AdminNewsPage({
   requireCap(session, 'comms.send.segment');
 
   const params = await searchParams;
-  const view: View = ((v) =>
-    v === 'published' || v === 'drafts' || v === 'pinned' ? v : 'all')(one(params.view));
+  const show: Show = ((v) => (v === 'published' || v === 'drafts' ? v : 'all'))(one(params.show));
+  const table = one(params.view) === 'table';
 
   const all = getNews({ includeDrafts: true });
   const published = all.filter((n) => n.published);
   const drafts = all.filter((n) => !n.published);
-  const pinned = all.filter((n) => n.pinned);
-
-  const rows =
-    view === 'published' ? published : view === 'drafts' ? drafts : view === 'pinned' ? pinned : all;
+  const pinned = published.filter((n) => n.pinned);
+  const latest = published.filter((n) => !n.pinned);
 
   const departments = getDepartments();
   const deptName = (code: string | null) =>
     code ? (departments.find((d) => d.code === code)?.name ?? code) : 'Every branch';
 
+  const tz = pack.locale.timeZone;
+  const timing = { locale: pack.locale.locale, timeZone: tz };
+  const origin = await siteOrigin();
+  const shareFor = (n: NewsItem) => `${storyShareText(pack, n)} ${origin}/news/${n.slug}`;
+
   // `getNews` sorts pinned first, so the head of the list is not
   // necessarily the most recent thing the desk put out.
   const newest = published.reduce<NewsItem | null>(
-    (latest, n) => (!latest || (n.publishedAt ?? '') > (latest.publishedAt ?? '') ? n : latest),
+    (latestSoFar, n) => (!latestSoFar || (n.publishedAt ?? '') > (latestSoFar.publishedAt ?? '') ? n : latestSoFar),
     null,
   );
-  const notNotified = published.filter((n) => !KIND_META[n.kind].notifies).length;
+  const quietDays = newest?.publishedAt ? -daysUntil(newest.publishedAt, tz) : null;
 
-  const tabs: TabItem[] = [
-    { label: 'Everything', href: '/admin/news?view=all', count: all.length, active: view === 'all' },
-    {
-      label: 'Published',
-      href: '/admin/news?view=published',
-      count: published.length,
-      active: view === 'published',
-    },
-    { label: 'Drafts', href: '/admin/news?view=drafts', count: drafts.length, active: view === 'drafts' },
-    { label: 'Pinned', href: '/admin/news?view=pinned', count: pinned.length, active: view === 'pinned' },
-  ];
+  const href = (patch: { show?: Show; table?: boolean }) => {
+    const qs = new URLSearchParams();
+    const s = patch.show ?? show;
+    const t = patch.table ?? table;
+    if (s !== 'all') qs.set('show', s);
+    if (t) qs.set('view', 'table');
+    const q = qs.toString();
+    return q ? `/admin/news?${q}` : '/admin/news';
+  };
+
+  const tableRows = show === 'published' ? published : show === 'drafts' ? drafts : all;
 
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Engagement"
         title="News"
-        description="Everything the college has published to the member feed, and everything still being written. A draft has no page for members — not a locked one, not an empty one."
+        description="Stories on the member feed, and drafts still being written."
         actions={
           <ButtonLink href="/admin/news/new">
             <PenLine className="size-4" aria-hidden="true" />
@@ -116,185 +121,206 @@ export default async function AdminNewsPage({
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat
-          label="Published"
-          value={published.length}
-          hint={newest ? `Latest ${formatRelative(newest.publishedAt)}` : 'Nothing on the feed yet'}
-          icon={<Newspaper className="size-4" />}
-        />
-        <Stat
-          label="Drafts"
-          value={drafts.length}
-          hint={drafts.length ? 'Visible on this screen only' : 'Nothing part-written'}
-          icon={<FileText className="size-4" />}
-        />
-        <Stat
-          label="Pinned"
-          value={pinned.length}
-          hint={pinned.length ? 'Held at the top of the member feed' : 'The feed is in date order'}
-          icon={<Pin className="size-4" />}
-        />
-        <Stat
-          label="Published without notice"
-          value={notNotified}
-          hint="Obituaries. Never pushed, by rule"
-          icon={<BellOff className="size-4" />}
-        />
-      </div>
+      <SummaryLine
+        items={[
+          { value: published.length, label: 'live', href: href({ show: 'published' }) },
+          quietDays === null
+            ? { value: 0, label: 'stories yet' }
+            : quietDays <= 0
+              ? { value: 'Today', label: 'the last story went out' }
+              : { value: `${quietDays} day${quietDays === 1 ? '' : 's'}`, label: 'since the last story' },
+          { value: drafts.length, label: drafts.length === 1 ? 'draft' : 'drafts', href: href({ show: 'drafts' }) },
+        ]}
+      />
 
-      <Alert tone="info" title="What publishing does" icon={<Send className="size-4" />}>
-        <p>
-          A published story appears on the member feed immediately and members are notified —
-          {pack.features.whatsapp ? ' by WhatsApp and email' : ' by email'}, on the schedule the
-          communications settings define. One exception, and it is not configurable:{' '}
-          <strong className="font-semibold">an obituary is never sent as a notification.</strong> It
-          goes on the page and is found by people who open the portal. A death notice arriving as a
-          push on somebody&rsquo;s phone is a thing a college is remembered for.
-        </p>
-      </Alert>
-
-      <Tabs items={tabs} ariaLabel="News lists" />
-
-      {view === 'drafts' && drafts.length > 0 ? (
-        <Alert tone="warning" title="These stories do not exist as far as members are concerned">
+      {quietDays !== null && quietDays > 14 ? (
+        <Alert tone="warning" title={`Nothing new for ${quietDays} days`}>
           <p>
-            A draft is absent from the feed, has no story page and appears in no notification. It
-            becomes real the moment you publish it, so check the names and the figures first — a
-            correction published later does not reach the people who read the first version.
+            A quiet feed is one members stop opening.{' '}
+            <Link href="/admin/news/new">Write a story</Link>
           </p>
         </Alert>
       ) : null}
 
-      {rows.length === 0 ? (
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <ChipNav
+          ariaLabel="Stories"
+          items={[
+            { label: 'All', href: href({ show: 'all' }), active: show === 'all' },
+            { label: 'Published', href: href({ show: 'published' }), active: show === 'published', count: published.length },
+            { label: 'Drafts', href: href({ show: 'drafts' }), active: show === 'drafts', count: drafts.length },
+          ]}
+        />
+        <SegmentedNav
+          className="hidden sm:inline-flex"
+          items={[
+            { label: 'Feed', href: href({ table: false }), active: !table },
+            { label: 'Table', href: href({ table: true }), active: table },
+          ]}
+        />
+      </div>
+
+      {all.length === 0 ? (
         <EmptyState
           icon={<Newspaper className="size-5" />}
-          title={
-            view === 'drafts'
-              ? 'No drafts'
-              : view === 'pinned'
-                ? 'Nothing is pinned'
-                : view === 'published'
-                  ? 'Nothing published yet'
-                  : 'The news desk is empty'
-          }
-          description={
-            view === 'drafts'
-              ? 'Anything saved without publishing waits here. Use a draft when the facts are still being confirmed — a placement figure before the cell has closed the season, for instance.'
-              : view === 'pinned'
-                ? 'Pinned stories sit above the rest of the feed until you unpin them. Registration for the annual meet is the usual candidate; two pinned at once is already too many.'
-                : 'Announcements, graduates’ achievements, what the network has funded and press coverage all start here.'
-          }
+          title="The news desk is empty"
+          description="Announcements, graduates’ achievements and press coverage all start here."
           action={
-            view !== 'pinned' ? (
-              <ButtonLink href="/admin/news/new" variant="secondary">
-                Write the first one
-              </ButtonLink>
-            ) : null
+            <ButtonLink href="/admin/news/new" variant="secondary">
+              Write the first one
+            </ButtonLink>
           }
         />
-      ) : (
-        <>
-          <TableWrap
-            caption="News items with their kind, author, publication date and state"
-            className="hidden sm:block"
-          >
-            <Table>
-              <THead>
-                <TR>
-                  <TH>Story</TH>
-                  <TH>Kind</TH>
-                  <TH>Author</TH>
-                  <TH>Published</TH>
-                  <TH>Pinned</TH>
-                  <TH>State</TH>
+      ) : table ? (
+        <TableWrap caption="Stories with their kind, desk, date and state">
+          <Table>
+            <THead>
+              <TR>
+                <TH>Story</TH>
+                <TH>Kind</TH>
+                <TH>Desk</TH>
+                <TH>Published</TH>
+                <TH>State</TH>
+              </TR>
+            </THead>
+            <TBody>
+              {tableRows.map((item) => (
+                <TR key={item.id}>
+                  <TD>
+                    <StoryTitle item={item} />
+                    {item.pinned ? <p className="mt-0.5 text-xs text-secondary">Pinned</p> : null}
+                  </TD>
+                  <TD>
+                    <KindCell item={item} />
+                  </TD>
+                  <TD>
+                    <p className="text-sm">{item.author}</p>
+                    <p className="text-xs text-secondary">{deptName(item.departmentCode)}</p>
+                  </TD>
+                  <TD className="whitespace-nowrap text-sm">
+                    {item.publishedAt ? formatDate(item.publishedAt, timing) : <span className="text-secondary">Not yet</span>}
+                  </TD>
+                  <TD>
+                    {item.published ? <Badge tone="success">Live</Badge> : <Badge tone="neutral">Draft</Badge>}
+                  </TD>
                 </TR>
-              </THead>
-              <TBody>
-                {rows.map((item) => (
-                  <TR key={item.id} interactive className={item.published ? undefined : 'bg-surface-sunken'}>
-                    <TD>
-                      <StoryTitle item={item} />
-                      <p className="mt-0.5 font-mono text-xs text-muted">/news/{item.slug}</p>
-                    </TD>
-                    <TD>
-                      <KindCell item={item} />
-                    </TD>
-                    <TD>
-                      <p className="text-sm">{item.author}</p>
-                      <p className="text-xs text-muted">{deptName(item.departmentCode)}</p>
-                    </TD>
-                    <TD className="whitespace-nowrap">
-                      {item.publishedAt ? (
-                        <>
-                          <p className="text-sm">{formatDate(item.publishedAt)}</p>
-                          <p className="text-xs text-muted">{formatRelative(item.publishedAt)}</p>
-                        </>
-                      ) : (
-                        <span className="text-sm text-muted">Not published</span>
-                      )}
-                    </TD>
-                    <TD>
-                      {item.pinned ? (
-                        <span className="inline-flex items-center gap-1.5 text-sm font-medium">
-                          <Pin className="size-3.5 text-muted" aria-hidden="true" />
-                          Pinned
-                        </span>
-                      ) : (
-                        <span className="text-sm text-muted">—</span>
-                      )}
-                    </TD>
-                    <TD>
-                      <StateBadge item={item} />
-                    </TD>
-                  </TR>
+              ))}
+            </TBody>
+          </Table>
+        </TableWrap>
+      ) : (
+        <div className="space-y-6">
+          {show !== 'drafts' && pinned.length > 0 ? (
+            <FeedGroup title={`Pinned (${pinned.length} of ${PINNED_CAP})`}>
+              {pinned.map((n) => (
+                <StoryRow key={n.id} item={n} locale={pack.locale} share={shareFor(n)} />
+              ))}
+            </FeedGroup>
+          ) : null}
+
+          {show !== 'drafts' && latest.length > 0 ? (
+            <FeedGroup title="Latest">
+              {latest.map((n) => (
+                <StoryRow key={n.id} item={n} locale={pack.locale} share={shareFor(n)} />
+              ))}
+            </FeedGroup>
+          ) : null}
+
+          {show !== 'published' ? (
+            drafts.length > 0 ? (
+              <FeedGroup title="Drafts" note="Members cannot see a draft until it is published.">
+                {drafts.map((n) => (
+                  <DraftRow key={n.id} item={n} />
                 ))}
-              </TBody>
-            </Table>
-          </TableWrap>
-
-          {/* Below sm a six-column table is unreadable however it scrolls. */}
-          <div className="space-y-3 sm:hidden">
-            {rows.map((item) => (
-              <DefinitionCard
-                key={item.id}
-                title={<StoryTitle item={item} />}
-                subtitle={memberLine([item.author, deptName(item.departmentCode)])}
-                rows={[
-                  { label: 'Kind', value: <KindCell item={item} /> },
-                  {
-                    label: 'Published',
-                    value: item.publishedAt ? formatDate(item.publishedAt) : 'Not published',
-                  },
-                  { label: 'Pinned', value: item.pinned ? 'Yes' : 'No' },
-                  { label: 'State', value: <StateBadge item={item} /> },
-                ]}
-                actions={
-                  item.published ? (
-                    <ButtonLink href={`/news/${item.slug}`} variant="secondary" size="sm">
-                      Read it as a member
-                    </ButtonLink>
-                  ) : null
-                }
-              />
-            ))}
-          </div>
-        </>
+              </FeedGroup>
+            ) : show === 'drafts' ? (
+              <p className="text-sm text-secondary">No drafts. A story saved without publishing waits here.</p>
+            ) : null
+          ) : null}
+        </div>
       )}
-
-      <MarginNote className="max-w-prose border-t border-line pt-4">
-        Editing and unpublishing are not wired in this build — the composer validates and confirms,
-        then stops short of writing. When it is connected, every change here will land in the audit
-        log with the before and after, because &ldquo;who changed that figure&rdquo; is the first
-        question anybody asks about a published number.
-      </MarginNote>
     </div>
   );
 }
 
 // ---------------------------------------------------------------
-// Cells
+// Rows
 // ---------------------------------------------------------------
+
+function FeedGroup({ title, note, children }: { title: string; note?: string; children: ReactNode }) {
+  return (
+    <section className="space-y-2" aria-label={title}>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h2 className="text-sm font-semibold text-secondary">{title}</h2>
+        {note ? <p className="text-sm text-secondary">{note}</p> : null}
+      </div>
+      <Card>
+        <ul className="divide-y divide-line">{children}</ul>
+      </Card>
+    </section>
+  );
+}
+
+function Eyebrow({ item }: { item: NewsItem }) {
+  const meta = KIND_META[item.kind];
+  const Icon = KIND_ICON[item.kind];
+  return (
+    <>
+      <Icon aria-hidden="true" />
+      {meta.label}
+      {!meta.notifies ? <span className="sr-only">, published without a notification</span> : null}
+    </>
+  );
+}
+
+function StoryRow({
+  item,
+  locale,
+  share,
+}: {
+  item: NewsItem;
+  locale: Parameters<typeof StoryCard>[0]['locale'];
+  share: string;
+}) {
+  return (
+    <li className="flex flex-col gap-1 px-4 sm:flex-row sm:items-center sm:gap-4">
+      <StoryCard
+        story={item}
+        href={`/news/${item.slug}`}
+        locale={locale}
+        variant="row"
+        eyebrow={<Eyebrow item={item} />}
+        className="min-w-0 flex-1"
+      />
+      <div className="flex shrink-0 flex-wrap items-center gap-1 pb-3 sm:pb-0">
+        <ButtonLink href={`/news/${item.slug}`} variant="ghost" size="sm" className="min-h-11 sm:min-h-0">
+          <Eye className="size-4" aria-hidden="true" />
+          View as member
+        </ButtonLink>
+        <CopyButton text={share} label="Copy for WhatsApp" copiedLabel="Copied for WhatsApp" variant="ghost" size="sm" />
+      </div>
+    </li>
+  );
+}
+
+function DraftRow({ item }: { item: NewsItem }) {
+  const meta = KIND_META[item.kind];
+  const Icon = KIND_ICON[item.kind];
+  return (
+    <li className="flex items-start gap-3 px-4 py-3">
+      <div className="min-w-0 flex-1 space-y-1">
+        <p className="flex items-center gap-1.5 text-xs font-medium text-secondary">
+          <Icon className="size-3.5" aria-hidden="true" />
+          {meta.label} · {item.author}
+        </p>
+        <h3 className="font-semibold leading-snug">
+          <StoryTitle item={item} />
+        </h3>
+      </div>
+      <Badge tone="neutral">Draft</Badge>
+    </li>
+  );
+}
 
 /**
  * A draft has no member-facing address, so its title is not a link. An
@@ -324,26 +350,11 @@ function KindCell({ item }: { item: NewsItem }) {
     <div className="space-y-0.5">
       <Badge tone={meta.tone}>{meta.label}</Badge>
       {!meta.notifies ? (
-        <p className="flex items-center gap-1 text-xs text-muted">
+        <p className="flex items-center gap-1 text-xs text-secondary">
           <BellOff className="size-3" aria-hidden="true" />
           Not notified
         </p>
       ) : null}
     </div>
-  );
-}
-
-function StateBadge({ item }: { item: NewsItem }) {
-  if (!item.published) {
-    return (
-      <Badge tone="warning" dot>
-        Draft — not visible to members
-      </Badge>
-    );
-  }
-  return (
-    <Badge tone="success" dot>
-      Published
-    </Badge>
   );
 }

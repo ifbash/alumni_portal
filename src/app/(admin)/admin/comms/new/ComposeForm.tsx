@@ -2,48 +2,60 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Mail, MessageCircle, Lock, Users, Eye, ShieldCheck, RotateCcw } from 'lucide-react';
+import {
+  CalendarDays,
+  Circle,
+  Eye,
+  Mail,
+  MessageCircle,
+  Newspaper,
+  PenLine,
+  RotateCcw,
+  Send,
+  Users,
+} from 'lucide-react';
 
 import {
+  Alert,
+  Badge,
+  Button,
+  ButtonLink,
   Card,
+  CardBody,
   CardHeader,
   CardTitle,
-  CardDescription,
-  CardBody,
-  Field,
-  describedBy,
-  Input,
-  Textarea,
-  Select,
-  Radio,
-  Fieldset,
-  FormActions,
-  Button,
-  Badge,
-  Alert,
-  Progress,
-  Separator,
   ConfirmDialog,
+  CopyButton,
+  Field,
+  Fieldset,
+  Input,
+  Progress,
+  Radio,
+  Select,
+  Sheet,
+  StickyActionBar,
+  Textarea,
+  describedBy,
   useToast,
 } from '@/components/ui';
 import { api, outcomeToast } from '@/lib/client/api';
+import { cn } from '@/lib/cn';
 
 /**
- * Segment builder and composer.
+ * Messages composer: channel, who, message, review.
+ *
+ * WhatsApp comes first because that is where alumni read. While the
+ * college has no WhatsApp Business account, the WhatsApp card offers a
+ * draft for batch groups instead: copy-ready text and a link, sent from
+ * the staff member's own phone. It sends nothing from here and carries no
+ * member data.
  *
  * The recipient count is not estimated in the browser — every change to the
  * segment goes back through the directory on the server, with this viewer's
  * own scope applied, and the number that comes back is the number that will
- * be sent to. A count computed client-side from a cached list is the reason
- * "it said 400" turns into 4,000 delivered.
- *
- * That holds at the send as well. `POST /api/admin/comms` resolves the
- * segment a second time, through the same directory query and the same
- * scope, and the count it returns is the count that was used — this screen
- * reports that number rather than the one it happened to be showing. If
- * the two disagree, the disagreement is stated, because a stale tab is
- * precisely how somebody mails eight thousand people believing it was two
- * hundred.
+ * be sent to. `POST /api/admin/comms` resolves the segment a second time at
+ * the send, and the count it returns is the count that was used; if the two
+ * disagree, the disagreement is stated.
  */
 
 interface SendResult {
@@ -67,12 +79,29 @@ export interface Segment {
   availability: '' | 'mentoring' | 'referrals' | 'speaking';
 }
 
+/** A message to start from: an event invite, a thank-you, or a story. Written on the server. */
+export interface StartingPoint {
+  key: string;
+  kind: 'event' | 'story';
+  label: string;
+  hint: string;
+  subject: string;
+  /** The email or WhatsApp body, with merge fields. */
+  body: string;
+  /** The text for a batch group: no merge fields, link included. */
+  whatsapp: string;
+}
+
 type Channel = 'email' | 'whatsapp';
+type Mode = 'send' | 'draft';
+type StartKind = 'blank' | 'event' | 'story';
 
 interface Option {
   value: string;
   label: string;
 }
+
+const SETUP = ['A WhatsApp Business provider account', 'A sender name for the college', 'The first message template approved'];
 
 export function ComposeForm({
   tier,
@@ -91,6 +120,13 @@ export function ComposeForm({
   institutionName,
   supportEmail,
   unclaimedRegisterRows,
+  starts,
+  initialStart,
+  initialStartKey,
+  initialMode,
+  groupText,
+  brandHeader,
+  brandMark,
 }: {
   tier: 'all' | 'segment' | 'department';
   segment: Segment;
@@ -108,14 +144,32 @@ export function ComposeForm({
   institutionName: string;
   supportEmail: string | null;
   unclaimedRegisterRows: number;
+  starts: StartingPoint[];
+  initialStart: StartKind;
+  initialStartKey: string | null;
+  initialMode: Mode;
+  /** The general invitation for a group post, link included. */
+  groupText: string;
+  /** The college's logo, rendered on the server, for the email preview. */
+  brandHeader: React.ReactNode;
+  /** The college's mark, for the WhatsApp sender avatar. */
+  brandMark: React.ReactNode;
 }) {
   const router = useRouter();
   const toast = useToast();
   const [pending, startTransition] = React.useTransition();
 
-  const [channel, setChannel] = React.useState<Channel>('email');
-  const [subject, setSubject] = React.useState('');
-  const [body, setBody] = React.useState('');
+  const initialPoint = starts.find((s) => s.key === initialStartKey) ?? null;
+
+  const [mode, setMode] = React.useState<Mode>(initialMode);
+  const [channel, setChannel] = React.useState<Channel>(whatsappEnabled ? 'whatsapp' : 'email');
+  const [startKind, setStartKind] = React.useState<StartKind>(initialPoint?.kind ?? initialStart);
+  const [pointKey, setPointKey] = React.useState(initialPoint?.key ?? '');
+  const [subject, setSubject] = React.useState(initialPoint?.subject ?? '');
+  const [body, setBody] = React.useState(initialPoint?.body ?? '');
+  const [draft, setDraft] = React.useState(initialPoint?.whatsapp ?? groupText);
+  const [touched, setTouched] = React.useState(false);
+  const [previewOpen, setPreviewOpen] = React.useState(false);
   const [confirming, setConfirming] = React.useState(false);
   const [sending, setSending] = React.useState(false);
   const [sent, setSent] = React.useState<(SendResult & { persisted: boolean }) | null>(null);
@@ -186,6 +240,36 @@ export function ComposeForm({
     startTransition(() => router.replace(q ? `/admin/comms/new?${q}` : '/admin/comms/new', { scroll: false }));
   };
 
+  // ---------------------------------------------------------------
+  // Starting points
+  // ---------------------------------------------------------------
+
+  const events = starts.filter((s) => s.kind === 'event');
+  const stories = starts.filter((s) => s.kind === 'story');
+
+  const chooseKind = (kind: StartKind) => {
+    setStartKind(kind);
+    setPointKey('');
+    if (kind === 'blank') {
+      setSubject('');
+      setBody('');
+      setDraft(groupText);
+    }
+  };
+
+  const choosePoint = (key: string) => {
+    setPointKey(key);
+    const point = starts.find((s) => s.key === key);
+    if (!point) return;
+    setSubject(point.subject);
+    setBody(point.body);
+    setDraft(point.whatsapp);
+  };
+
+  // ---------------------------------------------------------------
+  // Readiness
+  // ---------------------------------------------------------------
+
   const filterCount = [
     segment.cohort !== 'all',
     Boolean(segment.department) && !lockedDepartment,
@@ -195,27 +279,35 @@ export function ComposeForm({
     Boolean(segment.availability),
   ].filter(Boolean).length;
 
-  // A `segment` grant is exactly that: it addresses a slice, never the list.
+  // A segment grant addresses a slice, never the whole list.
   const needsFilter = tier === 'segment' && filterCount === 0;
   const subjectOk = subject.trim().length >= 4;
   const bodyOk = body.trim().length >= 20;
-  const blocked = recipientCount === 0 || needsFilter || !subjectOk || !bodyOk || pending || sending;
+  const blocked = recipientCount === 0 || needsFilter || !subjectOk || !bodyOk;
 
   const blockedReason = needsFilter
-    ? 'Your tier is comms.send.segment. Narrow the audience with at least one filter — that grant does not cover the whole list.'
+    ? 'Narrow the audience with at least one filter. Writing to everyone is kept for the college admin.'
     : recipientCount === 0
-      ? 'No member matches this segment, so there is nobody to send to. Loosen a filter.'
+      ? 'Nobody matches this audience. Loosen a filter.'
       : !subjectOk
-        ? 'Write a subject line. It is the only thing most recipients will read.'
+        ? channel === 'whatsapp'
+          ? 'Name the approved template this message uses.'
+          : 'Write a subject line. It is the only part most people read.'
         : !bodyOk
-          ? 'Write the message. Two sentences is a real minimum for a broadcast.'
+          ? 'Write the message. Two sentences at least.'
           : null;
 
-  const sample = sampleNames[0] ?? 'Vamsi Krishna Pothineni';
-  const firstName = sample.split(/\s+/)[0] ?? sample;
+  const trySend = () => {
+    setTouched(true);
+    if (blocked || pending || sending) return;
+    setConfirming(true);
+  };
+
+  const sample = sampleNames[0] ?? null;
+  const firstName = sample ? (sample.split(/\s+/)[0] ?? sample) : null;
   const rendered = body
-    .replaceAll('{{name}}', sample)
-    .replaceAll('{{first_name}}', firstName)
+    .replaceAll('{{name}}', sample ?? '[name]')
+    .replaceAll('{{first_name}}', firstName ?? '[first name]')
     .replaceAll('{{college}}', institutionName);
 
   const audienceLine = [
@@ -230,6 +322,20 @@ export function ComposeForm({
     .filter(Boolean)
     .join(', ');
 
+  const footer =
+    segment.cohort === 'students'
+      ? `${institutionName} · You are receiving this as a final-year student.`
+      : segment.cohort === 'alumni'
+        ? `${institutionName} · You are receiving this as a graduate on the alumni register.`
+        : `${institutionName} · You are receiving this as a member of ${portalName}.`;
+
+  const channelWord = channel === 'whatsapp' ? 'WhatsApp' : 'email';
+  const count = recipientCount.toLocaleString('en-IN');
+
+  // ---------------------------------------------------------------
+  // After the send
+  // ---------------------------------------------------------------
+
   if (sent !== null) {
     // The number the screen was showing when Send was pressed, against the
     // number the server resolved. They agree almost always; the case where
@@ -237,13 +343,15 @@ export function ComposeForm({
     const drifted = sent.recipientCount !== recipientCount;
 
     return (
-      <Card>
+      <Card className="max-w-2xl">
         <CardBody className="space-y-4">
-          <Badge tone={sent.persisted ? 'success' : 'info'} dot>
-            {sent.persisted ? 'Queued' : 'Not queued'}
+          <Badge tone={sent.persisted ? 'success' : 'neutral'} dot>
+            {sent.persisted ? 'Queued' : 'Not sent'}
           </Badge>
           <p className="font-display text-xl font-semibold">
-            &ldquo;{sent.subject}&rdquo; queued for {sent.recipientCount.toLocaleString('en-IN')} recipients
+            {sent.persisted
+              ? `“${sent.subject}” is queued for ${sent.recipientCount.toLocaleString('en-IN')} recipients`
+              : `“${sent.subject}” was checked for ${sent.recipientCount.toLocaleString('en-IN')} recipients`}
           </p>
 
           {drifted ? (
@@ -258,16 +366,13 @@ export function ComposeForm({
           ) : null}
 
           <p className="max-w-prose text-sm text-secondary">
-            The audit log now carries one entry, <code className="font-mono text-xs">{sent.auditedAs}</code>: your
-            name, the segment ({sent.segmentLabel}), the channel and the recipient count. Delivery, bounces and
-            unsubscribes attach to that entry as they come back from the provider.
+            {sent.segmentLabel} · by {sent.channel === 'whatsapp' ? 'WhatsApp' : 'email'}. The audit log records
+            your name, the audience and the count.
           </p>
-
-          <p className="max-w-prose text-sm text-secondary">{sent.note}</p>
 
           <div className="flex flex-wrap gap-3 pt-1">
             <Button variant="secondary" onClick={() => router.push('/admin/comms')}>
-              Back to communications
+              Back to messages
             </Button>
             <Button
               variant="ghost"
@@ -275,458 +380,516 @@ export function ComposeForm({
                 setSent(null);
                 setSubject('');
                 setBody('');
+                setTouched(false);
+                setStartKind('blank');
+                setPointKey('');
               }}
             >
               Write another
             </Button>
           </div>
-
-          {!sent.persisted ? (
-            <p className="border-t border-line pt-3 text-xs text-muted">
-              Nothing left the building. This build runs on seeded data with no database and no message provider
-              behind it — your permission tier was checked, the segment was resolved and the audit entry was
-              written, but no message was queued to anybody.
-            </p>
-          ) : null}
         </CardBody>
       </Card>
     );
   }
 
+  // ---------------------------------------------------------------
+  // The four steps
+  // ---------------------------------------------------------------
+
+  const preview = (
+    <MessagePreview
+      mode={mode}
+      channel={channel}
+      subject={subject}
+      rendered={rendered}
+      draft={draft}
+      to={sample ?? 'a member'}
+      footer={footer}
+      portalName={portalName}
+      supportEmail={supportEmail}
+      brandHeader={brandHeader}
+      brandMark={brandMark}
+    />
+  );
+
+  const startChips: Array<{ kind: StartKind; label: string; icon: React.ReactNode; show: boolean }> = [
+    { kind: 'event', label: 'Event invite', icon: <CalendarDays className="size-4" />, show: events.length > 0 },
+    { kind: 'story', label: 'News story', icon: <Newspaper className="size-4" />, show: stories.length > 0 },
+    { kind: 'blank', label: 'Blank', icon: <PenLine className="size-4" />, show: true },
+  ];
+
+  const messageStart = (
+    <div className="space-y-3">
+      <div role="group" aria-label="Start from" className="scroll-fade-x flex gap-2 overflow-x-auto pb-1">
+        {startChips
+          .filter((c) => c.show)
+          .map((c) => (
+            <button
+              key={c.kind}
+              type="button"
+              aria-pressed={startKind === c.kind}
+              onClick={() => chooseKind(c.kind)}
+              className={cn(
+                'inline-flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-sm sm:min-h-9',
+                'transition-colors duration-fast ease-brand [&_svg]:shrink-0',
+                startKind === c.kind
+                  ? 'border-line-strong bg-brand-soft font-medium text-brand-soft-fg'
+                  : 'border-line bg-surface-raised text-secondary hover:border-line-strong hover:text-primary',
+              )}
+            >
+              <span aria-hidden="true">{c.icon}</span>
+              {c.label}
+            </button>
+          ))}
+      </div>
+
+      {startKind === 'event' || startKind === 'story' ? (
+        <Field htmlFor="msg-start" label={startKind === 'event' ? 'Event' : 'Story'}>
+          <Select id="msg-start" value={pointKey} onChange={(e) => choosePoint(e.target.value)}>
+            <option value="">{startKind === 'event' ? 'Choose an event' : 'Choose a story'}</option>
+            {(startKind === 'event' ? events : stories).map((s) => (
+              <option key={s.key} value={s.key}>
+                {s.label} · {s.hint}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      ) : null}
+    </div>
+  );
+
   return (
     <>
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
-        <div className="space-y-6">
-          {/* ---------------- Segment ---------------- */}
-          <Card>
-            <CardHeader>
-              <div className="min-w-0 space-y-1">
-                <CardTitle as="h2">Segment</CardTitle>
-                <CardDescription>
-                  Drawn from the directory with your own scope applied — you cannot address someone you could not
-                  look up.
-                </CardDescription>
-              </div>
-              {filterCount > 0 && !lockedDepartment ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    update({
-                      cohort: 'all',
-                      department: '',
-                      batchFrom: '',
-                      batchTo: '',
-                      city: '',
-                      availability: '',
-                    })
-                  }
-                >
-                  <RotateCcw className="size-4" aria-hidden="true" />
-                  Clear
-                </Button>
-              ) : null}
-            </CardHeader>
-
-            <CardBody className="space-y-5">
-              <Fieldset legend="Cohort" hint="Students and alumni read a college mail very differently.">
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <Radio
-                    id="seg-cohort-all"
-                    name="cohort"
-                    label="Both"
-                    checked={segment.cohort === 'all'}
-                    onChange={() => update({ cohort: 'all' })}
-                  />
-                  <Radio
-                    id="seg-cohort-alumni"
-                    name="cohort"
-                    label="Alumni only"
-                    checked={segment.cohort === 'alumni'}
-                    onChange={() => update({ cohort: 'alumni' })}
-                  />
-                  <Radio
-                    id="seg-cohort-students"
-                    name="cohort"
-                    label="Students only"
-                    checked={segment.cohort === 'students'}
-                    disabled={!studentsAddressable}
-                    onChange={() => update({ cohort: 'students' })}
-                  />
-                </div>
-              </Fieldset>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field
-                  htmlFor="seg-department"
-                  label="Branch"
-                  hint={
-                    lockedDepartment
-                      ? `Fixed to ${lockedDepartmentName ?? lockedDepartment} by your comms.send.department grant.`
-                      : 'Counts are the members in each branch you can reach.'
-                  }
-                  error={fieldError('department')}
-                >
-                  <Select
-                    id="seg-department"
-                    value={segment.department}
-                    disabled={Boolean(lockedDepartment)}
-                    onChange={(e) => update({ department: e.target.value })}
-                    aria-describedby={describedBy('seg-department', {
-                      hint: true,
-                      error: Boolean(fieldError('department')),
-                    })}
-                  >
-                    {departmentOptions.map((o) => (
-                      <option key={o.value || 'any'} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-
-                <Field
-                  htmlFor="seg-city"
-                  label="City"
-                  hint="Useful for a city meet-up. Members who never filled in a city are excluded."
-                  error={fieldError('city')}
-                >
-                  <Select
-                    id="seg-city"
-                    value={segment.city}
-                    onChange={(e) => update({ city: e.target.value })}
-                    aria-describedby={describedBy('seg-city', { hint: true, error: Boolean(fieldError('city')) })}
-                  >
-                    <option value="">Anywhere</option>
-                    {cityOptions.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-
-                <Field htmlFor="seg-batch-from" label="Batch from" error={fieldError('batchFrom')}>
-                  <Select
-                    id="seg-batch-from"
-                    value={segment.batchFrom}
-                    onChange={(e) => update({ batchFrom: e.target.value })}
-                    aria-describedby={describedBy('seg-batch-from', { error: Boolean(fieldError('batchFrom')) })}
-                  >
-                    <option value="">Earliest</option>
-                    {batchYears.map((y) => (
-                      <option key={y} value={y}>
-                        {y}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-
-                <Field htmlFor="seg-batch-to" label="Batch to" error={fieldError('batchTo')}>
-                  <Select
-                    id="seg-batch-to"
-                    value={segment.batchTo}
-                    onChange={(e) => update({ batchTo: e.target.value })}
-                    aria-describedby={describedBy('seg-batch-to', { error: Boolean(fieldError('batchTo')) })}
-                  >
-                    <option value="">Latest</option>
-                    {batchYears.map((y) => (
-                      <option key={y} value={y}>
-                        {y}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-
-                <Field
-                  htmlFor="seg-availability"
-                  label="Availability"
-                  hint="What they have said they are willing to do, not what you would like them to do."
-                  error={fieldError('availability')}
-                >
-                  <Select
-                    id="seg-availability"
-                    value={segment.availability}
-                    onChange={(e) => update({ availability: e.target.value as Segment['availability'] })}
-                    aria-describedby={describedBy('seg-availability', {
-                      hint: true,
-                      error: Boolean(fieldError('availability')),
-                    })}
-                  >
-                    <option value="">Any</option>
-                    <option value="mentoring">Open to mentoring</option>
-                    <option value="referrals">Open to referrals</option>
-                    <option value="speaking">Open to speaking</option>
-                  </Select>
-                </Field>
-
-                <Field
-                  htmlFor="seg-verification"
-                  label="Verification state"
-                  hint={`Not a choice. ${unclaimedRegisterRows.toLocaleString('en-IN')} degree-register rows have never been claimed, so there is no verified address to write to.`}
-                >
-                  <Input
-                    id="seg-verification"
-                    value="Verified members only"
-                    readOnly
-                    disabled
-                    aria-describedby={describedBy('seg-verification', { hint: true })}
-                  />
-                </Field>
-              </div>
-
-              <Separator />
-
-              <div className="space-y-3 rounded-lg border border-line bg-surface-sunken p-4">
-                <div className="flex flex-wrap items-end justify-between gap-3">
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium text-secondary">Recipients</p>
-                    <p className="font-display text-display-xs font-bold tabular">
-                      {pending ? '…' : recipientCount.toLocaleString('en-IN')}
-                    </p>
-                  </div>
-                  <p className="text-xs text-muted">
-                    {pending ? 'Recounting…' : `of ${scopeTotal.toLocaleString('en-IN')} you can reach`}
-                  </p>
-                </div>
-
-                <Progress
-                  value={pending ? 0 : recipientCount}
-                  max={scopeTotal || 1}
-                  tone={recipientCount === 0 ? 'danger' : recipientCount === scopeTotal ? 'warning' : 'brand'}
-                  label={`${recipientCount} of ${scopeTotal} reachable members selected`}
-                />
-
-                <p className="text-sm text-secondary">
-                  <Users className="mr-1.5 inline size-4 align-[-2px]" aria-hidden="true" />
-                  {audienceLine}
-                </p>
-
-                {sampleNames.length > 0 ? (
-                  <p className="text-xs text-muted">
-                    Includes {sampleNames.slice(0, 3).join(', ')}
-                    {recipientCount > 3 ? ` and ${(recipientCount - 3).toLocaleString('en-IN')} others` : ''}.
-                  </p>
-                ) : null}
-
-                {!studentsAddressable ? (
-                  <p className="text-xs text-muted">
-                    Your directory scope returns alumni only. Students are not addressable from your roles — that
-                    needs <code className="font-mono">directory.search.students</code> — so they are not in this
-                    count, whichever cohort is selected above.
-                  </p>
-                ) : null}
-              </div>
-
-              {needsFilter ? (
-                <Alert tone="warning" title="Pick at least one filter">
-                  <p>
-                    <code className="font-mono text-xs">comms.send.segment</code> addresses a slice of the list, not
-                    the list. Sending to everyone needs <code className="font-mono text-xs">comms.send.all</code>,
-                    which the college admin holds.
-                  </p>
-                </Alert>
-              ) : null}
-            </CardBody>
-          </Card>
-
-          {/* ---------------- Compose ---------------- */}
-          <Card>
-            <CardHeader>
-              <div className="min-w-0 space-y-1">
-                <CardTitle as="h2">Message</CardTitle>
-                <CardDescription>One message, one channel. Nothing is queued twice.</CardDescription>
-              </div>
-            </CardHeader>
-
-            <CardBody className="space-y-5">
-              <Fieldset legend="Channel">
-                <Radio
-                  id="ch-email"
-                  name="channel"
-                  label={
-                    <span className="flex items-center gap-2">
-                      <Mail className="size-4 text-muted" aria-hidden="true" />
-                      Email
-                    </span>
-                  }
-                  hint="Always available. Bounces come back through the provider webhook and mark the address."
-                  checked={channel === 'email'}
-                  onChange={() => setChannel('email')}
-                />
-                <Radio
+        <div className="min-w-0 space-y-6">
+          {/* ---------------- 1. Channel ---------------- */}
+          <Step n={1} title="Channel">
+            <div className="grid gap-3 sm:grid-cols-2">
+              {whatsappEnabled ? (
+                <ChoiceCard
                   id="ch-whatsapp"
                   name="channel"
-                  label={
-                    <span className="flex flex-wrap items-center gap-2">
-                      <MessageCircle className="size-4 text-muted" aria-hidden="true" />
-                      WhatsApp
-                      {!whatsappEnabled ? (
-                        <Badge tone="neutral">
-                          <Lock className="size-3" aria-hidden="true" />
-                          Not connected
-                        </Badge>
-                      ) : null}
-                    </span>
+                  checked={mode === 'send' && channel === 'whatsapp'}
+                  onSelect={() => {
+                    setMode('send');
+                    setChannel('whatsapp');
+                  }}
+                  icon={<MessageCircle className="size-5" />}
+                  title="WhatsApp"
+                  tag="Where alumni read"
+                  line="Sent from the portal as an approved message template."
+                  footer={
+                    <Button
+                      type="button"
+                      variant={mode === 'draft' ? 'primary' : 'secondary'}
+                      size="sm"
+                      className="min-h-11 sm:min-h-0"
+                      aria-pressed={mode === 'draft'}
+                      onClick={() => setMode('draft')}
+                    >
+                      Draft for WhatsApp groups
+                    </Button>
                   }
-                  hint={
-                    whatsappEnabled
-                      ? 'Sent as an approved template. Members who have not opted in are skipped.'
-                      : 'Needs a WhatsApp Business API provider account for the college and an approved template. Until that exists this cannot be selected — which matters, because email open rates on alumni lists this old are poor and WhatsApp is the channel most of them actually read.'
-                  }
-                  disabled={!whatsappEnabled}
-                  checked={channel === 'whatsapp'}
-                  onChange={() => setChannel('whatsapp')}
                 />
-              </Fieldset>
+              ) : (
+                <div
+                  className={cn(
+                    'rounded-lg border p-4',
+                    mode === 'draft'
+                      ? 'border-[var(--button-primary-bg)] bg-brand-soft ring-1 ring-[var(--button-primary-bg)]'
+                      : 'border-line bg-surface-raised',
+                  )}
+                >
+                  <p className="flex flex-wrap items-center gap-2">
+                    <MessageCircle className="size-5 text-muted" aria-hidden="true" />
+                    <span className="font-semibold text-primary">WhatsApp</span>
+                    <span className="text-sm text-secondary">Where alumni read</span>
+                  </p>
+                  <p className="mt-2 text-sm text-secondary">Not set up yet. It needs:</p>
+                  <ul className="mt-1.5 space-y-1 text-sm text-primary">
+                    {SETUP.map((item) => (
+                      <li key={item} className="flex items-center gap-2">
+                        <Circle className="size-3 shrink-0 text-muted" aria-hidden="true" />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                  <Button
+                    type="button"
+                    variant={mode === 'draft' ? 'primary' : 'secondary'}
+                    size="sm"
+                    className="mt-3 min-h-11 sm:min-h-0"
+                    aria-pressed={mode === 'draft'}
+                    onClick={() => setMode('draft')}
+                  >
+                    Draft for WhatsApp groups
+                  </Button>
+                </div>
+              )}
 
-              {fieldErrors.channel ? (
-                <p role="alert" className="flex gap-1.5 text-xs font-medium text-danger-fg">
-                  <span aria-hidden="true">⚠</span>
-                  <span>{fieldErrors.channel}</span>
-                </p>
-              ) : null}
+              <ChoiceCard
+                id="ch-email"
+                name="channel"
+                checked={mode === 'send' && channel === 'email'}
+                onSelect={() => {
+                  setMode('send');
+                  setChannel('email');
+                }}
+                icon={<Mail className="size-5" />}
+                title="Email"
+                line="Queued from the portal for everyone in the audience."
+              />
+            </div>
+            {fieldErrors.channel ? (
+              <p role="alert" className="text-xs font-medium text-danger-fg">
+                {fieldErrors.channel}
+              </p>
+            ) : null}
+          </Step>
 
+          {mode === 'draft' ? (
+            /* ---------------- 2. The group post ---------------- */
+            <Step n={2} title="Message">
+              {messageStart}
               <Field
-                htmlFor="msg-subject"
-                label={channel === 'whatsapp' ? 'Template name' : 'Subject'}
-                required
-                hint={
-                  channel === 'whatsapp'
-                    ? 'The approved template this send uses.'
-                    : 'Say what it is about. "Update from the alumni cell" is why nobody opens the next one.'
-                }
-                error={fieldErrors.subject}
-              >
-                <Input
-                  id="msg-subject"
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
-                  maxLength={120}
-                  placeholder="Annual Alumni Meet 2027 — registration is open"
-                  invalid={Boolean(fieldErrors.subject)}
-                  aria-describedby={describedBy('msg-subject', {
-                    hint: true,
-                    error: Boolean(fieldErrors.subject),
-                  })}
-                />
-              </Field>
-
-              <Field
-                htmlFor="msg-body"
-                label="Message"
-                required
-                hint="{{first_name}}, {{name}} and {{college}} are replaced per recipient. Everything else is sent exactly as typed."
-                error={fieldErrors.body}
+                htmlFor="msg-draft"
+                label="Text for the group"
+                hint="Post it from your own phone. Nothing is sent from here, and no member details are included."
               >
                 <Textarea
-                  id="msg-body"
-                  value={body}
-                  onChange={(e) => setBody(e.target.value)}
-                  rows={9}
-                  invalid={Boolean(fieldErrors.body)}
-                  aria-describedby={describedBy('msg-body', { hint: true, error: Boolean(fieldErrors.body) })}
-                  placeholder={
-                    'Dear {{first_name}},\n\nThe Annual Alumni Meet is on 24 September on campus. Department sessions in the morning, the general body meeting after lunch, and the cultural evening in the open-air auditorium.\n\nRegistration is ₹500 and closes on 15 September.'
-                  }
+                  id="msg-draft"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  rows={6}
+                  aria-describedby={describedBy('msg-draft', { hint: true })}
                 />
               </Field>
+              <div className="flex flex-wrap items-center gap-2">
+                <CopyButton text={draft} label="Copy the text" copiedLabel="Text copied" variant="primary" />
+                <ButtonLink
+                  href={`https://wa.me/?text=${encodeURIComponent(draft)}`}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  variant="secondary"
+                  className="min-h-11"
+                >
+                  <MessageCircle className="size-4" aria-hidden="true" />
+                  Open in WhatsApp
+                  <span className="sr-only"> (opens WhatsApp)</span>
+                </ButtonLink>
+              </div>
+            </Step>
+          ) : (
+            <>
+              {/* ---------------- 2. Who ---------------- */}
+              <Step
+                n={2}
+                title="Who"
+                action={
+                  // The alumni cohort is fixed for an account that cannot reach students.
+                  filterCount > (studentsAddressable ? 0 : 1) && !lockedDepartment ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        update({
+                          cohort: studentsAddressable ? 'all' : 'alumni',
+                          department: '',
+                          batchFrom: '',
+                          batchTo: '',
+                          city: '',
+                          availability: '',
+                        })
+                      }
+                    >
+                      <RotateCcw className="size-4" aria-hidden="true" />
+                      Clear
+                    </Button>
+                  ) : null
+                }
+              >
+                <Fieldset legend="Cohort">
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <Radio
+                      id="seg-cohort-all"
+                      name="cohort"
+                      label="Both"
+                      hint={studentsAddressable ? undefined : 'Your account writes to alumni only.'}
+                      checked={segment.cohort === 'all'}
+                      disabled={!studentsAddressable}
+                      onChange={() => update({ cohort: 'all' })}
+                    />
+                    <Radio
+                      id="seg-cohort-alumni"
+                      name="cohort"
+                      label="Alumni"
+                      checked={segment.cohort === 'alumni'}
+                      onChange={() => update({ cohort: 'alumni' })}
+                    />
+                    <Radio
+                      id="seg-cohort-students"
+                      name="cohort"
+                      label="Final-year students"
+                      hint={studentsAddressable ? undefined : 'The placement cell writes to students.'}
+                      checked={segment.cohort === 'students'}
+                      disabled={!studentsAddressable}
+                      onChange={() => update({ cohort: 'students' })}
+                    />
+                  </div>
+                </Fieldset>
 
-              <p className="text-xs text-muted">{body.trim().length} characters</p>
-            </CardBody>
-          </Card>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field
+                    htmlFor="seg-department"
+                    label="Branch"
+                    hint={lockedDepartment ? `Your messages go to ${lockedDepartmentName ?? lockedDepartment}.` : undefined}
+                    error={fieldError('department')}
+                  >
+                    <Select
+                      id="seg-department"
+                      value={segment.department}
+                      disabled={Boolean(lockedDepartment)}
+                      onChange={(e) => update({ department: e.target.value })}
+                      aria-describedby={describedBy('seg-department', {
+                        hint: Boolean(lockedDepartment),
+                        error: Boolean(fieldError('department')),
+                      })}
+                    >
+                      {departmentOptions.map((o) => (
+                        <option key={o.value || 'any'} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
 
-          <FormActions>
-            <p className="mr-auto max-w-prose text-xs text-muted">
-              Sending posts the segment to the server, which resolves the recipients itself and writes the audit
-              entry. If nothing is actually queued — this build can run on seeded data with no message provider
-              behind it — you are told that rather than shown a tick.
-            </p>
-            <Button variant="secondary" onClick={() => router.push('/admin/comms')}>
-              Cancel
-            </Button>
-            <Button disabled={blocked} loading={sending} onClick={() => setConfirming(true)}>
-              Send to {recipientCount.toLocaleString('en-IN')} recipient{recipientCount === 1 ? '' : 's'}
-            </Button>
-          </FormActions>
+                  <Field htmlFor="seg-city" label="City" error={fieldError('city')}>
+                    <Select
+                      id="seg-city"
+                      value={segment.city}
+                      onChange={(e) => update({ city: e.target.value })}
+                      aria-describedby={describedBy('seg-city', { error: Boolean(fieldError('city')) })}
+                    >
+                      <option value="">Anywhere</option>
+                      {cityOptions.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
 
-          {blockedReason ? <p className="text-right text-xs text-danger-fg">{blockedReason}</p> : null}
+                  <Field htmlFor="seg-batch-from" label="Batch from" error={fieldError('batchFrom')}>
+                    <Select
+                      id="seg-batch-from"
+                      value={segment.batchFrom}
+                      onChange={(e) => update({ batchFrom: e.target.value })}
+                      aria-describedby={describedBy('seg-batch-from', { error: Boolean(fieldError('batchFrom')) })}
+                    >
+                      <option value="">Earliest</option>
+                      {batchYears.map((y) => (
+                        <option key={y} value={y}>
+                          {y}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
 
-          {refusal ? (
-            <Alert tone="danger" title="Nothing was sent">
-              <p>{refusal}</p>
-            </Alert>
-          ) : null}
+                  <Field htmlFor="seg-batch-to" label="Batch to" error={fieldError('batchTo')}>
+                    <Select
+                      id="seg-batch-to"
+                      value={segment.batchTo}
+                      onChange={(e) => update({ batchTo: e.target.value })}
+                      aria-describedby={describedBy('seg-batch-to', { error: Boolean(fieldError('batchTo')) })}
+                    >
+                      <option value="">Latest</option>
+                      {batchYears.map((y) => (
+                        <option key={y} value={y}>
+                          {y}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+
+                  <Field
+                    htmlFor="seg-availability"
+                    label="Availability"
+                    hint="What they have said they are willing to do."
+                    error={fieldError('availability')}
+                  >
+                    <Select
+                      id="seg-availability"
+                      value={segment.availability}
+                      onChange={(e) => update({ availability: e.target.value as Segment['availability'] })}
+                      aria-describedby={describedBy('seg-availability', {
+                        hint: true,
+                        error: Boolean(fieldError('availability')),
+                      })}
+                    >
+                      <option value="">Any</option>
+                      <option value="mentoring">Open to mentoring</option>
+                      <option value="referrals">Open to referrals</option>
+                      <option value="speaking">Open to speaking</option>
+                    </Select>
+                  </Field>
+                </div>
+
+                <div className="space-y-3 rounded-lg border border-line bg-surface p-4" aria-live="polite">
+                  <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
+                    <p className="flex items-baseline gap-2">
+                      <span className="font-display text-display-xs font-bold tabular">{pending ? '…' : count}</span>
+                      <span className="text-sm font-medium text-secondary">
+                        {recipientCount === 1 ? 'recipient' : 'recipients'}
+                      </span>
+                    </p>
+                    <p className="text-sm text-secondary">
+                      {pending ? 'Counting…' : `of ${scopeTotal.toLocaleString('en-IN')} you can reach`}
+                    </p>
+                  </div>
+                  <Progress
+                    value={pending ? 0 : recipientCount}
+                    max={scopeTotal || 1}
+                    tone="brand"
+                    label={`${recipientCount} of ${scopeTotal} reachable members selected`}
+                  />
+                  <p className="text-sm text-primary">
+                    <Users className="mr-1.5 inline size-4 align-[-3px] text-muted" aria-hidden="true" />
+                    {audienceLine}
+                  </p>
+                  {sampleNames.length > 0 ? (
+                    <p className="text-sm text-secondary">
+                      Includes {sampleNames.slice(0, 3).join(', ')}
+                      {recipientCount > 3 ? ` and ${(recipientCount - 3).toLocaleString('en-IN')} others` : ''}.
+                    </p>
+                  ) : null}
+                  {unclaimedRegisterRows > 0 ? (
+                    <p className="text-sm text-secondary">
+                      Only registered members are counted.{' '}
+                      {unclaimedRegisterRows.toLocaleString('en-IN')} graduates on the degree register have not
+                      registered yet.
+                    </p>
+                  ) : null}
+                </div>
+              </Step>
+
+              {/* ---------------- 3. Message ---------------- */}
+              <Step n={3} title="Message">
+                {messageStart}
+
+                <Field
+                  htmlFor="msg-subject"
+                  label={channel === 'whatsapp' ? 'Template name' : 'Subject'}
+                  required
+                  hint={
+                    channel === 'whatsapp'
+                      ? 'The approved template this message uses.'
+                      : 'Say what it is about. It is the only part most people read.'
+                  }
+                  error={fieldErrors.subject}
+                >
+                  <Input
+                    id="msg-subject"
+                    value={subject}
+                    onChange={(e) => {
+                      setSubject(e.target.value);
+                      setTouched(true);
+                    }}
+                    maxLength={120}
+                    placeholder="e.g. Registration is open for the annual meet"
+                    invalid={Boolean(fieldErrors.subject)}
+                    aria-describedby={describedBy('msg-subject', {
+                      hint: true,
+                      error: Boolean(fieldErrors.subject),
+                    })}
+                  />
+                </Field>
+
+                <Field
+                  htmlFor="msg-body"
+                  label="Message"
+                  required
+                  hint="{{first_name}}, {{name}} and {{college}} are filled in for each person."
+                  error={fieldErrors.body}
+                >
+                  <Textarea
+                    id="msg-body"
+                    value={body}
+                    onChange={(e) => {
+                      setBody(e.target.value);
+                      setTouched(true);
+                    }}
+                    rows={9}
+                    invalid={Boolean(fieldErrors.body)}
+                    aria-describedby={describedBy('msg-body', { hint: true, error: Boolean(fieldErrors.body) })}
+                    placeholder={'Dear {{first_name}},\n\nWhat is happening, when and where, and what to do next.'}
+                  />
+                </Field>
+              </Step>
+
+              {/* ---------------- 4. Review and send ---------------- */}
+              <Step n={4} title="Review and send">
+                <p className="text-sm text-primary">
+                  <span className="font-semibold tabular">{count}</span>{' '}
+                  {recipientCount === 1 ? 'person' : 'people'} · by {channelWord} · {audienceLine}
+                </p>
+                <p className="text-sm text-secondary">
+                  You will type the count to confirm. The server counts again as it sends.
+                </p>
+                {touched && blockedReason ? (
+                  <p className="text-sm font-medium text-warning-fg" role="status">
+                    {blockedReason}
+                  </p>
+                ) : null}
+                {refusal ? (
+                  <Alert tone="danger" title="Nothing was sent">
+                    <p>{refusal}</p>
+                  </Alert>
+                ) : null}
+                <div className="hidden flex-wrap items-center justify-end gap-3 lg:flex">
+                  <Button variant="secondary" onClick={() => router.push('/admin/comms')}>
+                    Cancel
+                  </Button>
+                  <Button onClick={trySend} loading={sending} disabled={pending}>
+                    <Send className="size-4" aria-hidden="true" />
+                    Send to {count}
+                  </Button>
+                </div>
+              </Step>
+            </>
+          )}
         </div>
 
         {/* ---------------- Preview ---------------- */}
-        <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
+        <aside aria-label="Preview" className="hidden lg:sticky lg:top-20 lg:block lg:self-start">
           <Card>
             <CardHeader>
-              <div className="min-w-0 space-y-1">
-                <CardTitle as="h2">
-                  <span className="flex items-center gap-2">
-                    <Eye className="size-4 text-muted" aria-hidden="true" />
-                    Preview
-                  </span>
-                </CardTitle>
-                <CardDescription>Merge fields filled in with {sample}.</CardDescription>
-              </div>
+              <CardTitle as="h2" className="flex items-center gap-2 text-md">
+                <Eye className="size-4 text-muted" aria-hidden="true" />
+                Preview
+              </CardTitle>
             </CardHeader>
-            <CardBody className="space-y-4">
-              <div className="space-y-3 rounded-lg border border-line bg-surface p-4">
-                <dl className="space-y-1 border-b border-line pb-3 text-xs">
-                  <div className="flex gap-2">
-                    <dt className="w-14 shrink-0 text-muted">From</dt>
-                    <dd className="min-w-0 font-medium">
-                      {portalName}
-                      {supportEmail ? <span className="text-muted"> &lt;{supportEmail}&gt;</span> : null}
-                    </dd>
-                  </div>
-                  <div className="flex gap-2">
-                    <dt className="w-14 shrink-0 text-muted">To</dt>
-                    <dd className="min-w-0 font-medium">{sample}</dd>
-                  </div>
-                  <div className="flex gap-2">
-                    <dt className="w-14 shrink-0 text-muted">Channel</dt>
-                    <dd className="min-w-0 font-medium">{channel === 'whatsapp' ? 'WhatsApp template' : 'Email'}</dd>
-                  </div>
-                </dl>
-
-                <p className="font-display text-md font-semibold">
-                  {subject.trim() || 'Your subject line appears here'}
-                </p>
-
-                <p className="whitespace-pre-line text-sm leading-relaxed text-secondary">
-                  {rendered.trim() || 'The message body appears here, with merge fields filled in.'}
-                </p>
-
-                <p className="border-t border-line pt-3 text-xs text-muted">
-                  {institutionName} · You are receiving this because you are on the alumni register. Every message
-                  carries an unsubscribe link; consent withdrawal is recorded against your profile.
-                </p>
-              </div>
-
-              <div className="space-y-2 border-t border-line pt-3">
-                <p className="flex items-start gap-2 text-xs text-secondary">
-                  <ShieldCheck className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-                  <span>
-                    Sending writes one audit entry: your name, the segment, the channel and the recipient count. That
-                    entry is the record of the send.
-                  </span>
-                </p>
-                <p className="flex items-start gap-2 text-xs text-secondary">
-                  <Lock className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-                  <span>
-                    This is a broadcast, not a conversation. Replies go to the alumni cell inbox; private messages
-                    between members are not readable from any console.
-                  </span>
-                </p>
-              </div>
-            </CardBody>
+            <CardBody>{preview}</CardBody>
           </Card>
         </aside>
       </div>
+
+      <StickyActionBar label="Message actions">
+        <Button type="button" variant="secondary" onClick={() => setPreviewOpen(true)}>
+          <Eye className="size-4" aria-hidden="true" />
+          Preview
+        </Button>
+        {mode === 'send' ? (
+          <Button type="button" onClick={trySend} loading={sending} disabled={pending}>
+            <Send className="size-4" aria-hidden="true" />
+            Send to {count}
+          </Button>
+        ) : null}
+      </StickyActionBar>
+
+      <Sheet open={previewOpen} onClose={() => setPreviewOpen(false)} title="Preview">
+        {preview}
+      </Sheet>
 
       <ConfirmDialog
         open={confirming}
@@ -741,20 +904,188 @@ export function ComposeForm({
           <div className="space-y-2">
             <p>
               <strong className="text-primary">{recipientCount.toLocaleString('en-IN')}</strong> people receive
-              &ldquo;{subject.trim()}&rdquo; by {channel === 'whatsapp' ? 'WhatsApp' : 'email'}.
+              &ldquo;{subject.trim()}&rdquo; by {channelWord}.
             </p>
             <p>{audienceLine}.</p>
-            <p>
-              There is no recall. Type the recipient count to confirm you have read it — that number is the one thing
-              worth checking twice.
-            </p>
-            <p>
-              The server resolves the segment again as it sends, with your own directory scope applied. If its count
-              differs from this one, you are shown both.
-            </p>
+            <p>A message cannot be recalled. Type the count to confirm you have read it.</p>
           </div>
         }
       />
     </>
+  );
+}
+
+// ---------------------------------------------------------------
+// Pieces
+// ---------------------------------------------------------------
+
+function Step({
+  n,
+  title,
+  action,
+  children,
+}: {
+  n: number;
+  title: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const id = `compose-step-${n}`;
+  return (
+    <section aria-labelledby={id}>
+      <Card>
+        <CardHeader className="items-center">
+          <h2 id={id} className="flex items-center gap-3 font-display text-lg font-semibold">
+            <span
+              aria-hidden="true"
+              className="grid size-7 shrink-0 place-items-center rounded-full bg-brand-soft text-sm font-semibold tabular text-brand-soft-fg"
+            >
+              {n}
+            </span>
+            <span>
+              <span className="sr-only">Step {n}: </span>
+              {title}
+            </span>
+          </h2>
+          {action}
+        </CardHeader>
+        <CardBody className="space-y-5">{children}</CardBody>
+      </Card>
+    </section>
+  );
+}
+
+/** A radio drawn as a card. The input stays real, so arrow keys and forms work. */
+function ChoiceCard({
+  id,
+  name,
+  checked,
+  onSelect,
+  icon,
+  title,
+  tag,
+  line,
+  footer,
+}: {
+  id: string;
+  name: string;
+  checked: boolean;
+  onSelect: () => void;
+  icon: React.ReactNode;
+  title: string;
+  tag?: string;
+  line: string;
+  footer?: React.ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        'relative rounded-lg border p-4 transition-colors duration-fast ease-brand',
+        'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--focus-ring)]',
+        checked
+          ? 'border-[var(--button-primary-bg)] bg-brand-soft ring-1 ring-[var(--button-primary-bg)]'
+          : 'border-line bg-surface-raised hover:border-line-strong',
+      )}
+    >
+      <label htmlFor={id} className="flex cursor-pointer items-start gap-3">
+        <input id={id} type="radio" name={name} checked={checked} onChange={onSelect} className="sr-only" />
+        <span className={cn('mt-0.5 shrink-0', checked ? 'text-brand-fg' : 'text-muted')} aria-hidden="true">
+          {icon}
+        </span>
+        <span className="min-w-0 space-y-1">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold text-primary">{title}</span>
+            {tag ? <span className="text-sm text-secondary">{tag}</span> : null}
+          </span>
+          <span className="block text-sm text-secondary">{line}</span>
+        </span>
+      </label>
+      {footer ? <div className="mt-2 pl-8">{footer}</div> : null}
+    </div>
+  );
+}
+
+function MessagePreview({
+  mode,
+  channel,
+  subject,
+  rendered,
+  draft,
+  to,
+  footer,
+  portalName,
+  supportEmail,
+  brandHeader,
+  brandMark,
+}: {
+  mode: Mode;
+  channel: Channel;
+  subject: string;
+  rendered: string;
+  draft: string;
+  to: string;
+  footer: string;
+  portalName: string;
+  supportEmail: string | null;
+  brandHeader: React.ReactNode;
+  brandMark: React.ReactNode;
+}) {
+  if (mode === 'draft') {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm text-secondary">Your post in a batch group</p>
+        <div className="rounded-lg bg-surface-sunken p-3">
+          <p className="ml-auto max-w-[92%] whitespace-pre-line break-words rounded-lg rounded-tr-none border border-line bg-surface-raised p-3 text-sm leading-relaxed text-primary shadow-sm">
+            {draft.trim() || 'The text appears here.'}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (channel === 'whatsapp') {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm text-secondary">To {to}</p>
+        <div className="rounded-lg bg-surface-sunken p-3">
+          <div className="flex items-start gap-2">
+            <span className="shrink-0">{brandMark}</span>
+            <div className="min-w-0 space-y-1.5 rounded-lg rounded-tl-none border border-line bg-surface-raised p-3 text-sm shadow-sm">
+              <p className="text-xs font-semibold text-brand-fg">{portalName}</p>
+              <p className="whitespace-pre-line break-words leading-relaxed text-primary">
+                {rendered.trim() || 'The message appears here, with names filled in.'}
+              </p>
+              {subject.trim() ? <p className="text-xs text-secondary">Template: {subject.trim()}</p> : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-line bg-surface">
+      <div className="border-b border-line bg-surface-raised px-4 py-3">{brandHeader}</div>
+      <dl className="space-y-1 border-b border-line px-4 py-3 text-xs">
+        <div className="flex gap-2">
+          <dt className="w-10 shrink-0 text-secondary">From</dt>
+          <dd className="min-w-0 break-words font-medium">
+            {portalName}
+            {supportEmail ? <span className="font-normal text-secondary"> &lt;{supportEmail}&gt;</span> : null}
+          </dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="w-10 shrink-0 text-secondary">To</dt>
+          <dd className="min-w-0 font-medium">{to}</dd>
+        </div>
+      </dl>
+      <div className="space-y-3 px-4 py-4">
+        <p className="font-display text-md font-semibold">{subject.trim() || 'The subject appears here'}</p>
+        <p className="whitespace-pre-line break-words text-sm leading-relaxed text-secondary">
+          {rendered.trim() || 'The message appears here, with names filled in.'}
+        </p>
+      </div>
+      <p className="border-t border-line px-4 py-3 text-xs text-secondary">{footer}</p>
+    </div>
   );
 }

@@ -1,6 +1,8 @@
 {
   "$comment": [
-    "Sri Vydehi University — a demonstration pack, not a real customer.",
+    "Tamarind Grove University — a demonstration pack, not a real customer.",
+    "The name, the one-word short name and the tagline are invented so that no",
+    "real institution's name, initials or town can be read into a sales demo.",
     "",
     "It exists to prove the derivation engine on a hue nothing else in the",
     "registry uses. A deep maroon with a gold accent is the most common",
@@ -8,7 +10,11 @@
     "likely to be pasted into the branding studio on a first sales call.",
     "Rounded corners and a serif display face are the other axis: this pack",
     "should feel like a different product from ifbash.json, using the same",
-    "components and one JSON file of difference."
+    "components and one JSON file of difference.",
+    "",
+    "Its copy claims nothing the shared fixture register contradicts: that",
+    "register runs 2013 to the current year, so there is no founding year and",
+    "no 'thirty years of graduates' on the first screen of a sales demo."
   ],
 
   "id": "srivarsity",
@@ -41,18 +47,31 @@
     "elevation": "lifted"
   },
 
-  "assets": {},
+  "assets": {
+    "$media_note": "Demo photos from Unsplash/Pexels, illustrative only: they do not show this (fictional) university or endorse the product. See public/brand/srivarsity/CREDITS.md.",
+    "heroImage": "/brand/srivarsity/hero-graduation.jpg",
+    "heroImageAlt": "Graduates raising their caps against an evening sky",
+    "heroFocus": "50% 40%",
+    "authImage": "/brand/srivarsity/auth-corridor.jpg",
+    "authFocus": "50% 55%",
+    "campusPhotos": [
+      { "src": "/brand/srivarsity/campus-classroom.jpg", "alt": "Engineering students taking notes together in a classroom", "caption": "In the classroom" },
+      { "src": "/brand/srivarsity/campus-lab.jpg", "alt": "A student adjusting an airflow rig in an engineering lab", "caption": "In the lab" },
+      { "src": "/brand/srivarsity/campus-farewell.jpg", "alt": "Final-year students in signed white shirts celebrating their last day", "caption": "Final-year farewell" },
+      { "src": "/brand/srivarsity/campus-convocation.jpg", "alt": "Three graduates throwing their caps into the air", "caption": "Convocation" }
+    ]
+  },
 
   "copy": {
-    "portalName": "Vydehi Connect",
-    "institutionName": "Sri Vydehi University",
-    "shortName": "SVU",
-    "tagline": "Bengaluru · Since 1994",
-    "heroHeadline": "Thirty years of graduates, in one place.",
+    "portalName": "Tamarind Connect",
+    "institutionName": "Tamarind Grove University",
+    "shortName": "Tamarind",
+    "tagline": "A demonstration university",
+    "heroHeadline": "Every batch, in one place.",
     "heroEmphasis": "one place",
-    "heroSubhead": "A verified directory of every Vydehi graduate since 1994, a mentoring channel between final-years and alumni, and events you hear about before they happen.",
-    "supportEmail": "alumni@svu.example.ac.in",
-    "addressLines": ["Sri Vydehi University", "Whitefield, Bengaluru — 560066", "Karnataka, India"],
+    "heroSubhead": "Find your batchmates, mentor the final-years coming up behind you, and hear about reunions first.",
+    "supportEmail": "alumni@tamarind.example.ac.in",
+    "addressLines": ["Tamarind Grove University", "Demonstration campus", "India"],
     "poweredBy": "ifBash",
     "poweredByUrl": "https://ifbash.com"
   },

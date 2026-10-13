@@ -1,21 +1,13 @@
 import { notFound, redirect } from 'next/navigation';
-import {
-  BadgeCheck,
-  Fingerprint,
-  Landmark,
-  Lock,
-  ScrollText,
-  TriangleAlert,
-  UserRound,
-} from 'lucide-react';
+import { ScrollText, TriangleAlert, UserRound } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap } from '@/lib/auth/guard';
 import { getDataRequests } from '@/lib/data/repo';
+import { getTenantBrand } from '@/lib/tenant';
 import { formatDate, formatRelative } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import {
-  Alert,
   Badge,
   Breadcrumbs,
   ButtonLink,
@@ -26,14 +18,9 @@ import {
   CardHeader,
   CardTitle,
   DetailRow,
+  Disclosure,
+  HowThisWorks,
   PageHeader,
-  Table,
-  TableWrap,
-  TBody,
-  TD,
-  TH,
-  THead,
-  TR,
 } from '@/components/ui';
 
 import {
@@ -46,61 +33,73 @@ import {
 } from '../dpdp';
 import { RequestActions } from '../RequestActions';
 
-export const metadata = { title: 'Data request' };
+export const metadata = { title: 'Data request · Staff console' };
 
 // ---------------------------------------------------------------
 // What the request actually touches
 // ---------------------------------------------------------------
 
-type Verdict = 'go' | 'keep' | 'careful';
+/**
+ * `change` is work this request does (erased, included, corrected);
+ * `keep` is what it leaves; `careful` is a change with a condition.
+ */
+type Verdict = 'change' | 'keep' | 'careful';
 
 interface ScopeRow {
   area: string;
   table: string;
-  outcome: string;
+  /** The badge while the request is open: what will happen. */
+  pending: string;
+  /** The badge once it is fulfilled: what happened. */
+  done: string;
   note: string;
   verdict: Verdict;
 }
 
-const VERDICT_TONE: Record<Verdict, 'success' | 'danger' | 'warning'> = {
-  go: 'success',
-  keep: 'danger',
-  careful: 'warning',
-};
+/**
+ * Status colour follows the request, not the plan. An open request shows
+ * what will happen in outline and neutral; only a fulfilled one earns the
+ * success tone, so nobody reads a green "Erased" on a request nobody has
+ * started.
+ */
+function verdictTone(verdict: Verdict, fulfilled: boolean): 'success' | 'neutral' | 'outline' {
+  if (verdict === 'keep') return 'neutral';
+  return fulfilled ? 'success' : 'outline';
+}
 
 const EXPORT_SCOPE: ScopeRow[] = [
-  { area: 'Identity', table: 'members', outcome: 'Included', verdict: 'go', note: 'Name, roll number, branch, batch, status and every status transition since registration.' },
-  { area: 'Contact details', table: 'member_contacts', outcome: 'Included', verdict: 'go', note: 'Email, mobile, links, and the visibility setting that governs who else may see them.' },
-  { area: 'Consent history', table: 'consent_records', outcome: 'Included', verdict: 'go', note: 'Append-only, with the version of the privacy notice in force at each point.' },
-  { area: 'Connections', table: 'connections', outcome: 'Included', verdict: 'go', note: 'Who was asked, when, and how it was answered.' },
-  { area: 'Message bodies', table: 'messages', outcome: 'In the package, not on this screen', verdict: 'careful', note: 'Packaged for the member and delivered to them. No role reads message bodies in this console — there is no capability for it.' },
-  { area: 'Events and jobs', table: 'event_registrations, job_applications', outcome: 'Included', verdict: 'go', note: 'Registrations, guests, amounts paid, postings made and applications sent.' },
-  { area: 'Donations', table: 'donations', outcome: 'Included', verdict: 'go', note: 'Amounts, dates, gateway references and 80G receipt numbers.' },
-  { area: 'Audit entries about them', table: 'audit_log', outcome: 'Included, staff names redacted', verdict: 'careful', note: 'They are entitled to know what was done to their record. They are not entitled to the identity of the operator who did it.' },
-  { area: 'Degree register row', table: 'degree_register', outcome: 'Included', verdict: 'go', note: 'The examinations-branch row their registration was matched against, and the confidence it matched at.' },
+  { area: 'Identity', table: 'members', pending: 'To include', done: 'Included', verdict: 'change', note: 'Name, roll number, branch, batch and status history.' },
+  { area: 'Contact details', table: 'member_contacts', pending: 'To include', done: 'Included', verdict: 'change', note: 'Email, mobile, links and who may see them.' },
+  { area: 'Consent history', table: 'consent_records', pending: 'To include', done: 'Included', verdict: 'change', note: 'Every consent, with the privacy notice version in force.' },
+  { area: 'Requests', table: 'connections', pending: 'To include', done: 'Included', verdict: 'change', note: 'Who was asked, when, and how it was answered.' },
+  { area: 'Message bodies', table: 'messages', pending: 'In the copy only', done: 'In the copy only', verdict: 'careful', note: 'Packaged for the member. No role reads them in this console.' },
+  { area: 'Events and jobs', table: 'event_registrations, job_applications', pending: 'To include', done: 'Included', verdict: 'change', note: 'Registrations, postings made and applications sent.' },
+  { area: 'Donations', table: 'donations', pending: 'To include', done: 'Included', verdict: 'change', note: 'Amounts, dates and receipt numbers.' },
+  { area: 'Audit entries about them', table: 'audit_log', pending: 'Staff names removed', done: 'Staff names removed', verdict: 'careful', note: 'What was done to their record, not who did it.' },
+  { area: 'Degree register row', table: 'degree_register', pending: 'To include', done: 'Included', verdict: 'change', note: 'The register row their registration was matched against.' },
 ];
 
 const DELETION_SCOPE: ScopeRow[] = [
-  { area: 'Identity', table: 'members', outcome: 'Erased', verdict: 'go', note: 'Row deleted, not flagged. A soft delete that leaves the name in the directory is not an erasure.' },
-  { area: 'Contact details', table: 'member_contacts', outcome: 'Erased', verdict: 'go', note: 'Deleted with the member row by foreign key, including anything a bulk import added.' },
-  { area: 'Photo and profile media', table: 'S3 ap-south-1', outcome: 'Erased', verdict: 'go', note: 'Objects deleted and the CDN path invalidated. Object storage is the part most often forgotten.' },
-  { area: 'Messages and connections', table: 'messages, connections', outcome: 'Erased', verdict: 'go', note: 'Both sides of every thread they were part of. The other member keeps no copy.' },
-  { area: 'Event registrations', table: 'event_registrations', outcome: 'Erased, headcounts kept', verdict: 'careful', note: 'The person is removed. Attendance totals already reported for NAAC stay as aggregate numbers with nobody attached.' },
-  { area: 'Job postings they made', table: 'job_postings', outcome: 'De-linked', verdict: 'careful', note: 'Live postings other members applied to are re-attributed to a former member rather than pulled, and the contact route closes.' },
-  { area: 'Donations and 80G receipts', table: 'donations', outcome: 'Retained — statutory', verdict: 'keep', note: 'Income-tax receipting and FCRA reporting. Erasing these is not ours to agree to and would put the trust’s registration at risk.' },
-  { area: 'Audit trail', table: 'audit_log', outcome: 'Retained, reduced', verdict: 'keep', note: 'Actor, action and timestamp survive with the personal fields stripped from the snapshots. An erasure that erases its own record cannot be shown to have happened.' },
-  { area: 'Degree register row', table: 'degree_register', outcome: 'Retained', verdict: 'keep', note: 'The college’s record of a degree conferred, loaded from the examinations branch. It is not portal data and it is not the member’s to erase.' },
+  { area: 'Identity', table: 'members', pending: 'Will be erased', done: 'Erased', verdict: 'change', note: 'Deleted outright, not hidden.' },
+  { area: 'Contact details', table: 'member_contacts', pending: 'Will be erased', done: 'Erased', verdict: 'change', note: 'Including anything a bulk import added.' },
+  { area: 'Photo and profile media', table: 'object storage (S3, stored in India)', pending: 'Will be erased', done: 'Erased', verdict: 'change', note: 'Stored files, not only the links to them.' },
+  { area: 'Messages and requests', table: 'messages, connections', pending: 'Will be erased', done: 'Erased', verdict: 'change', note: 'Both sides of every thread they were part of.' },
+  { area: 'Event registrations', table: 'event_registrations', pending: 'Totals kept', done: 'Erased, totals kept', verdict: 'careful', note: 'The person goes; reported attendance totals stay as numbers.' },
+  { area: 'Job postings they made', table: 'job_postings', pending: 'Will be de-linked', done: 'De-linked', verdict: 'careful', note: 'Postings others applied to stay, credited to a former member.' },
+  { area: 'Donation records and tax receipts', table: 'donations', pending: 'Kept', done: 'Kept', verdict: 'keep', note: 'Kept for their statutory period.' },
+  { area: 'Audit trail', table: 'audit_log', pending: 'Kept, reduced', done: 'Kept, reduced', verdict: 'keep', note: 'Actor, action and time, with personal details removed.' },
+  { area: 'Degree register row', table: 'degree_register', pending: 'Kept', done: 'Kept', verdict: 'keep', note: 'The college’s record of a degree conferred.' },
 ];
 
 const CORRECTION_SCOPE: ScopeRow[] = [
-  { area: 'Name and preferred name', table: 'members', outcome: 'Correct in place', verdict: 'go', note: 'Spelling, initials and the name they want shown. The old value stays in the audit log.' },
-  { area: 'Contact details', table: 'member_contacts', outcome: 'Correct in place', verdict: 'go', note: 'The member can already do this themselves — check why they could not before you edit anything.' },
-  { area: 'Employment and city', table: 'member_employment', outcome: 'Correct in place', verdict: 'go', note: 'Company, designation, dates and location.' },
-  { area: 'Visibility settings', table: 'member_contacts.visibility', outcome: 'Correct in place', verdict: 'go', note: 'Who may see their contact details. Never widen this on their behalf — only narrow it.' },
-  { area: 'Roll number, branch, year of passing', table: 'degree_register', outcome: 'Not correctable here', verdict: 'keep', note: 'These come from the degree register. A portal that edits them on request is a portal whose verification proves nothing. Route it to the examinations branch and re-run the match.' },
-  { area: 'Verification status', table: 'members.status', outcome: 'Not correctable here', verdict: 'keep', note: 'Re-run verification against the register instead of setting the status by hand.' },
-  { area: '80G receipts', table: 'donations', outcome: 'Reissued, never edited', verdict: 'careful', note: 'A receipt with a corrected figure is a new receipt with a new number, and the original stays.' },
-  { area: 'CGPA and placement status', table: 'members', outcome: 'Not visible here', verdict: 'keep', note: 'Placement-side only. This console cannot read those fields, so it cannot correct them.' },
+  { area: 'Name and preferred name', table: 'members', pending: 'Correct here', done: 'Corrected', verdict: 'change', note: 'The old value stays in the audit log.' },
+  { area: 'Contact details', table: 'member_contacts', pending: 'Correct here', done: 'Corrected', verdict: 'change', note: 'Members can change these themselves; ask why they could not.' },
+  { area: 'Employment and city', table: 'member_employment', pending: 'Correct here', done: 'Corrected', verdict: 'change', note: 'Company, designation, dates and location.' },
+  { area: 'Visibility settings', table: 'member_contacts.visibility', pending: 'Narrow only', done: 'Corrected', verdict: 'careful', note: 'Never widen who may see their details on their behalf.' },
+  { area: 'Roll number, branch, year of passing', table: 'degree_register', pending: 'Not here', done: 'Not here', verdict: 'keep', note: 'These come from the examinations branch; send it there.' },
+  { area: 'Verification status', table: 'members.status', pending: 'Not here', done: 'Not here', verdict: 'keep', note: 'Re-run verification instead of setting it by hand.' },
+  { area: 'Donation records and tax receipts', table: 'donations', pending: 'Reissued', done: 'Reissued', verdict: 'careful', note: 'A corrected receipt is a new receipt; the original stays.' },
+  { area: 'CGPA and placement status', table: 'members', pending: 'Not here', done: 'Not here', verdict: 'keep', note: 'Placement-side only. This console cannot read them.' },
 ];
 
 const SCOPE: Record<'export' | 'deletion' | 'correction', ScopeRow[]> = {
@@ -131,6 +130,13 @@ export default async function DataRequestPage({ params }: { params: Promise<{ id
   const due = dueStatus(request);
   const scope = SCOPE[request.kind];
   const isErasure = request.kind === 'deletion';
+  const fulfilled = request.state === 'fulfilled';
+
+  const pack = (await getTenantBrand())?.brand.pack;
+  const fmt = { locale: pack?.locale.locale, timeZone: pack?.locale.timeZone };
+
+  const dueTone =
+    due.tone === 'danger' ? 'text-danger-fg' : due.tone === 'warning' ? 'text-warning-fg' : 'text-secondary';
 
   return (
     <div className="space-y-6">
@@ -138,228 +144,91 @@ export default async function DataRequestPage({ params }: { params: Promise<{ id
         breadcrumbs={
           <Breadcrumbs
             items={[
-              { label: 'Governance' },
+              { label: 'Staff console', href: '/admin' },
               { label: 'Data requests', href: '/admin/data-requests' },
-              { label: request.id },
+              { label: request.memberName },
             ]}
           />
         }
-        eyebrow={`${KIND_LABEL[request.kind]} request`}
+        eyebrow="Data requests"
         title={request.memberName}
-        description={`${KIND_SUMMARY[request.kind]} Received ${formatDate(request.createdAt)} — ${formatRelative(request.createdAt)}.`}
-        actions={
-          <Badge tone={STATE_TONE[request.state]} dot>
-            {STATE_LABEL[request.state]}
-          </Badge>
+        description={`${KIND_SUMMARY[request.kind]} Received ${formatDate(request.createdAt, fmt)}.`}
+        meta={
+          <>
+            <Badge tone="neutral">{KIND_LABEL[request.kind]}</Badge>
+            <Badge tone={STATE_TONE[request.state]} dot>
+              {STATE_LABEL[request.state]}
+            </Badge>
+          </>
         }
       />
 
-      <Alert
-        tone={due.overdue ? 'danger' : due.tone === 'warning' ? 'warning' : due.open ? 'info' : 'neutral'}
-        title={due.label}
-        icon={due.overdue ? <TriangleAlert className="size-4" /> : <ScrollText className="size-4" />}
-      >
-        <p>
-          {due.detail}
-          {due.open ? ` Deadline ${formatDate(request.dueAt)}.` : null}
-        </p>
-      </Alert>
-
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* The rail holds the action, so on phones it comes first. */}
+        <aside aria-label="Act on this request" className="min-w-0 space-y-6 lg:order-last">
           <Card>
             <CardHeader>
-              <div className="min-w-0 space-y-1">
-                <CardTitle as="h2">{SCOPE_HEADING[request.kind]}</CardTitle>
-                <CardDescription>
-                  The {scope.length} places this member exists in the system. Work down the list — a
-                  request answered from memory is a request that misses object storage.
-                </CardDescription>
-              </div>
+              <CardTitle as="h2">Act on it</CardTitle>
+              <span className={cn('flex shrink-0 items-center gap-1 text-sm font-semibold', dueTone)}>
+                {due.overdue ? <TriangleAlert className="size-4 shrink-0" aria-hidden="true" /> : null}
+                {due.label}
+              </span>
             </CardHeader>
             <CardBody className="space-y-4">
-              <TableWrap
-                className="hidden sm:block"
-                caption={`${SCOPE_HEADING[request.kind]} for ${request.memberName}`}
-              >
-                <Table className="min-w-[44rem]">
-                  <THead>
-                    <TR>
-                      <TH>Area</TH>
-                      <TH>Outcome</TH>
-                      <TH>Why</TH>
-                    </TR>
-                  </THead>
-                  <TBody>
-                    {scope.map((row) => (
-                      <TR key={row.area} className={row.verdict === 'keep' ? 'bg-surface-sunken' : undefined}>
-                        <TD className="align-top">
-                          <p className="font-medium">{row.area}</p>
-                          <p className="font-mono text-xs text-muted">{row.table}</p>
-                        </TD>
-                        <TD className="align-top">
-                          <Badge tone={VERDICT_TONE[row.verdict]}>{row.outcome}</Badge>
-                        </TD>
-                        <TD className="align-top text-secondary">{row.note}</TD>
-                      </TR>
-                    ))}
-                  </TBody>
-                </Table>
-              </TableWrap>
-
-              <ul className="space-y-3 sm:hidden">
-                {scope.map((row) => (
-                  <li
-                    key={row.area}
-                    className={cn(
-                      'space-y-2 rounded border border-line p-3',
-                      row.verdict === 'keep' && 'bg-surface-sunken',
-                    )}
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="font-medium">{row.area}</p>
-                      <Badge tone={VERDICT_TONE[row.verdict]}>{row.outcome}</Badge>
-                    </div>
-                    <p className="font-mono text-xs text-muted">{row.table}</p>
-                    <p className="text-sm text-secondary">{row.note}</p>
-                  </li>
-                ))}
-              </ul>
+              {due.open ? (
+                <p className="text-sm text-secondary">
+                  {due.detail} Deadline{' '}
+                  <span className="font-medium text-primary">{formatDate(request.dueAt, fmt)}</span>.
+                </p>
+              ) : null}
+              {isErasure && due.open ? (
+                <p className="text-sm font-medium text-danger-fg">
+                  Read what an erasure keeps before you confirm. There is no undo.
+                </p>
+              ) : null}
+              <RequestActions
+                id={request.id}
+                memberName={request.memberName}
+                kind={request.kind}
+                state={request.state}
+                dueLabel={due.label}
+                overdue={due.overdue}
+                sticky
+              />
             </CardBody>
           </Card>
 
-          {isErasure ? (
-            <Card>
-              <CardHeader>
-                <div className="min-w-0 space-y-1">
-                  <CardTitle as="h2" className="flex items-center gap-2">
-                    <Landmark className="size-4 text-danger-fg" aria-hidden="true" />
-                    Retention exceptions you cannot waive
-                  </CardTitle>
-                  <CardDescription>
-                    An erasure is not unconditional, and the member is told so in the same reply.
-                  </CardDescription>
-                </div>
-              </CardHeader>
-              <CardBody className="space-y-4">
-                <div className="space-y-2 rounded-lg border border-[color-mix(in_srgb,var(--danger)_40%,var(--border))] bg-danger-soft p-4 text-sm text-danger-fg">
-                  <p className="font-semibold">Financial records stay.</p>
-                  <p>
-                    Donations, 80G receipts and anything carrying{' '}
-                    <span className="font-mono">is_foreign_contribution</span> are kept for their
-                    statutory retention period under the Income-tax Act and, where the contribution
-                    is foreign, the FCRA. The college is the one who has to produce them at audit;
-                    a member cannot consent them away and neither can this console.
-                  </p>
-                </div>
-
-                <div className="space-y-2 rounded-lg border border-line bg-surface-sunken p-4 text-sm text-secondary">
-                  <p className="font-semibold text-primary">The audit trail stays, in reduced form.</p>
-                  <p>
-                    Actor, action and timestamp survive; the personal fields inside the before and
-                    after snapshots are stripped. An erasure that also erased the record of itself
-                    could never be shown to have happened — which is the one thing a regulator asks
-                    for.
-                  </p>
-                </div>
-
-                <div className="space-y-2 rounded-lg border border-line bg-surface-sunken p-4 text-sm text-secondary">
-                  <p className="font-semibold text-primary">This is a hard delete.</p>
-                  <p>
-                    Everything not listed above is removed from Postgres and from object storage in{' '}
-                    <span className="font-mono">ap-south-1</span>. Backups age out on their own
-                    schedule; the erasure is not complete until the last backup containing the row
-                    expires, and the member is told that window rather than a comfortable
-                    “immediately”.
-                  </p>
-                </div>
-              </CardBody>
-            </Card>
-          ) : null}
-
-          {request.kind === 'export' ? (
-            <Card>
-              <CardHeader>
-                <div className="min-w-0 space-y-1">
-                  <CardTitle as="h2" className="flex items-center gap-2">
-                    <Lock className="size-4 text-brand-fg" aria-hidden="true" />
-                    How the copy is delivered
-                  </CardTitle>
-                  <CardDescription>The delivery path is part of the control.</CardDescription>
-                </div>
-              </CardHeader>
-              <CardBody className="max-w-prose space-y-3 text-sm text-secondary">
-                <p>
-                  The package is assembled by a background job and sent to{' '}
-                  {request.memberName}’s verified email as a time-limited link. It is never rendered
-                  in this console and never downloadable from it: an access copy an operator can
-                  open on screen is a bulk contact export wearing a different name, and bulk export
-                  is <span className="font-mono">college_admin</span> only, with a reason.
-                </p>
-                <p>
-                  Message bodies are inside the package. They are not readable here, by you or by
-                  anyone — there is no capability in the matrix that reads a private message, and
-                  fulfilling an access request is not a reason to add one.
-                </p>
-              </CardBody>
-            </Card>
-          ) : null}
-        </div>
-
-        <aside className="space-y-6">
           <Card>
-            <CardHeader>
-              <CardTitle as="h2">Request</CardTitle>
-            </CardHeader>
             <CardBody>
               <dl className="divide-y divide-line">
-                <DetailRow label="Member">{request.memberName}</DetailRow>
-                <DetailRow label="Kind">
-                  {KIND_LABEL[request.kind]}
-                  <span className="block font-mono text-xs font-normal text-muted">
-                    {request.kind}
-                  </span>
-                </DetailRow>
                 <DetailRow label="Received">
-                  <span className="tabular">{formatDate(request.createdAt)}</span>
+                  <span className="tabular">{formatDate(request.createdAt, fmt)}</span>
+                  <span className="block text-xs font-normal text-secondary">
+                    {formatRelative(request.createdAt, fmt)}
+                  </span>
                 </DetailRow>
                 <DetailRow label="Deadline">
-                  <span className="tabular">{formatDate(request.dueAt)}</span>
-                  <span
-                    className={cn(
-                      'block text-xs font-semibold',
-                      due.tone === 'danger' && 'text-danger-fg',
-                      due.tone === 'warning' && 'text-warning-fg',
-                      due.tone === 'neutral' && 'text-muted',
-                    )}
-                  >
-                    {due.label}
+                  <span className="tabular">{formatDate(request.dueAt, fmt)}</span>
+                  <span className="block text-xs font-normal text-secondary">
+                    {RESPONSE_WINDOW_DAYS} days from receipt
                   </span>
-                </DetailRow>
-                <DetailRow label="Window">
-                  <span className="tabular">{RESPONSE_WINDOW_DAYS} days</span>
-                  <span className="block text-xs font-normal text-muted">from receipt, not from pickup</span>
                 </DetailRow>
                 {request.state === 'fulfilled' ? (
                   <DetailRow label="Answered">
                     {request.fulfilledAt ? (
-                      <span className="tabular">{formatDate(request.fulfilledAt)}</span>
+                      <span className="tabular">{formatDate(request.fulfilledAt, fmt)}</span>
                     ) : (
-                      <span className="text-warning-fg">
-                        Marked fulfilled with no date recorded
-                      </span>
+                      <span className="text-warning-fg">Marked fulfilled with no date recorded</span>
                     )}
                   </DetailRow>
                 ) : null}
-                <DetailRow label="Request id">
-                  <span className="font-mono text-xs">{request.id}</span>
-                </DetailRow>
               </dl>
             </CardBody>
-            <CardFooter className="flex-col items-stretch gap-2">
+            <CardFooter className="flex-col items-stretch gap-1">
               <ButtonLink
-                variant="secondary"
+                variant="ghost"
                 size="sm"
+                className="min-h-11 justify-start lg:min-h-9"
                 href={`/admin/members?q=${encodeURIComponent(request.memberName)}`}
               >
                 <UserRound className="size-3.5" aria-hidden="true" />
@@ -368,6 +237,7 @@ export default async function DataRequestPage({ params }: { params: Promise<{ id
               <ButtonLink
                 variant="ghost"
                 size="sm"
+                className="min-h-11 justify-start lg:min-h-9"
                 href={`/admin/audit?q=${encodeURIComponent(request.memberName)}`}
               >
                 <ScrollText className="size-3.5" aria-hidden="true" />
@@ -375,65 +245,78 @@ export default async function DataRequestPage({ params }: { params: Promise<{ id
               </ButtonLink>
             </CardFooter>
           </Card>
-
-          <Card>
-            <CardHeader>
-              <div className="min-w-0 space-y-1">
-                <CardTitle as="h2">Act on it</CardTitle>
-                <CardDescription>
-                  {isErasure
-                    ? 'Read the retention exceptions before you confirm. There is no undo.'
-                    : 'The clock stops when this is answered, not when it is picked up.'}
-                </CardDescription>
-              </div>
-            </CardHeader>
-            <CardBody>
-              <RequestActions
-                id={request.id}
-                memberName={request.memberName}
-                kind={request.kind}
-                state={request.state}
-                dueLabel={due.label}
-                overdue={due.overdue}
-              />
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardBody className="space-y-3">
-              <p className="flex items-center gap-2 text-sm font-semibold">
-                <Fingerprint className="size-4 text-brand-fg" aria-hidden="true" />
-                Check this first
-              </p>
-              <ul className="space-y-2.5 text-sm text-secondary">
-                <li className="flex gap-2">
-                  <BadgeCheck className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-                  <span>
-                    The request was raised from inside the member’s signed-in session, so identity
-                    is established by the session itself. A request that arrives by email or over
-                    WhatsApp is not — send those back through the portal rather than answering them.
-                  </span>
-                </li>
-                <li className="flex gap-2">
-                  <UserRound className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-                  <span>
-                    Answering must not disclose another member’s personal data. Connection threads
-                    have two people in them; the other person’s contact details are not part of this
-                    request.
-                  </span>
-                </li>
-                <li className="flex gap-2">
-                  <ScrollText className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-                  <span>
-                    Whatever you do writes to <span className="font-mono">audit_log</span> with your
-                    name and this request id, before the member is notified.
-                  </span>
-                </li>
-              </ul>
-            </CardBody>
-          </Card>
         </aside>
+
+        <div className="min-w-0 space-y-6 lg:col-span-2">
+          <Card>
+            <CardHeader variant="stack">
+              <CardTitle as="h2">{SCOPE_HEADING[request.kind]}</CardTitle>
+              <CardDescription>Every place this member exists in the portal, in the order to work through.</CardDescription>
+            </CardHeader>
+            <CardBody className="space-y-4">
+              <ol className="divide-y divide-line">
+                {scope.map((row, i) => (
+                  <li key={row.area} className="flex gap-3 py-3 first:pt-0 last:pb-0">
+                    <span
+                      className="grid size-6 shrink-0 place-items-center rounded-full bg-surface-sunken text-xs font-semibold tabular text-secondary"
+                      aria-hidden="true"
+                    >
+                      {i + 1}
+                    </span>
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                        <p className="font-medium">{row.area}</p>
+                        <Badge tone={verdictTone(row.verdict, fulfilled)} className="whitespace-nowrap">
+                          {fulfilled ? row.done : row.pending}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-secondary">{row.note}</p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+
+              <Disclosure summary="Technical details">
+                <p className="mb-3">Where each area is stored, for whoever carries out the request.</p>
+                <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
+                  {scope.map((row) => (
+                    <div key={row.area} className="contents">
+                      <dt className="text-primary">{row.area}</dt>
+                      <dd className="font-mono text-xs">{row.table}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </Disclosure>
+            </CardBody>
+          </Card>
+
+          <HowThisWorks summary={isErasure ? 'What an erasure keeps' : 'Before you answer'}>
+            {isErasure ? (
+              <ul className="list-disc space-y-1.5 pl-5">
+                <li>
+                  Donation records and tax receipts stay for their statutory period. Neither the member nor this
+                  console can waive that.
+                </li>
+                <li>The audit trail stays, with personal details removed, so the erasure can be shown to have happened.</li>
+                <li>The degree register row is the college&rsquo;s record, not the member&rsquo;s.</li>
+                <li>Everything else is deleted. Backups age out on their own schedule.</li>
+              </ul>
+            ) : (
+              <ul className="list-disc space-y-1.5 pl-5">
+                <li>
+                  The member raised this from their signed-in account, so their identity is settled. Send requests
+                  that arrive by email or WhatsApp back through the portal.
+                </li>
+                <li>Your answer must not disclose another member&rsquo;s personal data.</li>
+                <li>No one reads private message contents in this console.</li>
+              </ul>
+            )}
+          </HowThisWorks>
+        </div>
       </div>
+
+      {/* Room for the phone action bar RequestActions pins below `lg`. */}
+      {due.open ? <div aria-hidden="true" className="h-20 lg:hidden" data-print-hide="" /> : null}
     </div>
   );
 }

@@ -99,12 +99,19 @@ describe('canInDepartment', () => {
   });
 
   it('ignores the target department for capabilities that are not scoped', () => {
-    // profile.read.any is not department-scoped. An HOD reading a profile
-    // is not the check that needs a department, and pretending otherwise
-    // would break every unscoped route the moment a grant carries a
-    // department.
-    expect(canInDepartment(hodOfCse, 'profile.read.any', 'ECE')).toBe(true);
-    expect(canInDepartment(hodOfCse, 'profile.read.any', null)).toBe(true);
+    // job.moderate is not department-scoped, so a grant that happens to
+    // carry a department must not narrow it - pretending otherwise would
+    // break every unscoped route the moment a grant is tied to one.
+    //
+    // (profile.read.any used to be the example here. It is scoped now: an
+    // HOD reading member records is exactly the check that needs a
+    // department, and leaving it wide opened every branch's roll numbers
+    // and employment history to every HOD.)
+    const moderator = session({ roles: [{ role: 'placement_officer', departmentId: 'CSE' }] });
+    expect(canInDepartment(moderator, 'job.moderate', 'ECE')).toBe(true);
+    expect(canInDepartment(moderator, 'job.moderate', null)).toBe(true);
+    expect(canInDepartment(hodOfCse, 'profile.read.any', 'ECE')).toBe(false);
+    expect(canInDepartment(hodOfCse, 'profile.read.any', 'CSE')).toBe(true);
   });
 
   it('refuses a capability the roles do not grant, department or not', () => {

@@ -1,26 +1,29 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
+import type { ReactNode } from 'react';
 import { notFound, redirect } from 'next/navigation';
-import { Building2, Pin, Users } from 'lucide-react';
+import { Mail, Users } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
-import { can } from '@/lib/auth/guard';
+import { can, isActive } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
 import { getNews, getNewsBySlug, type NewsItem } from '@/lib/data/content';
 import { findMemberById, getDepartments, getMemberBySlug } from '@/lib/data/repo';
 import {
   Avatar,
-  Badge,
   Breadcrumbs,
   ButtonLink,
   Card,
   CardBody,
-  CardTitle,
-  PageHeader,
+  CopyButton,
+  MediaFrame,
   Section,
+  ShareActions,
 } from '@/components/ui';
-import { formatDate, formatRelative, memberLine } from '@/lib/format';
-import { cn } from '@/lib/cn';
-import { KIND_META, newsHref } from '../kinds';
+import { StoryCard } from '@/components/content';
+import { formatDate, memberLine } from '@/lib/format';
+import { mailto } from '@/lib/mailto';
+import { storyShareText } from '@/lib/share-text';
+import { siteOrigin, whatsappShareUrl } from '@/lib/share';
+import { KIND_META } from '../kinds';
 
 /**
  * One story.
@@ -29,10 +32,13 @@ import { KIND_META, newsHref } from '../kinds';
  * item 404s here exactly as it would for a stranger — the admin console
  * is the only place a draft is addressable.
  *
- * The obituary branch is not styling for its own sake. A notice gets no
- * kind badge, no pinned marker, and no related-stories block full of
- * other people's good news; the two cases diverge in enough places that
- * `restrained` is checked rather than re-derived.
+ * The page is an article: the kind and branch as an eyebrow, the headline,
+ * a lede, a byline, the body. Beside it sits at most one card that does
+ * something with the story — congratulate the graduate it is about, find
+ * the branch's alumni, or write to the office in memory of someone. A
+ * notice gets no share button in the brand colour and no directory
+ * promotion; the two cases diverge in enough places that `restrained` is
+ * checked rather than re-derived.
  */
 
 export async function generateMetadata({
@@ -54,6 +60,7 @@ export async function generateMetadata({
 export default async function NewsStoryPage({ params }: { params: Promise<{ slug: string }> }) {
   const session = await getSession();
   if (!session) redirect('/login');
+  if (!isActive(session)) redirect('/pending');
 
   const resolved = await getTenantBrand();
   if (!resolved) notFound();
@@ -92,178 +99,179 @@ export default async function NewsStoryPage({ params }: { params: Promise<{ slug
       ? `More from ${departmentName}`
       : related.every((n) => n.kind === item.kind)
         ? `More ${meta.tab.toLowerCase()}`
-        : 'Elsewhere on the news page';
+        : 'More stories';
+
+  const locale = pack.locale;
+  const office = pack.copy.officeName;
+  const support = pack.copy.supportEmail ?? null;
+  const origin = await siteOrigin();
+  const url = `${origin}/news/${item.slug}`;
+  const obituary = meta.restrained;
+  const words = `${item.summary} ${item.body}`.split(/\s+/).filter(Boolean).length;
+  const minutes = Math.max(1, Math.round(words / 200));
+  const eyebrow = [meta.label, departmentName].filter(Boolean).join(' · ');
+
+  // ---------------------------------------------------------------
+  // The one thing to do with this story
+  // ---------------------------------------------------------------
+
+  let context: ReactNode = null;
+
+  if (obituary) {
+    const name = item.title.replace(/^in memoriam:\s*/i, '').trim();
+    context = support ? (
+      <Card>
+        <CardBody className="space-y-3">
+          <h2 className="font-display text-md font-semibold">Write to the {office}</h2>
+          <p className="text-sm text-secondary">Share a memory or a message for the family.</p>
+          <ButtonLink
+            href={mailto(support, `In memory of ${name}`, [''])}
+            variant="secondary"
+            className="min-h-11 w-full"
+          >
+            <Mail className="size-4 shrink-0" aria-hidden="true" />
+            Write to the {office}
+          </ButtonLink>
+        </CardBody>
+      </Card>
+    ) : null;
+  } else if (item.kind === 'achievement' && aboutMember) {
+    context = (
+      <Card>
+        <CardBody className="space-y-4">
+          <div className="flex items-center gap-3">
+            <Avatar name={aboutMember.fullName} src={aboutMember.photoUrl} size="lg" />
+            <div className="min-w-0">
+              <h2 className="font-display text-md font-semibold">{aboutMember.fullName}</h2>
+              <p className="text-sm text-secondary">
+                {memberLine([aboutMember.departmentCode, aboutMember.batchYear, aboutMember.currentCompany])}
+              </p>
+            </div>
+          </div>
+          <ButtonLink href={`/directory/${aboutMember.slug}`} className="min-h-11 w-full">
+            Congratulate
+          </ButtonLink>
+        </CardBody>
+      </Card>
+    );
+  } else if ((item.kind === 'milestone' || item.kind === 'achievement') && item.departmentCode && canOpenDirectory) {
+    context = (
+      <Card>
+        <CardBody className="space-y-3">
+          <h2 className="font-display text-md font-semibold">{departmentName}</h2>
+          <p className="text-sm text-secondary">Graduates of this branch, across every batch.</p>
+          <ButtonLink href={`/directory/branch/${item.departmentCode}`} variant="secondary" className="min-h-11 w-full">
+            <Users className="size-4 shrink-0" aria-hidden="true" />
+            Find {item.departmentCode} alumni
+          </ButtonLink>
+        </CardBody>
+      </Card>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        breadcrumbs={<Breadcrumbs items={[{ label: 'News', href: '/news' }, { label: item.title }]} />}
-        eyebrow={meta.restrained ? meta.label : (departmentName ?? pack.copy.shortName)}
-        title={item.title}
-        description={
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span>{item.author}</span>
-            <span aria-hidden="true">·</span>
-            <time dateTime={item.publishedAt ?? undefined}>{formatDate(item.publishedAt)}</time>
-            <span aria-hidden="true">·</span>
-            <span>{formatRelative(item.publishedAt)}</span>
-          </span>
-        }
-      />
+    <div className="space-y-10">
+      <div className={context ? 'grid grid-cols-1 gap-gutter lg:grid-cols-[minmax(0,1fr)_18rem]' : undefined}>
+        <article className="min-w-0 max-w-prose space-y-6">
+          <Breadcrumbs items={[{ label: 'News', href: '/news' }, { label: item.title }]} />
 
-      {/* A notice carries no badge row at all. Everything else is filed
-          under a kind, and the kind is worth stating plainly. */}
-      {!meta.restrained ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge tone={meta.tone}>
-            {Icon ? <Icon className="size-3" /> : null}
-            {meta.label}
-          </Badge>
-          {item.pinned ? (
-            <span className="inline-flex items-center gap-1 text-xs font-semibold text-muted">
-              <Pin className="size-3" aria-hidden="true" />
-              Pinned to the top of the feed
-            </span>
-          ) : null}
-        </div>
-      ) : null}
+          {item.coverImage ? <MediaFrame src={item.coverImage} alt="" aspect="16/9" loading="eager" /> : null}
 
-      <div className="grid gap-gutter lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <article className="min-w-0 space-y-6">
-          <p
-            className={cn(
-              'max-w-prose border-l-2 border-line pl-4 text-md leading-relaxed',
-              meta.restrained ? 'text-secondary' : 'font-medium text-primary',
+          <header className="space-y-3">
+            <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-secondary">
+              {Icon ? <Icon className="size-3.5 shrink-0 text-muted" aria-hidden="true" /> : null}
+              {eyebrow}
+            </p>
+            <h1 className="font-display text-display-sm font-bold">{item.title}</h1>
+            <p className="text-lg leading-relaxed text-primary">{item.summary}</p>
+            <p className="text-sm text-secondary">
+              {item.author} · <time dateTime={item.publishedAt ?? undefined}>{formatDate(item.publishedAt, locale)}</time>{' '}
+              · {minutes} min read
+            </p>
+            {obituary ? (
+              <CopyButton text={url} label="Copy link" copiedLabel="Link copied" size="sm" />
+            ) : (
+              <ShareActions
+                url={url}
+                whatsappHref={whatsappShareUrl(storyShareText(pack, item), url)}
+                title={item.title}
+                size="sm"
+              />
             )}
-          >
-            {item.summary}
-          </p>
+          </header>
 
           {/* Bodies are plain text with blank lines between paragraphs.
               `whitespace-pre-line` keeps the single breaks the author typed
               inside a paragraph instead of collapsing them into a run-on. */}
-          {/* The restraint is in what is absent — badges, arrows, related
-              cheer — not in shrinking the type. A notice still has to be
-              comfortable to read. */}
-          <div className="max-w-prose space-y-4 text-md leading-relaxed text-secondary">
-            {paragraphs.length ? (
-              paragraphs.map((p, i) => (
+          {paragraphs.length ? (
+            <div className="space-y-4 border-t border-line pt-6 text-md leading-relaxed text-secondary">
+              {paragraphs.map((p, i) => (
                 <p key={i} className="whitespace-pre-line">
                   {p}
                 </p>
-              ))
-            ) : (
-              <p className="text-muted">
-                Only the summary above was filed with this story. The desk that wrote it can add the
-                rest.
-              </p>
-            )}
-          </div>
-
-          {aboutMember ? (
-            <Card>
-              <CardBody className="flex flex-wrap items-center gap-4">
-                <Avatar name={aboutMember.fullName} src={aboutMember.photoUrl} size="lg" />
-                <div className="min-w-0 flex-1">
-                  <p className="font-display text-md font-semibold">{aboutMember.fullName}</p>
-                  <p className="text-sm text-secondary">
-                    {memberLine([
-                      aboutMember.departmentCode,
-                      aboutMember.batchYear,
-                      aboutMember.currentCompany,
-                    ]) || 'No employer on record'}
-                  </p>
-                </div>
-                <ButtonLink href={`/directory/${aboutMember.slug}`} variant="secondary" size="sm">
-                  Open profile
-                </ButtonLink>
-              </CardBody>
-            </Card>
+              ))}
+            </div>
           ) : null}
 
-          {related.length > 0 ? (
-            <Section
-              title={relatedTitle}
-              description={
-                meta.restrained
-                  ? 'The rest of what this department has published.'
-                  : 'Chosen by branch first, then by the kind of story.'
-              }
-              className="border-t border-line pt-6"
-            >
-              <ul className="divide-y divide-line">
-                {related.map((n) => (
-                  <li key={n.id} className="py-3 first:pt-0 last:pb-0">
-                    <RelatedRow item={n} departmentName={deptName(n.departmentCode)} />
-                  </li>
-                ))}
-              </ul>
-            </Section>
+          {support ? (
+            <p className="border-t border-line pt-4 text-sm text-secondary">
+              Corrections:{' '}
+              <a href={`mailto:${support}`} className="link">
+                {support}
+              </a>
+            </p>
           ) : null}
         </article>
 
-        <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
-          <Card>
-            <CardBody className="space-y-3">
-              <CardTitle as="h2" className="text-md">
-                Filed by
-              </CardTitle>
-              <p className="text-sm">
-                <span className="font-medium">{item.author}</span>
-                <span className="block text-secondary">
-                  {departmentName ?? 'Not tied to one branch'}
-                </span>
-              </p>
-              <p className="text-xs text-muted">
-                Published <time dateTime={item.publishedAt ?? undefined}>{formatDate(item.publishedAt)}</time>{' '}
-                — {formatRelative(item.publishedAt)}. Corrections go to the desk that wrote it
-                {pack.copy.supportEmail ? (
-                  <>
-                    {' '}
-                    at{' '}
-                    <a href={`mailto:${pack.copy.supportEmail}`} className="link">
-                      {pack.copy.supportEmail}
-                    </a>
-                  </>
-                ) : (
-                  ', through the alumni cell'
-                )}
-                .
-              </p>
-            </CardBody>
-          </Card>
-
-          {item.departmentCode && canOpenDirectory ? (
-            <Card>
-              <CardBody className="space-y-3">
-                <CardTitle as="h2" className="text-md">
-                  <span className="flex items-center gap-2">
-                    <Building2 className="size-4 text-muted" aria-hidden="true" />
-                    {departmentName}
-                  </span>
-                </CardTitle>
-                <p className="text-sm text-secondary">
-                  {meta.restrained
-                    ? `Graduates of the ${item.departmentCode} branch are listed in the directory.`
-                    : `Everyone the college has verified out of ${item.departmentCode}, across every batch.`}
-                </p>
-                <ButtonLink
-                  href={`/directory?department=${item.departmentCode}`}
-                  variant="secondary"
-                  size="sm"
-                >
-                  <Users className="size-4" aria-hidden="true" />
-                  {item.departmentCode} in the directory
-                </ButtonLink>
-              </CardBody>
-            </Card>
-          ) : null}
-
-          <ButtonLink href={newsHref(meta.restrained ? null : item.kind)} variant="ghost" size="sm">
-            {meta.restrained ? 'Back to news' : `All ${meta.tab.toLowerCase()}`}
-          </ButtonLink>
-        </aside>
+        {context ? (
+          <aside aria-label="About this story" className="min-w-0 lg:sticky lg:top-20 lg:self-start lg:pt-9">
+            {context}
+          </aside>
+        ) : null}
       </div>
+
+      {related.length > 0 ? (
+        <Section title={relatedTitle} className="border-t border-line pt-6">
+          {obituary ? (
+            <ul className="divide-y divide-line">
+              {related.map((n) => (
+                <li key={n.id}>
+                  <StoryCard
+                    story={n}
+                    href={`/news/${n.slug}`}
+                    locale={locale}
+                    variant="row"
+                    eyebrow={KIND_META[n.kind].label}
+                  />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <ul className="grid grid-cols-1 gap-gutter sm:grid-cols-2 lg:grid-cols-3">
+              {related.map((n) => {
+                const RelIcon = KIND_META[n.kind].icon;
+                return (
+                  <li key={n.id} className="min-w-0">
+                    <StoryCard
+                      story={n}
+                      href={`/news/${n.slug}`}
+                      locale={locale}
+                      variant={KIND_META[n.kind].restrained ? 'row' : 'card'}
+                      className="[&_figure>div]:aspect-[21/9]"
+                      eyebrow={
+                        <>
+                          {RelIcon ? <RelIcon className="text-muted" aria-hidden="true" /> : null}
+                          {KIND_META[n.kind].label}
+                        </>
+                      }
+                    />
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </Section>
+      ) : null}
     </div>
   );
 }
@@ -308,28 +316,4 @@ function dedupe(items: NewsItem[]): NewsItem[] {
     if (!out.some((n) => n.id === item.id)) out.push(item);
   }
   return out;
-}
-
-function RelatedRow({ item, departmentName }: { item: NewsItem; departmentName: string | null }) {
-  const meta = KIND_META[item.kind];
-
-  return (
-    <div className="space-y-1">
-      {meta.restrained ? (
-        <p className="text-xs font-medium uppercase tracking-wider text-muted">{meta.label}</p>
-      ) : (
-        <Badge tone={meta.tone}>{meta.label}</Badge>
-      )}
-
-      <p className={cn('font-display leading-snug', meta.restrained ? 'font-medium' : 'font-semibold')}>
-        <Link href={`/news/${item.slug}`} className="link-quiet">
-          {item.title}
-        </Link>
-      </p>
-
-      <p className="text-xs text-muted">
-        {memberLine([item.author, departmentName])} · {formatDate(item.publishedAt)}
-      </p>
-    </div>
-  );
 }

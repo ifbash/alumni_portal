@@ -21,6 +21,7 @@ export function PageHeader({
   actions,
   breadcrumbs,
   eyebrow,
+  meta,
   className,
 }: {
   title: React.ReactNode;
@@ -28,6 +29,8 @@ export function PageHeader({
   actions?: React.ReactNode;
   breadcrumbs?: React.ReactNode;
   eyebrow?: string;
+  /** A row under the description: a scope chip, a TrustChip. */
+  meta?: React.ReactNode;
   className?: string;
 }) {
   return (
@@ -40,6 +43,7 @@ export function PageHeader({
           ) : null}
           <h1 className="font-display text-display-xs font-bold">{title}</h1>
           {description ? <p className="max-w-prose text-sm text-secondary">{description}</p> : null}
+          {meta ? <div className="flex flex-wrap items-center gap-2 pt-1">{meta}</div> : null}
         </div>
         {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
       </div>
@@ -84,7 +88,7 @@ export function Breadcrumbs({ items }: { items: Array<{ label: string; href?: st
 export interface TabItem {
   label: string;
   href: string;
-  /** Rendered as a count pill on the right of the label. */
+  /** Rendered as a count pill on the right of the label, only when above 0. */
   count?: number;
   active?: boolean;
 }
@@ -94,7 +98,7 @@ export function Tabs({ items, className, ariaLabel = 'Sections' }: { items: TabI
     <nav aria-label={ariaLabel} className={cn('border-b border-line', className)}>
       {/* Horizontal scroll rather than a wrapped second row: on a 360px
           phone a wrapping tab bar pushes the content below the fold. */}
-      <ul className="-mb-px flex gap-1 overflow-x-auto">
+      <ul className="scroll-fade-x -mb-px flex gap-1 overflow-x-auto">
         {items.map((item) => (
           <li key={item.href}>
             <Link
@@ -109,11 +113,12 @@ export function Tabs({ items, className, ariaLabel = 'Sections' }: { items: TabI
               )}
             >
               {item.label}
-              {typeof item.count === 'number' ? (
+              {/* A tab count of 0 is never shown: "Pending 0" is noise. */}
+              {typeof item.count === 'number' && item.count > 0 ? (
                 <span
                   className={cn(
                     'rounded-full px-1.5 py-0.5 text-xs tabular',
-                    item.active ? 'bg-brand-soft text-brand-soft-fg' : 'bg-surface-sunken text-muted',
+                    item.active ? 'bg-brand-soft text-brand-soft-fg' : 'bg-surface-sunken text-secondary',
                   )}
                 >
                   {item.count}
@@ -137,7 +142,7 @@ export function SegmentedNav({ items, className }: { items: TabItem[]; className
           href={item.href}
           aria-current={item.active ? 'page' : undefined}
           className={cn(
-            'rounded px-3 py-1.5 text-sm font-medium transition-colors duration-fast ease-brand',
+            'whitespace-nowrap rounded px-3 py-1.5 text-sm font-medium transition-colors duration-fast ease-brand',
             item.active
               ? 'bg-surface-raised text-primary shadow-sm'
               : 'text-secondary hover:text-primary',
@@ -146,6 +151,53 @@ export function SegmentedNav({ items, className }: { items: TabItem[]; className
           {item.label}
         </Link>
       ))}
+    </nav>
+  );
+}
+
+// ---------------------------------------------------------------
+// Chip nav
+// ---------------------------------------------------------------
+
+/**
+ * A row of filter chips that are links: "All · Internships · Open to
+ * freshers". Each chip is a URL, so a filtered view can be shared. On
+ * phones the row scrolls sideways with a fade rather than wrapping, and
+ * each chip keeps a 44px target.
+ */
+export function ChipNav({
+  items,
+  ariaLabel,
+  className,
+}: {
+  items: Array<{ label: string; href: string; active?: boolean; count?: number }>;
+  ariaLabel: string;
+  className?: string;
+}) {
+  return (
+    <nav aria-label={ariaLabel} className={cn('min-w-0', className)}>
+      <ul className="scroll-fade-x flex gap-2 overflow-x-auto pb-1">
+        {items.map((item) => (
+          <li key={item.href} className="shrink-0">
+            <Link
+              href={item.href}
+              aria-current={item.active ? 'page' : undefined}
+              className={cn(
+                'inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-sm sm:min-h-9',
+                'transition-colors duration-fast ease-brand',
+                item.active
+                  ? 'border-line-strong bg-brand-soft font-medium text-brand-soft-fg'
+                  : 'border-line bg-surface-raised text-secondary hover:border-line-strong hover:text-primary',
+              )}
+            >
+              {item.label}
+              {typeof item.count === 'number' && item.count > 0 ? (
+                <span className="text-xs font-semibold tabular">{item.count.toLocaleString('en-IN')}</span>
+              ) : null}
+            </Link>
+          </li>
+        ))}
+      </ul>
     </nav>
   );
 }
@@ -174,7 +226,7 @@ export function Pagination({
 }) {
   if (pageCount <= 1) {
     return total ? (
-      <p className={cn('text-xs text-muted', className)}>
+      <p className={cn('text-xs text-secondary', className)}>
         {total.toLocaleString('en-IN')} result{total === 1 ? '' : 's'}
       </p>
     ) : null;
@@ -185,7 +237,7 @@ export function Pagination({
   return (
     <nav aria-label="Pagination" className={cn('flex flex-wrap items-center justify-between gap-4', className)}>
       {total !== undefined ? (
-        <p className="text-xs text-muted">
+        <p className="text-xs text-secondary">
           Page {page} of {pageCount} · {total.toLocaleString('en-IN')} result{total === 1 ? '' : 's'}
         </p>
       ) : (

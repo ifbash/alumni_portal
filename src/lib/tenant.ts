@@ -1,6 +1,7 @@
 import { cache } from 'react';
 import { headers } from 'next/headers';
 import { IS_FIXTURE, DEFAULT_TENANT } from './config';
+import { subdomainFrom } from './host';
 import { getBrand, type ResolvedBrand } from './branding/resolve';
 import { PACKS } from './branding/registry';
 import { TENANTS } from './data/seed';
@@ -14,11 +15,11 @@ import { TENANTS } from './data/seed';
  * Host header, and everything downstream — branding, row-level security,
  * feature flags — hangs off the result.
  *
- * Development hosts (`localhost`, `127.0.0.1`, Vercel preview URLs) have
- * no usable subdomain, so they fall back to `DEFAULT_TENANT`. That
- * fallback is deliberately *not* available in production: an unknown host
- * there is a misconfigured DNS record or someone probing, and both should
- * 404 rather than quietly serve the first college in the table.
+ * Development hosts (`localhost`, `127.0.0.1`, `*.vercel.app`) have no usable
+ * subdomain, so they fall back to `DEFAULT_TENANT` - see `subdomainFrom()`
+ * in `host.ts`, including the caveat that this holds in production builds
+ * too. An unrecognised *custom* host does not fall back: in database mode
+ * it resolves to no tenant and 404s.
  */
 
 export interface Tenant {
@@ -28,26 +29,6 @@ export interface Tenant {
   subdomain: string;
   packId: string | null;
   fcraRegistered: boolean;
-}
-
-function subdomainFrom(host: string): string | null {
-  const clean = host.split(':')[0]?.toLowerCase() ?? '';
-  if (!clean) return null;
-
-  const isLocal =
-    clean === 'localhost' ||
-    clean.endsWith('.localhost') ||
-    clean === '127.0.0.1' ||
-    clean.endsWith('.vercel.app');
-
-  if (isLocal) {
-    const sub = clean.endsWith('.localhost') ? clean.replace('.localhost', '') : null;
-    return sub ?? DEFAULT_TENANT;
-  }
-
-  const parts = clean.split('.');
-  if (parts.length < 3) return null;
-  return parts[0] ?? null;
 }
 
 export const getTenant = cache(async (): Promise<Tenant | null> => {

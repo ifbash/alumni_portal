@@ -1,12 +1,12 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { Globe2, Heart, Lock, Receipt } from 'lucide-react';
+import { Globe2, Heart, Lock } from 'lucide-react';
 
 import {
   Alert,
-  Badge,
   Button,
   ButtonLink,
   Card,
@@ -18,10 +18,13 @@ import {
   Fieldset,
   Input,
   Select,
+  ShareActions,
   Switch,
   describedBy,
   useToast,
 } from '@/components/ui';
+import { cn } from '@/lib/cn';
+import { inSentence } from '@/lib/branding/copy';
 import { api, outcomeToast } from '@/lib/client/api';
 
 /**
@@ -30,21 +33,19 @@ import { api, outcomeToast } from '@/lib/client/api';
  * Two things here are structural rather than cosmetic and must not be
  * simplified away:
  *
- *  1. **Source country is asked before the amount is committed**, and it
- *     drives `is_foreign_contribution`. FCRA segregation happens at the
- *     point of collection. A contribution from outside India that is
+ *  1. **Where the money comes from is asked first**, before the amount,
+ *     and it drives `is_foreign_contribution`. FCRA segregation happens at
+ *     the point of collection. A contribution from outside India that is
  *     accepted first and reclassified later is the offence, not the fix.
  *     The disabled button below is a courtesy; `POST /api/donations` is
  *     the gate, and it refuses foreign money outright when the trust has
  *     no FCRA registration.
- *  2. **PAN above ₹50,000.** A receipt issued without it cannot be filed
- *     against a return, so the field is required at that threshold rather
- *     than chased afterwards by the accounts officer.
+ *  2. **PAN above the threshold.** The field is required at the same
+ *     amount the API requires it, so the refusal arrives on the field.
  *
  * It creates no payment. The endpoint validates, authorises, classifies
- * and audit-logs the contribution and then stops, because Razorpay is not
- * wired up — and the end of the flow says exactly that instead of showing
- * a receipt for money nobody has taken.
+ * and audit-logs the contribution and then stops, and the end of the flow
+ * says that nothing was charged.
  */
 
 const PRESETS = [1000, 2500, 5000, 11000, 25000, 100000];
@@ -87,27 +88,50 @@ interface DonationResult {
   note: string;
 }
 
+const CHOICE =
+  'block cursor-pointer rounded border border-line bg-surface-raised px-3 py-2.5 text-center text-sm font-semibold ' +
+  'transition-colors duration-fast ease-brand hover:border-line-strong ' +
+  'peer-checked:border-[var(--button-primary-bg)] peer-checked:bg-brand-soft peer-checked:text-brand-soft-fg ' +
+  'peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[var(--focus-ring)]';
+
 export function DonateForm({
   campaignTitle,
-  institutionName,
   shortName,
+  officeName,
   fcraRegistered,
   defaultCountry,
   donorName,
+  donorFirstName,
   locale,
   currency,
   supportEmail,
+  averageGift,
+  receiptLabel,
+  shareUrl,
+  whatsappHref,
+  mentorHref,
+  postJobHref,
 }: {
   campaignTitle: string;
-  institutionName: string;
   shortName: string;
+  officeName: string;
   fcraRegistered: boolean;
   defaultCountry: string;
   donorName: string;
+  donorFirstName: string;
   /** From the tenant's locale spec — this file must not import the fixture clock. */
   locale: string;
   currency: string;
   supportEmail: string | null;
+  /** Raised divided by donors, from the page; null before anyone has given. */
+  averageGift: number | null;
+  /** "Receipt", or the college's own name for it. */
+  receiptLabel: string;
+  shareUrl: string;
+  whatsappHref: string;
+  /** Other ways to help, each only when the viewer's navigation offers it. */
+  mentorHref: string | null;
+  postJobHref: string | null;
 }) {
   const toast = useToast();
   const router = useRouter();
@@ -118,6 +142,9 @@ export function DonateForm({
   const [country, setCountry] = React.useState(
     COUNTRIES.some((c) => c.code === defaultCountry) ? defaultCountry : 'OTHER',
   );
+  // The country abroad to return to when someone flips India → abroad →
+  // India → abroad. Empty until chosen: nobody is placed in a country.
+  const lastAbroad = React.useRef(country !== 'IN' ? country : '');
   const [pan, setPan] = React.useState('');
   const [named, setNamed] = React.useState(true);
   const [errors, setErrors] = React.useState<{ amount?: string; pan?: string; country?: string }>({});
@@ -205,236 +232,149 @@ export function DonateForm({
     if (outcome.persisted) router.refresh();
   };
 
+  const countryName = (code: string) =>
+    code ? (COUNTRIES.find((c) => c.code === code)?.name ?? code) : 'outside India';
+
+  const chooseOrigin = (abroad: boolean) => {
+    setRefusal(null);
+    setErrors((x) => ({ ...x, country: undefined }));
+    if (abroad) setCountry(lastAbroad.current);
+    else setCountry('IN');
+  };
+
   if (result) {
     const d = result.data.donation;
-    const countryName = COUNTRIES.find((c) => c.code === d.sourceCountry)?.name ?? d.sourceCountry;
 
     return (
-      <Card as="section">
-        <CardHeader>
-          <CardTitle as="h2">No payment was created</CardTitle>
+      <Card as="section" aria-labelledby="donate-thanks">
+        <CardHeader variant="stack">
+          <CardTitle as="h2" id="donate-thanks">
+            Thank you, {donorFirstName}.
+          </CardTitle>
           <CardDescription>
-            {result.persisted
-              ? 'Your details are recorded. Nothing has been charged, and there is no receipt yet.'
-              : 'Nothing has been charged and nothing has been stored.'}
+            Your {money(d.amount)} for {d.campaignTitle} is recorded.
           </CardDescription>
         </CardHeader>
         <CardBody className="space-y-4">
-          <Alert tone="info" title="Razorpay is not connected yet">
-            <p>{result.data.note}</p>
-            <p className="mt-2">
-              {result.persisted
-                ? 'The contribution is held as initiated and carries its FCRA classification from this moment — no payment can reclassify it later.'
-                : 'This build runs on seeded data with no database behind it. The capability check, the student refusal, the FCRA classification, the PAN threshold and the audit entry all ran on the server; the write did not.'}
-              {supportEmail ? (
-                <>
-                  {' '}
-                  To give today, write to <a href={`mailto:${supportEmail}`}>{supportEmail}</a> and
-                  the accounts officer will send bank details.
-                </>
-              ) : null}
-            </p>
-          </Alert>
+          <p className="text-sm text-secondary">Online payment is not switched on yet, so nothing was charged.</p>
 
           <dl className="divide-y divide-line rounded-lg border border-line">
             <Row label="Campaign" value={d.campaignTitle} />
             <Row label="Amount" value={money(d.amount)} />
-            <Row label="Source country" value={countryName} />
             <Row
-              label="Foreign contribution"
+              label="From"
               value={
-                d.isForeignContribution ? (
-                  <Badge tone="warning" dot>
-                    Yes — FCRA
-                  </Badge>
-                ) : (
-                  <Badge tone="neutral">No — domestic</Badge>
-                )
+                d.isForeignContribution
+                  ? `${countryName(d.sourceCountry)} · a foreign contribution`
+                  : countryName(d.sourceCountry)
               }
             />
-            <Row
-              label="PAN"
-              value={
-                d.panProvided ? (
-                  <span className="font-mono">{pan.trim().toUpperCase()}</span>
-                ) : (
-                  <span className="text-muted">Not given — no 80G deduction claimable</span>
-                )
-              }
-            />
-            <Row
-              label="Donor listing"
-              value={d.listPublicly ? `Listed as ${donorName}` : 'Name withheld from the donor list'}
-            />
-            <Row label="80G receipt" value={<span className="text-muted">None — no payment was taken</span>} />
+            <Row label="Shown as" value={d.listPublicly ? donorName : 'Kept private'} />
+            <Row label="PAN" value={d.panProvided ? 'Given' : 'Not given'} />
           </dl>
 
           <div className="space-y-2">
-            <p className="text-sm font-semibold">What happens once the gateway is connected</p>
-            <ol className="list-decimal space-y-1.5 pl-5 text-sm text-secondary">
-              <li>
-                The donation row is written first, carrying{' '}
-                <span className="font-mono text-xs">source_country</span> and{' '}
-                <span className="font-mono text-xs">is_foreign_contribution</span>, before the
-                gateway is called.
-              </li>
-              <li>A Razorpay order is created — UPI first, then cards and netbanking.</li>
-              <li>
-                On capture, {institutionName} issues the 80G receipt by email within seven working
-                days.
-              </li>
-            </ol>
+            <p className="text-sm font-semibold">Tell your batch</p>
+            <ShareActions url={shareUrl} whatsappHref={whatsappHref} title={d.campaignTitle} size="sm" />
           </div>
 
-          <div className="flex flex-wrap gap-3">
-            <Button variant="secondary" onClick={() => setResult(null)}>
-              Change something
-            </Button>
-            <ButtonLink href="/giving" variant="ghost">
-              Back to campaigns
-            </ButtonLink>
-          </div>
+          <ButtonLink href="/giving" variant="ghost" className="min-h-11">
+            Back to campaigns
+          </ButtonLink>
         </CardBody>
       </Card>
     );
   }
 
+  const summary = amount
+    ? [
+        `${money(amount)} from ${countryName(country)}`,
+        `${inSentence(receiptLabel)} to ${donorName}`,
+        named ? 'shown as a supporter' : 'kept private',
+      ].join(' · ')
+    : 'Choose an amount.';
+
   return (
-    <Card as="section">
-      <CardHeader>
-        <CardTitle as="h2">
-          <Heart className="mb-1 size-4 text-muted" aria-hidden="true" />
-          <span className="block">Give to this campaign</span>
+    <Card as="section" aria-labelledby="donate-title">
+      <CardHeader variant="stack">
+        <CardTitle as="h2" id="donate-title">
+          Give to this campaign
         </CardTitle>
         <CardDescription>{campaignTitle}</CardDescription>
       </CardHeader>
 
       <CardBody>
-        <form onSubmit={onSubmit} noValidate className="space-y-5">
-          <Fieldset
-            legend="Amount"
-            hint={`Anything from ${money(MIN_AMOUNT)}. Most alumni give between ${money(2500)} and ${money(11000)}.`}
-          >
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {PRESETS.map((v) => (
-                <label key={v} className="block">
-                  <input
-                    type="radio"
-                    name="amount"
-                    value={v}
-                    checked={preset === v}
-                    onChange={() => {
-                      setPreset(v);
-                      setErrors((x) => ({ ...x, amount: undefined }));
-                    }}
-                    className="peer sr-only"
-                  />
-                  <span className="block cursor-pointer rounded border border-line bg-surface-raised px-3 py-2 text-center text-sm font-semibold tabular transition-colors duration-fast ease-brand hover:border-line-strong peer-checked:border-[var(--button-primary-bg)] peer-checked:bg-brand-soft peer-checked:text-brand-soft-fg peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[var(--focus-ring)]">
-                    {money(v)}
-                  </span>
-                </label>
-              ))}
-
+        <form onSubmit={onSubmit} noValidate className="space-y-6">
+          <Fieldset legend="Where are you giving from?">
+            <div className="grid grid-cols-2 gap-2">
               <label className="block">
                 <input
                   type="radio"
-                  name="amount"
-                  value="custom"
-                  checked={preset === 'custom'}
-                  onChange={() => setPreset('custom')}
+                  name="origin"
+                  value="india"
+                  checked={!isForeign}
+                  onChange={() => chooseOrigin(false)}
                   className="peer sr-only"
                 />
-                <span className="block cursor-pointer rounded border border-line bg-surface-raised px-3 py-2 text-center text-sm font-semibold transition-colors duration-fast ease-brand hover:border-line-strong peer-checked:border-[var(--button-primary-bg)] peer-checked:bg-brand-soft peer-checked:text-brand-soft-fg peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[var(--focus-ring)]">
-                  Other
-                </span>
+                <span className={CHOICE}>India</span>
+              </label>
+              <label className="block">
+                <input
+                  type="radio"
+                  name="origin"
+                  value="abroad"
+                  checked={isForeign}
+                  onChange={() => chooseOrigin(true)}
+                  className="peer sr-only"
+                />
+                <span className={CHOICE}>Outside India</span>
               </label>
             </div>
+
+            {/* The country matters only where a foreign gift can be taken. */}
+            {isForeign && fcraRegistered ? (
+              <Field htmlFor="donate-country" label="Which country?" required error={errors.country}>
+                <Select
+                  id="donate-country"
+                  name="sourceCountry"
+                  value={country}
+                  onChange={(e) => {
+                    setCountry(e.target.value);
+                    lastAbroad.current = e.target.value;
+                    setErrors((x) => ({ ...x, country: undefined }));
+                    setRefusal(null);
+                  }}
+                  aria-describedby={describedBy('donate-country', { error: Boolean(errors.country) })}
+                >
+                  <option value="">Choose a country</option>
+                  {COUNTRIES.filter((c) => c.code !== 'IN').map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : null}
           </Fieldset>
-
-          {preset === 'custom' ? (
-            <Field
-              htmlFor="donate-custom"
-              label="Your amount"
-              hint="Rupees, no paise."
-              error={errors.amount}
-            >
-              <Input
-                id="donate-custom"
-                name="customAmount"
-                inputMode="numeric"
-                autoFocus
-                value={custom}
-                onChange={(e) => setCustom(e.target.value)}
-                invalid={Boolean(errors.amount)}
-                aria-describedby={describedBy('donate-custom', {
-                  hint: true,
-                  error: Boolean(errors.amount),
-                })}
-                leading={<span aria-hidden="true">₹</span>}
-                placeholder="15000"
-                className="tabular"
-              />
-            </Field>
-          ) : errors.amount ? (
-            <p role="alert" className="flex gap-1.5 text-xs font-medium text-danger-fg">
-              <span aria-hidden="true">⚠</span>
-              <span>{errors.amount}</span>
-            </p>
-          ) : null}
-
-          <Field
-            htmlFor="donate-country"
-            label="Which country are you giving from?"
-            required
-            hint="Not where you studied — where the money leaves from. This is a legal question, not a profile field."
-            error={errors.country}
-          >
-            <Select
-              id="donate-country"
-              name="sourceCountry"
-              value={country}
-              onChange={(e) => {
-                setCountry(e.target.value);
-                setErrors((x) => ({ ...x, country: undefined }));
-                setRefusal(null);
-              }}
-              aria-describedby={describedBy('donate-country', {
-                hint: true,
-                error: Boolean(errors.country),
-              })}
-            >
-              {COUNTRIES.map((c) => (
-                <option key={c.code} value={c.code}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
 
           {isForeign ? (
             refused ? (
-              <Alert
-                tone="danger"
-                title={`${shortName} cannot accept this contribution`}
-                icon={<Globe2 className="size-4" />}
-              >
+              <Alert tone="danger" title={`${shortName} cannot accept gifts from outside India yet.`} icon={<Globe2 className="size-4" />}>
                 <p>
-                  A contribution from outside India is a foreign contribution under the Foreign
-                  Contribution (Regulation) Act, even when it arrives in rupees from an NRE account.
-                  The college trust has not confirmed FCRA registration, so this is refused here
-                  rather than accepted and returned later. The server refuses it too — this is not
-                  a disabled button standing in for a rule.
-                </p>
-                <p className="mt-2">
-                  If you hold an Indian bank account and are giving from it while resident in India,
-                  change the country above.
+                  You can still{' '}
+                  {mentorHref ? (
+                    <Link href={mentorHref}>mentor a final-year student</Link>
+                  ) : (
+                    'mentor a final-year student'
+                  )}
+                  ,{' '}
+                  {postJobHref ? <Link href={postJobHref}>post a job</Link> : 'post a job'}
                   {supportEmail ? (
                     <>
-                      {' '}
-                      Otherwise write to <a href={`mailto:${supportEmail}`}>{supportEmail}</a> — the
-                      alumni cell is chasing the registration.
+                      , or write to <a href={`mailto:${supportEmail}`}>{supportEmail}</a> to be told when this opens
                     </>
                   ) : null}
+                  .
                 </p>
               </Alert>
             ) : (
@@ -453,61 +393,102 @@ export function DonateForm({
             )
           ) : null}
 
-          <Field
-            htmlFor="donate-pan"
-            label="PAN"
-            required={panRequired}
-            hint={
-              panRequired
-                ? `Required above ${money(PAN_THRESHOLD)} — the 80G receipt cannot be filed without it.`
-                : 'Optional at this amount, but without it you cannot claim the 80G deduction.'
-            }
-            error={errors.pan}
-          >
-            <Input
-              id="donate-pan"
-              name="pan"
-              value={pan}
-              onChange={(e) => setPan(e.target.value.toUpperCase())}
-              invalid={Boolean(errors.pan)}
-              aria-describedby={describedBy('donate-pan', { hint: true, error: Boolean(errors.pan) })}
-              maxLength={10}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="ABCDE1234F"
-              className="font-mono uppercase"
-            />
-          </Field>
+          {refused ? null : (
+            <>
+              <Fieldset
+                legend="How much?"
+                hint={averageGift ? `Average gift to this campaign: ${money(averageGift)}` : undefined}
+              >
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {PRESETS.map((v) => (
+                    <label key={v} className="block">
+                      <input
+                        type="radio"
+                        name="amount"
+                        value={v}
+                        checked={preset === v}
+                        onChange={() => {
+                          setPreset(v);
+                          setErrors((x) => ({ ...x, amount: undefined }));
+                        }}
+                        className="peer sr-only"
+                      />
+                      <span className={cn(CHOICE, 'tabular')}>{money(v)}</span>
+                    </label>
+                  ))}
 
-          <div className="rounded-lg border border-line bg-surface-sunken p-4">
-            <Switch
-              id="donate-named"
-              label="List my name on the donor list"
-              hint={`Turn this off and the gift is still receipted to you — ${shortName} simply publishes it as anonymous.`}
-              checked={named}
-              onChange={(e) => setNamed(e.target.checked)}
-            />
-          </div>
+                  <label className="block">
+                    <input
+                      type="radio"
+                      name="amount"
+                      value="custom"
+                      checked={preset === 'custom'}
+                      onChange={() => setPreset('custom')}
+                      className="peer sr-only"
+                    />
+                    <span className={CHOICE}>Other</span>
+                  </label>
+                </div>
+              </Fieldset>
 
-          <div className="space-y-2 rounded-lg border border-line p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-              Recorded with this contribution
-            </p>
-            <ul className="space-y-1 text-xs text-secondary">
-              <li className="flex items-center justify-between gap-3">
-                <span className="font-mono">source_country</span>
-                <span className="font-semibold">{country}</span>
-              </li>
-              <li className="flex items-center justify-between gap-3">
-                <span className="font-mono">is_foreign_contribution</span>
-                <span className="font-semibold">{isForeign ? 'true' : 'false'}</span>
-              </li>
-              <li className="flex items-center justify-between gap-3">
-                <span className="font-mono">amount</span>
-                <span className="font-semibold tabular">{amount ? money(amount) : '—'}</span>
-              </li>
-            </ul>
-          </div>
+              {preset === 'custom' ? (
+                <Field htmlFor="donate-custom" label="Your amount, in rupees" error={errors.amount}>
+                  <Input
+                    id="donate-custom"
+                    name="customAmount"
+                    inputMode="numeric"
+                    autoFocus
+                    value={custom}
+                    onChange={(e) => setCustom(e.target.value)}
+                    invalid={Boolean(errors.amount)}
+                    aria-describedby={describedBy('donate-custom', { error: Boolean(errors.amount) })}
+                    leading={<span aria-hidden="true">₹</span>}
+                    placeholder="15000"
+                    className="tabular"
+                  />
+                </Field>
+              ) : errors.amount ? (
+                <p role="alert" className="flex gap-1.5 text-xs font-medium text-danger-fg">
+                  <span aria-hidden="true">⚠</span>
+                  <span>{errors.amount}</span>
+                </p>
+              ) : null}
+
+              <Field
+                htmlFor="donate-pan"
+                label="PAN"
+                required={panRequired}
+                hint={panRequired ? `Required above ${money(PAN_THRESHOLD)}.` : 'Optional at this amount.'}
+                error={errors.pan}
+              >
+                <Input
+                  id="donate-pan"
+                  name="pan"
+                  value={pan}
+                  onChange={(e) => setPan(e.target.value.toUpperCase())}
+                  invalid={Boolean(errors.pan)}
+                  aria-describedby={describedBy('donate-pan', { hint: true, error: Boolean(errors.pan) })}
+                  maxLength={10}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="ABCDE1234F"
+                  className="font-mono uppercase"
+                />
+              </Field>
+
+              <Switch
+                id="donate-named"
+                label="Show my name as a supporter"
+                hint={`Turn this off and your name is kept with the ${officeName}'s records only.`}
+                checked={named}
+                onChange={(e) => setNamed(e.target.checked)}
+              />
+
+              <p className="border-t border-line pt-4 text-sm text-secondary" aria-live="polite">
+                {summary}
+              </p>
+            </>
+          )}
 
           {refusal ? (
             <Alert tone="danger" title="This contribution was not accepted">
@@ -523,18 +504,11 @@ export function DonateForm({
               </>
             ) : (
               <>
-                <Receipt className="size-4" aria-hidden="true" />
-                Continue — {amount ? money(amount) : 'choose an amount'}
+                <Heart className="size-4" aria-hidden="true" />
+                {amount ? `Give ${money(amount)}` : 'Choose an amount'}
               </>
             )}
           </Button>
-
-          <p className="text-xs text-muted">
-            This records the contribution — amount, source country, FCRA classification and PAN —
-            and stops there. The next step would open Razorpay (UPI first); payments are not
-            connected in this build, so no order is created, no money moves and no 80G receipt is
-            issued.
-          </p>
         </form>
       </CardBody>
     </Card>

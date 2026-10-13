@@ -55,8 +55,7 @@ export function PresetGallery({
             subtitle={pack.institutionName}
             swatch={pack.primary}
             id={`preset-${pack.id}`}
-            badge={currentId === pack.id ? 'Serving this tenant' : undefined}
-            footnote={`brands/${pack.id}.json`}
+            badge={currentId === pack.id ? 'Yours now' : undefined}
           />
         ))}
 
@@ -65,17 +64,13 @@ export function PresetGallery({
           checked={value === null}
           onSelect={() => onSelect(null)}
           title="Start from nothing"
-          subtitle="The neutral default pack. Plain, legible, and unmistakably not yet branded."
+          subtitle="A plain, neutral starting point with no college colours."
           id="preset-blank"
-          footnote="No file — built into the product"
         />
       </div>
 
-      <p className="text-xs text-muted">
-        Choosing one loads its values into every control below, and it becomes the base your changes
-        are a delta from. Change the primary colour and nothing else, and you inherit that
-        pack&rsquo;s type, spacing, locale and wording unchanged — including the parts no form
-        exposes, like self-hosted font faces.
+      <p className="text-xs text-secondary">
+        Choosing one replaces the colours, type and wording in every section above. You are asked to confirm first.
       </p>
     </fieldset>
   );
@@ -90,7 +85,6 @@ function PresetCard({
   subtitle,
   swatch,
   badge,
-  footnote,
 }: {
   id: string;
   name: string;
@@ -100,7 +94,6 @@ function PresetCard({
   subtitle: string;
   swatch?: string;
   badge?: string;
-  footnote: string;
 }) {
   return (
     <label
@@ -145,10 +138,13 @@ function PresetCard({
           <span className={cn('font-display text-sm font-semibold', checked && 'text-brand-soft-fg')}>
             {title}
           </span>
-          {badge ? <Badge tone="accent">{badge}</Badge> : null}
+          {badge ? (
+            <Badge tone="accent" className="shrink-0 whitespace-nowrap">
+              {badge}
+            </Badge>
+          ) : null}
         </span>
         <span className="block text-xs text-secondary">{subtitle}</span>
-        <span className="block font-mono text-xs text-muted">{footnote}</span>
       </span>
     </label>
   );

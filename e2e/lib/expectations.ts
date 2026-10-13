@@ -165,6 +165,14 @@ export const DYNAMIC_LOGIN = 'DYNAMIC_LOGIN';
 export const TO_LOGIN_DYNAMIC: Expectation = n(307, { location: DYNAMIC_LOGIN });
 /** 307 to the portal home: signed in, but no business on this console. */
 export const TO_DASHBOARD = n(307, { location: '/dashboard' });
+/**
+ * 307 to the vendor's own console: a session holding nothing but
+ * `platform_admin`, on one of the college's member-community surfaces.
+ * Refused by the route gate (`refuseVendorOnly` in route-policy.ts) before
+ * anything renders. Before that rule the vendor got 200 on `/jobs`,
+ * `/news` and `/gallery`, with alumni named in the body.
+ */
+export const TO_PLATFORM = n(307, { location: '/platform' });
 /** 303 See Other — what `/logout` answers, so the browser re-requests with GET. */
 export const seeOther = (location: string): Expectation => n(303, { location });
 

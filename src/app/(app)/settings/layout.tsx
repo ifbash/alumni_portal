@@ -9,10 +9,10 @@ import { SettingsTabs } from './SettingsTabs';
  * Settings frame.
  *
  * The `<h1>` lives here, once, and each section contributes `<h2>`s
- * underneath it — a tab bar that changes the heading level of the page it
- * sits above produces a document outline no screen reader can follow.
+ * underneath it. At lg the sections are a left-hand list beside the
+ * content; on phones they are a tab strip that scrolls sideways.
  *
- * The count on "Your data" is the member's own open DPDP requests. A
+ * The count on "Your data" is the member's own open data requests. A
  * statutory clock the member cannot see running is a clock nobody
  * chases.
  */
@@ -29,12 +29,13 @@ export default async function SettingsLayout({ children }: { children: React.Rea
     <div className="space-y-6">
       <PageHeader
         title="Settings"
-        description="Your sign-in, who can reach you, what the portal sends you, and the data the college holds about you."
+        description="Your account, who can reach you, what you are sent, and your data."
       />
 
-      <SettingsTabs openDataRequests={openDataRequests} />
-
-      <div className="max-w-3xl space-y-6">{children}</div>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[12rem_minmax(0,1fr)] lg:gap-gutter">
+        <SettingsTabs openDataRequests={openDataRequests} />
+        <div className="min-w-0 space-y-6">{children}</div>
+      </div>
     </div>
   );
 }

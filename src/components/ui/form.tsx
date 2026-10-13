@@ -18,7 +18,9 @@ const CONTROL_BASE =
   'placeholder:text-muted transition-colors duration-fast ease-brand ' +
   'hover:border-line-strong ' +
   'focus:border-[var(--focus-ring)] focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)] focus:ring-offset-0 ' +
-  'disabled:cursor-not-allowed disabled:bg-surface-sunken disabled:text-muted ' +
+  // A disabled field reads as a fact, not as a live field: sunken ground,
+  // secondary text, the plain hairline, and no hover lift, in both modes.
+  'disabled:cursor-not-allowed disabled:bg-surface-sunken disabled:text-secondary disabled:border-line disabled:hover:border-line ' +
   'aria-[invalid=true]:border-danger aria-[invalid=true]:ring-danger';
 
 // ---------------------------------------------------------------
@@ -327,10 +329,33 @@ export function Fieldset({
   );
 }
 
-/** Groups a form's actions with a consistent divider and alignment. */
-export function FormActions({ children, className }: { children: React.ReactNode; className?: string }) {
+/**
+ * Groups a form's actions with a consistent divider and alignment.
+ *
+ * `sticky` pins the row to the bottom of the viewport while the form
+ * scrolls — a long profile form must be saveable without scrolling to its
+ * end — and sits above the phone tab bar via `--shell-tabbar-h`.
+ */
+export function FormActions({
+  children,
+  sticky = false,
+  className,
+}: {
+  children: React.ReactNode;
+  sticky?: boolean;
+  className?: string;
+}) {
   return (
-    <div className={cn('flex flex-wrap items-center justify-end gap-3 border-t border-line pt-4', className)}>
+    <div
+      className={cn(
+        'flex flex-wrap items-center justify-end gap-3 border-t border-line',
+        sticky
+          ? 'sticky bottom-[var(--shell-tabbar-h,0px)] z-20 -mx-4 bg-[color-mix(in_srgb,var(--surface-raised)_95%,transparent)] px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-lg sm:border'
+          : 'pt-4',
+        className,
+      )}
+      data-print-hide={sticky ? '' : undefined}
+    >
       {children}
     </div>
   );

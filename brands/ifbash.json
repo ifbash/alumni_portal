@@ -4,23 +4,29 @@
     "the marketing site, the platform-admin console, the demo tenant, and the",
     "'powered by' line in every customer's footer.",
     "",
-    "Sourced from ifBash Brand Guidelines, Brick & Charcoal edition, 2026-07-27.",
-    "Section references below point at that document. Do not drift the accent",
-    "colours without a client decision — six directions have already been",
-    "rejected and are listed in section 9 of the guidelines."
+    "Sourced from the ifBash Brand Kit, September 2026 (tokens rev 2026-09-24):",
+    "brand/ifbash-brand-guide.md and brand/tokens/ifbash-tokens.json. Section",
+    "references below point at the guide. It replaces the Brick & Charcoal",
+    "edition of 2026-07-27. Questions go to brand@ifbash.com, not into this file."
   ],
 
   "id": "ifbash",
-  "version": 1,
+  "version": 2,
 
   "color": {
-    "$comment": "Guidelines section 3. 'sea' is the brick red, 'sky' the azure AI layer.",
-    "primary": "#B23A2B",
-    "accent": "#2563EB",
-    "surface": "#F8F5F1",
-    "surfaceDark": "#151110",
-    "ink": "#181312",
-    "marker": "#D97706",
+    "$comment": [
+      "Guide section 3. Aubergine is the brand; rose is coloured text and links;",
+      "mint is the accent because it is the one practice colour that passes as",
+      "text on paper and is meant to be seen at 5%. Peach is deliberately absent:",
+      "it is 'the agent', fills only, one object per screen — a token the UI",
+      "repeats in every card grid cannot honour that."
+    ],
+    "primary": "#2A1830",
+    "accent": "#2E6A55",
+    "surface": "#FBF8F4",
+    "surfaceDark": "#22132A",
+    "ink": "#2A1830",
+    "marker": "#C2856A",
     "neutralChroma": 0.022,
 
     "success": "#15803D",
@@ -28,49 +34,88 @@
     "danger": "#B42318",
     "info": "#2563EB",
 
-    "$overrides_note": "Values sections 3.1 of the guidelines pin exactly, so they are not left to derivation. Light mode only — the dark equivalents are derived, because an ink fixed for paper is ink on ink against a dark ground.",
+    "$overrides_note": [
+      "Values the guide pins exactly, so they are not left to derivation.",
+      "Ink 50 (#8A6F7C) is non-text only, so every text tier is ink or ink 70.",
+      "Primary buttons are an ink fill with a paper label (section 6)."
+    ],
     "overrides": {
       "--surface-raised": "#FFFFFF",
-      "--surface-sunken": "#F1E9E1",
-      "--border": "#E5DCD2",
-      "--text-primary": "#181312",
-      "--text-secondary": "#3A2A26",
-      "--text-muted": "#6E5B52"
+      "--border": "#E8DED6",
+      "--surface-inverse": "#22132A",
+      "--text-primary": "#2A1830",
+      "--text-secondary": "#54455C",
+      "--text-muted": "#54455C",
+      "--text-on-inverse": "#FBF8F4",
+      "--brand-fg": "#9E2A4B",
+      "--accent-fg": "#2E6A55",
+      "--accent-soft": "#E4F0EA",
+      "--accent-soft-fg": "#2E6A55",
+      "--focus-ring": "#9E2A4B",
+      "--button-primary-bg": "#2A1830",
+      "--button-primary-hover": "#1A0F20",
+      "--button-primary-fg": "#FBF8F4"
     },
-    "darkOverrides": {}
+    "$darkOverrides_note": "Guide section 6, 'Dark UI': raised panels, a plum rule, paper text, silver secondary, the on-dark practice stops, a paper button with an ink label, and a peach focus ring (rose fails on the field at 2.42:1).",
+    "darkOverrides": {
+      "--surface-raised": "#2E1D36",
+      "--border": "#3A2842",
+      "--text-primary": "#FBF8F4",
+      "--text-secondary": "#A9B0B8",
+      "--text-muted": "#A9B0B8",
+      "--brand-fg": "#E88AA3",
+      "--accent-fg": "#7FC4A8",
+      "--accent-soft-fg": "#7FC4A8",
+      "--focus-ring": "#F2865A",
+      "--button-primary-bg": "#FBF8F4",
+      "--button-primary-hover": "#FFFFFF",
+      "--button-primary-fg": "#2A1830"
+    }
   },
 
   "type": {
-    "$comment": "Guidelines section 4. One superfamily; hierarchy by weight and size only.",
-    "display": "IBM Plex Sans",
-    "body": "IBM Plex Sans",
+    "$comment": [
+      "Guide section 4 and brand/fonts/FONTS.md. Three families, strictly divided.",
+      "Bricolage ships Bold only and is declared across 700-800, as the kit does.",
+      "Hanken SemiBold is declared across 600-700 so a bold request gets the real",
+      "600 drawing rather than a faux-bolded one; the guide emphasises with 600.",
+      "No italic is shipped, by design."
+    ],
+    "display": "Bricolage Grotesque",
+    "body": "Hanken Grotesk",
     "mono": "IBM Plex Mono",
     "source": "local",
-    "displayTracking": "-0.025em",
+    "displayTracking": "-0.035em",
     "scale": 1,
     "fontFaces": [
-      { "family": "IBM Plex Sans", "src": "/fonts/IBMPlexSans-Regular.ttf", "weight": "400" },
-      { "family": "IBM Plex Sans", "src": "/fonts/IBMPlexSans-SemiBold.ttf", "weight": "600" },
-      { "family": "IBM Plex Sans", "src": "/fonts/IBMPlexSans-Bold.ttf", "weight": "700" },
-      { "family": "IBM Plex Sans", "src": "/fonts/IBMPlexSans-Italic.ttf", "weight": "400", "style": "italic" },
-      { "family": "IBM Plex Mono", "src": "/fonts/IBMPlexMono-Regular.ttf", "weight": "400" }
+      { "family": "Bricolage Grotesque", "src": "/fonts/BricolageGrotesque-Bold.ttf", "weight": "700 800" },
+      { "family": "Hanken Grotesk", "src": "/fonts/HankenGrotesk-Regular.ttf", "weight": "400" },
+      { "family": "Hanken Grotesk", "src": "/fonts/HankenGrotesk-Medium.ttf", "weight": "500" },
+      { "family": "Hanken Grotesk", "src": "/fonts/HankenGrotesk-SemiBold.ttf", "weight": "600 700" },
+      { "family": "IBM Plex Mono", "src": "/fonts/IBMPlexMono-Regular.ttf", "weight": "400" },
+      { "family": "IBM Plex Mono", "src": "/fonts/IBMPlexMono-Medium.ttf", "weight": "500" }
     ]
   },
 
   "shape": {
-    "radius": "subtle",
+    "$comment": "Guide section 5: radius 2px, no shadows, structure from hairlines. 'none' is the nearest named radius.",
+    "radius": "none",
     "density": "comfortable",
     "borderWidth": "hairline",
-    "elevation": "soft"
+    "elevation": "flat"
   },
 
   "assets": {
-    "$comment": "Guidelines section 2.2. Never recolour or redraw these.",
-    "logoPrimary": "/brand/ifbash/logo/logo-primary.png",
-    "logoInverse": "/brand/ifbash/logo/logo-reversed.png",
-    "logoMark": "/brand/ifbash/logo/mark-color.png",
-    "favicon": "/brand/ifbash/icons/icon-512.png",
-    "ogImage": "/brand/ifbash/og-card.png"
+    "$comment": [
+      "Guide section 2. Never recolour or redraw these. The favicon is the",
+      "transparent mark that flips aubergine/paper with the browser theme, not",
+      "the app tile (section 2b). No ogImage: the kit's cards are post templates,",
+      "so the portal renders its own card from these colours."
+    ],
+    "logoPrimary": "/brand/ifbash/logo/logo-primary-aubergine.svg",
+    "logoInverse": "/brand/ifbash/logo/logo-reversed-paper.svg",
+    "logoMark": "/brand/ifbash/logo/mark-aubergine.svg",
+    "favicon": "/brand/ifbash/icons/favicon.svg"
   },
 
   "copy": {

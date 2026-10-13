@@ -15,6 +15,7 @@ import {
   useToast,
 } from '@/components/ui';
 import { cn } from '@/lib/cn';
+import { firstNameOf } from '@/lib/identity';
 import type { ConnectionKind, ConnectionQuota } from '@/lib/data/types';
 
 /**
@@ -28,12 +29,16 @@ import type { ConnectionKind, ConnectionQuota } from '@/lib/data/types';
  * The quota check has already happened on the server — this component is
  * only rendered when the viewer may send. The client-side numbers are for
  * the human, not for authorisation; the route enforces it again.
+ *
+ * The example message comes from the server (`placeholder`), written for
+ * the viewer's own role and college: a student, an alumnus and a faculty
+ * member introduce themselves differently, and no college is named here.
  */
 
 const KIND_COPY: Record<ConnectionKind, { label: string; hint: string }> = {
   mentorship: {
     label: 'Mentoring',
-    hint: 'Guidance over a call or two — preparation, higher studies, which way to go.',
+    hint: 'Advice over a call or two: preparation, higher studies, which way to go.',
   },
   referral: {
     label: 'Referral',
@@ -58,6 +63,7 @@ export function RequestIntroButton({
   kinds,
   defaultKind,
   quota,
+  placeholder,
   label = 'Request an introduction',
   variant = 'primary',
   size = 'md',
@@ -69,6 +75,8 @@ export function RequestIntroButton({
   kinds: ConnectionKind[];
   defaultKind: ConnectionKind;
   quota: ConnectionQuota;
+  /** The example message, built on the server from the viewer's role and the college. */
+  placeholder?: string;
   label?: string;
   variant?: 'primary' | 'secondary';
   size?: 'sm' | 'md' | 'lg';
@@ -85,8 +93,12 @@ export function RequestIntroButton({
   const [sending, setSending] = React.useState(false);
   const [sent, setSent] = React.useState(false);
 
-  const formId = `intro-${toMemberId}`;
-  const firstName = toName.split(' ')[0] ?? toName;
+  // One id per instance, not per member: a profile renders this button in
+  // more than one place, and a shared id would point one dialog's submit
+  // button and labels at another dialog's form.
+  const instanceId = React.useId();
+  const formId = `intro-${toMemberId}-${instanceId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  const firstName = firstNameOf(toName);
   const remaining = Math.max(0, quota.monthlyLimit - quota.usedThisMonth);
 
   const close = () => {
@@ -102,7 +114,7 @@ export function RequestIntroButton({
     const trimmed = message.trim();
     if (trimmed.length < MIN_MESSAGE) {
       setError(
-        `Say a little more — ${trimmed.length} of ${MIN_MESSAGE} characters. Two or three sentences saying who you are and what you want to ask.`,
+        `Say a little more: ${trimmed.length} of ${MIN_MESSAGE} characters. Two or three sentences on who you are and what you want to ask.`,
       );
       return;
     }
@@ -135,10 +147,7 @@ export function RequestIntroButton({
       setSent(true);
       setSending(false);
       setOpen(false);
-      toast.success(
-        `Request sent to ${firstName}`,
-        'You will get a notification when they reply. Contact details are released only if they accept.',
-      );
+      toast.success(`Request sent to ${firstName}`, 'You will get a notification when they reply.');
       // The server owns the quota and the pending-request state shown on
       // this page; re-fetch rather than guessing at them here.
       router.refresh();
@@ -174,7 +183,7 @@ export function RequestIntroButton({
         open={open}
         onClose={close}
         title={`Ask ${firstName} for an introduction`}
-        description={`${firstName} sees your name, branch and batch along with this message. Your contact details are shared only if they accept.`}
+        description={`${firstName} sees your name, branch and batch with this message.`}
         footer={
           <>
             <Button type="button" variant="secondary" onClick={close} disabled={sending}>
@@ -218,7 +227,7 @@ export function RequestIntroButton({
             htmlFor={`${formId}-message`}
             label="Your message"
             required
-            hint="Who you are, what you want to ask, and why them. A request with a specific question is one they can answer in two minutes."
+            hint="Who you are, what you want to ask, and why them. A specific question is one they can answer in two minutes."
             error={error}
           >
             <Textarea
@@ -233,16 +242,16 @@ export function RequestIntroButton({
                 error: Boolean(error),
               })}
               onChange={(e) => setMessage(e.target.value)}
-              placeholder={`Hello ${firstName}, I am in final year CSE at DIET and preparing for backend roles. You moved from a service company to a product team — could I ask you two questions about how you prepared for those interviews?`}
+              placeholder={`Hello ${firstName}. ${placeholder ?? 'I would like to ask about…'}`}
             />
           </Field>
 
-          <p className="flex items-center justify-between gap-3 text-xs text-muted">
+          <p className="flex items-center justify-between gap-3 text-xs text-secondary">
             <span className="tabular">
               {message.trim().length} / {MAX_MESSAGE} characters
             </span>
             <span className="tabular">
-              {remaining} of {quota.monthlyLimit} requests left this month
+              {remaining === 1 ? '1 request' : `${remaining} requests`} left this month
             </span>
           </p>
         </form>

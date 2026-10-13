@@ -1,31 +1,29 @@
 import { redirect } from 'next/navigation';
-import { ArrowRight, ClipboardList, Divide, ListChecks, Percent, Scale, ScrollText, TriangleAlert } from 'lucide-react';
+import { ArrowRight, Briefcase, CalendarCheck, CheckCircle2, Mail, Percent, TriangleAlert, Users } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
 import { can, require as requireCap } from '@/lib/auth/guard';
+import { getTenantBrand } from '@/lib/tenant';
 import { getCoverageByYear, getReportSections, REPORT_FRAMEWORKS } from '@/lib/data/reports';
+import type { ReportMetric } from '@/lib/data/reports';
 import { formatNumber, formatPercent } from '@/lib/format';
+import { ButtonLink, Card, CardBody, HowThisWorks, PageHeader, Stat } from '@/components/ui';
+import { inSentence } from '@/lib/branding/copy';
+import { ExportButton, PrintButton } from './ExportButton';
+import { Letterhead } from './Letterhead';
 import {
-  Alert,
-  ButtonLink,
-  Card,
-  CardBody,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  EmptyState,
-  PageHeader,
-  Section,
-  Stat,
-  Tabs,
-  type TabItem,
-} from '@/components/ui';
-import { MarginNote } from '@/components/brand/Marks';
-import { ExportButton } from './ExportButton';
-import { CSV_COLUMNS, FRAMEWORK_META, ReportSectionCard, frameworkOptions } from './frameworks';
+  CSV_COLUMNS,
+  FRAMEWORK_META,
+  denominatorPhrase,
+  displayValue,
+  frameworkInputs,
+  frameworkOptions,
+  frameworkStatus,
+  headlineMetrics,
+} from './frameworks';
 
 export const metadata = {
-  title: 'Accreditation reporting',
+  title: 'Accreditation · Staff console',
   description: 'NAAC Criterion 5, NIRF graduation outcomes and association activity, each figure with its denominator.',
 };
 
@@ -34,28 +32,16 @@ export const metadata = {
  *
  * Every NAAC cycle, somebody rebuilds these numbers from a spreadsheet an
  * assistant kept by hand, and the figures come out defensible but not
- * reproducible. This screen exists so that the assessor's two questions —
- * "out of what" and "how did you count it" — are answered in the same row
- * as the number, not in a file nobody can find three years later.
- *
- * The rendering rules follow from that and are not decoration:
- *
- *  - The value, the denominator and the definition are one visual unit.
- *    Splitting them behind a tooltip or a footnote is how a figure ends up
- *    quoted without the thing that qualifies it.
- *  - A caveat is a visible warning, never a hover. A figure whose caveat
- *    the reader missed is worse than no figure at all.
- *  - Where the reporting module declines to compute something, the refusal
- *    is rendered as a finding. An empty AICTE tab is information.
+ * reproducible. This screen answers "what can we evidence, and what is
+ * blocked" at a glance; each framework's own page carries every figure
+ * with its denominator, definition and caveat.
  *
  * Nothing here computes a number. Every figure comes from
  * `@/lib/data/reports`, which is also what the CSV export flattens, so the
- * screen and the spreadsheet cannot drift apart.
+ * screen and the spreadsheet cannot drift apart. The vendor holds
+ * `audit.read` and reads this page, so it carries aggregates only: no
+ * names, no member drill-downs.
  */
-
-// ---------------------------------------------------------------
-// The page
-// ---------------------------------------------------------------
 
 export default async function ReportsConsolePage() {
   const session = await getSession();
@@ -66,217 +52,209 @@ export default async function ReportsConsolePage() {
   const canExportContacts = can(session, 'member.export');
 
   const sections = getReportSections();
-  const metrics = sections.flatMap((s) => s.metrics);
-  const caveated = metrics.filter((m) => m.caveat);
+  const resolved = await getTenantBrand();
+  const pack = resolved?.brand.pack;
 
   const coverage = getCoverageByYear();
   const registerRows = coverage.reduce((n, y) => n + y.total, 0);
   const claimed = coverage.reduce((n, y) => n + y.claimed, 0);
-  const unclaimed = registerRows - claimed;
 
-  const present = REPORT_FRAMEWORKS.filter((f) => sections.some((s) => s.framework === f));
-  const absent = REPORT_FRAMEWORKS.filter((f) => !sections.some((s) => s.framework === f));
+  const metric = (label: string): ReportMetric | undefined =>
+    sections.flatMap((s) => s.metrics).find((m) => m.label === label);
+  const events = metric('Events held or scheduled');
+  const referrals = metric('Offers attributable to an alumni referral');
+  const contactable = metric('Contactable alumni available for the perception survey');
 
-  const tabs: TabItem[] = [
-    { label: 'Everything', href: '/admin/reports', count: metrics.length, active: true },
-    ...REPORT_FRAMEWORKS.map((f) => ({
-      label: FRAMEWORK_META[f].name,
-      href: `/admin/reports/${FRAMEWORK_META[f].slug}`,
-      count: sections.filter((s) => s.framework === f).reduce((n, s) => n + s.metrics.length, 0),
-    })),
-  ];
+  const options = frameworkOptions(sections);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
+      {pack ? <Letterhead pack={pack} title="Accreditation figures" /> : null}
+
       <PageHeader
         eyebrow="Reporting"
         title="Accreditation reporting"
-        description="The figures NAAC and NIRF ask for, computed from the degree register and the member records rather than rebuilt by hand each cycle. Every number on this page carries the denominator it was measured against and the sentence it was counted by."
+        description="What the college can evidence for NAAC and NIRF, each figure with what it is out of."
         actions={
-          <>
-            <ButtonLink href="/admin/reports/coverage" variant="secondary">
+          <div data-print-hide="" className="flex flex-wrap items-center gap-2">
+            {/* On a phone the coverage page is one tap away through the first
+                headline figure, and printing is a desk job; Export stays. */}
+            <ButtonLink href="/admin/reports/coverage" variant="secondary" className="hidden sm:inline-flex">
               <Percent className="size-4" aria-hidden="true" />
               Register coverage
             </ButtonLink>
-            <ExportButton frameworks={frameworkOptions(sections)} columns={CSV_COLUMNS} />
-          </>
+            <PrintButton className="hidden sm:inline-flex" />
+            <ExportButton frameworks={options} columns={CSV_COLUMNS} label="Export" />
+          </div>
         }
       />
 
-      {/* The product position, stated where a registrar will read it — not
-          in a footnote under the last table. */}
-      <Card>
-        <CardBody className="grid gap-5 sm:grid-cols-2">
-          <div className="flex gap-3">
-            <span className="mt-0.5 shrink-0 text-brand-fg" aria-hidden="true">
-              <Scale className="size-5" />
-            </span>
-            <div className="space-y-1">
-              <p className="text-sm font-semibold">Nothing here is inflated</p>
-              <p className="text-sm text-secondary">
-                Coverage is reported against the degree register — every graduate the examinations branch has recorded,
-                whether or not they ever opened the portal. A portal that claims “97% of alumni are engaged” because it
-                counts only the people on it is useless to whoever has to defend the figure in the room.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex gap-3">
-            <span className="mt-0.5 shrink-0 text-brand-fg" aria-hidden="true">
-              <Divide className="size-5" />
-            </span>
-            <div className="space-y-1">
-              <p className="text-sm font-semibold">Every number states its denominator</p>
-              <p className="text-sm text-secondary">
-                “Out of what?” is the assessor&apos;s first question, and a report that cannot answer it in the same row
-                has already failed. Where a figure is a plain count, it says so, so nobody turns it into a percentage on
-                the way to the submission.
-              </p>
-            </div>
-          </div>
-        </CardBody>
-      </Card>
-
-      <div className="grid gap-gutter sm:grid-cols-2 xl:grid-cols-4">
-        <Stat
-          label="Figures computed"
-          value={formatNumber(metrics.length)}
-          hint={`Across ${sections.length} sections and ${present.length} frameworks`}
-          icon={<ListChecks className="size-4" />}
-        />
-        <Stat
-          label="Figures carrying a caveat"
-          value={formatNumber(caveated.length)}
-          hint="Shown beside the value, never as a footnote"
-          icon={<TriangleAlert className="size-4" />}
-        />
-        <Stat
-          label="Graduates not on the portal"
-          value={formatNumber(unclaimed)}
-          hint={`${formatPercent(registerRows ? claimed / registerRows : 0, 1)} of the register is traceable`}
-          icon={<ScrollText className="size-4" />}
-        />
-        <Stat
-          label="Frameworks with nothing computed"
-          value={formatNumber(absent.length)}
-          hint={absent.length ? `${absent.join(', ')} — see below for why` : 'Every framework has figures'}
-          icon={<ClipboardList className="size-4" />}
-        />
-      </div>
-
-      <Tabs items={tabs} ariaLabel="Reporting frameworks" />
-
-      {caveated.length > 0 ? (
-        <Alert
-          tone="warning"
-          title={`${caveated.length} of the ${metrics.length} figures cannot be quoted on their own`}
-          icon={<TriangleAlert className="size-4" aria-hidden="true" />}
-        >
-          <p>
-            {caveated.map((m) => m.label).join(', ')}. Each one is rendered with its caveat attached below, and the
-            caveat travels in its own column in the CSV. Lifting a value out of this page without it is the single
-            easiest way to get a submission challenged.
-          </p>
-        </Alert>
-      ) : null}
-
-      {present.map((framework) => {
-        const meta = FRAMEWORK_META[framework];
-        const mine = sections.filter((s) => s.framework === framework);
-
-        return (
-          <Section
-            key={framework}
-            id={meta.slug}
-            title={`${meta.name} — ${meta.full}`}
-            description={meta.asks}
-            actions={
-              <ButtonLink href={`/admin/reports/${meta.slug}`} variant="secondary" size="sm">
-                Open {meta.name}
-                <ArrowRight className="size-4" aria-hidden="true" />
-              </ButtonLink>
-            }
-          >
-            <div className="space-y-4">
-              {mine.map((section) => (
-                <ReportSectionCard key={`${section.framework}-${section.criterion}-${section.title}`} section={section} />
-              ))}
-            </div>
-          </Section>
-        );
-      })}
-
-      {absent.length > 0 ? (
-        <Section
-          title="Where the report declines to answer"
-          description="A framework with no figures is a finding, not an omission. It is listed here so nobody assumes the numbers exist somewhere else in the portal."
-        >
-          {absent.map((framework) => (
-            <EmptyState
-              key={framework}
-              icon={<ClipboardList className="size-5" />}
-              title={`${FRAMEWORK_META[framework].name} — no figures are computed`}
-              description={
-                FRAMEWORK_META[framework].blocked ??
-                `${FRAMEWORK_META[framework].asks} Nothing behind it is available to the portal yet, so the module produces no figure rather than an estimate somebody would later have to defend.`
-              }
-              action={
-                <ButtonLink href={`/admin/reports/${FRAMEWORK_META[framework].slug}`} variant="secondary" size="sm">
-                  What {FRAMEWORK_META[framework].name} would need
-                </ButtonLink>
-              }
+      {/* ---- The college's headline outcomes ---------------------- */}
+      <section aria-labelledby="headline-heading" className="space-y-3">
+        <h2 id="headline-heading" className="text-sm font-semibold text-secondary">
+          Headline outcomes
+        </h2>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Stat
+            label="Graduates traceable"
+            value={`${formatNumber(claimed)} of ${formatNumber(registerRows)}`}
+            hint={`${formatPercent(registerRows ? claimed / registerRows : 0, 1)} of the degree register`}
+            icon={<Users className="size-4" />}
+            href="/admin/reports/coverage"
+          />
+          {events ? (
+            <Stat
+              label="Alumni events held or scheduled"
+              value={displayValue(events.value)}
+              hint="Published events, past and upcoming"
+              icon={<CalendarCheck className="size-4" />}
+              href="/admin/reports/internal"
             />
-          ))}
-        </Section>
-      ) : null}
+          ) : null}
+          {referrals ? (
+            // Labelled as what it counts. The portal sees applications to
+            // postings graduates placed, never an offer letter.
+            <Stat
+              label="Applications to postings by alumni"
+              value={displayValue(referrals.value)}
+              hint="Not offers: the portal cannot see an offer letter"
+              icon={<Briefcase className="size-4" />}
+              href="/admin/reports/naac"
+            />
+          ) : null}
+          {contactable ? (
+            <Stat
+              label="Contactable for the NIRF survey"
+              value={displayValue(contactable.value)}
+              hint={contactable.denominator ? denominatorPhrase(contactable.denominator) : undefined}
+              icon={<Mail className="size-4" />}
+              href="/admin/reports/nirf"
+            />
+          ) : null}
+        </div>
+      </section>
 
-      <Card>
-        <CardHeader>
-          <div className="space-y-1">
-            <CardTitle as="h2">Taking these numbers into a submission</CardTitle>
-            <CardDescription>
-              The export is a spreadsheet, because a college that retypes figures out of a web page will introduce an
-              error and then have to defend it.
-            </CardDescription>
-          </div>
-        </CardHeader>
-        <CardBody className="space-y-4">
-          <p className="max-w-prose text-sm text-secondary">
-            The CSV carries one row per figure and eight columns:{' '}
-            <span className="font-mono text-xs text-primary">{CSV_COLUMNS.join(' · ')}</span>. The{' '}
-            <span className="font-semibold text-primary">Definition</span> column travels with every figure on purpose —
-            it is the part that makes next cycle&apos;s submission reproducible instead of merely defensible. Every
-            download is written to the audit log as <span className="font-mono">report.export</span> with the framework
-            requested.
-          </p>
+      {/* ---- One card per framework ------------------------------- */}
+      <section aria-labelledby="frameworks-heading" className="space-y-3">
+        <h2 id="frameworks-heading" className="text-sm font-semibold text-secondary">
+          Frameworks
+        </h2>
+        <ul className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {REPORT_FRAMEWORKS.map((framework) => {
+            const meta = FRAMEWORK_META[framework];
+            const status = frameworkStatus(framework, sections);
+            const figures = headlineMetrics(framework, sections);
+            const inputs = frameworkInputs(framework, sections);
+            const option = options.find((o) => o.value === framework);
 
-          <div className="flex flex-wrap gap-2">
-            <ExportButton frameworks={frameworkOptions(sections)} columns={CSV_COLUMNS} variant="secondary" label="Download the CSV" />
-            <ButtonLink href="/admin/reports/coverage" variant="secondary">
-              Coverage by year and branch
-            </ButtonLink>
-            {canExportContacts ? (
-              <ButtonLink href="/admin/reports/nirf" variant="ghost">
+            return (
+              <li key={framework} className="min-w-0">
+                <Card className="flex h-full flex-col">
+                  <CardBody className="flex flex-1 flex-col gap-4">
+                    <div className="min-w-0 space-y-1">
+                      <h3 className="font-display text-lg font-semibold">
+                        <span>{meta.name}</span>
+                        <span className="sr-only"> — {meta.full}</span>
+                      </h3>
+                      <p className="text-sm text-secondary">For the {inSentence(meta.owner)}</p>
+                    </div>
+
+                    <p
+                      className={`flex items-center gap-1.5 text-sm font-semibold ${status.ready ? 'text-success-fg' : 'text-warning-fg'}`}
+                    >
+                      {status.ready ? (
+                        <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
+                      ) : (
+                        <TriangleAlert className="size-4 shrink-0" aria-hidden="true" />
+                      )}
+                      {status.line}
+                    </p>
+
+                    {figures.length ? (
+                      <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        {figures.map((m) => (
+                          <div key={m.label} className="min-w-0 rounded border border-line bg-surface px-3 py-2.5">
+                            <dt className="text-xs text-secondary">{m.label}</dt>
+                            <dd className="mt-1 font-display text-lg font-bold tabular">
+                              {displayValue(m.value)}
+                              {m.caveat ? (
+                                <span className="ml-1.5 inline-flex align-baseline text-warning-fg">
+                                  <TriangleAlert className="size-3.5" aria-hidden="true" />
+                                  <span className="sr-only">(has a caveat)</span>
+                                </span>
+                              ) : null}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    ) : inputs.length ? (
+                      <ul className="divide-y divide-line rounded border border-line bg-surface text-sm">
+                        {inputs.map((i) => (
+                          <li key={i.label} className="flex items-center justify-between gap-3 px-3 py-2">
+                            <span>{i.label}</span>
+                            <span className={i.value ? 'font-semibold tabular' : 'text-secondary'}>
+                              {i.value ?? 'Not supplied yet'}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+
+                    <div data-print-hide="" className="mt-auto flex flex-wrap items-center gap-2 pt-1">
+                      <ButtonLink href={`/admin/reports/${meta.slug}`} variant="secondary" size="sm">
+                        Open {meta.name}
+                        <ArrowRight className="size-4" aria-hidden="true" />
+                      </ButtonLink>
+                      {option ? (
+                        <ExportButton
+                          frameworks={options.filter((o) => o.value === framework || o.value === 'all')}
+                          defaultFramework={framework}
+                          columns={CSV_COLUMNS}
+                          variant="secondary"
+                          label={`Export ${meta.name}`}
+                        />
+                      ) : null}
+                    </div>
+                  </CardBody>
+                </Card>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+
+      <div data-print-hide="" className="space-y-3">
+        <p className="text-sm text-secondary">
+          The export is a spreadsheet with one row per figure, carrying its denominator, definition and caveat; every
+          download is recorded in the audit log.
+        </p>
+        {canExportContacts ? (
+          <Card>
+            <CardBody className="flex flex-wrap items-center justify-between gap-3 py-4">
+              <p className="text-sm text-secondary">
+                The contact list for the NIRF survey is for the college admin only, and your reason is recorded.
+              </p>
+              <ButtonLink href="/admin/reports/nirf#perception" variant="ghost" size="sm">
                 NIRF perception-survey list
                 <ArrowRight className="size-4" aria-hidden="true" />
               </ButtonLink>
-            ) : null}
-          </div>
+            </CardBody>
+          </Card>
+        ) : null}
 
-          {canExportContacts ? (
-            <MarginNote className="max-w-prose border-t border-line pt-4">
-              The perception-survey list is the only control in this module that hands over contact data. It lives on
-              the NIRF page, it is <span className="font-mono not-italic">member.export</span> — college admin alone —
-              and it will not run until you have written down why.
-            </MarginNote>
-          ) : (
-            <MarginNote className="max-w-prose border-t border-line pt-4">
-              These figures are aggregates. No screen in this module will give you an alumni contact list; that is a
-              college-admin action taken elsewhere, with a written reason against it.
-            </MarginNote>
-          )}
-        </CardBody>
-      </Card>
+        <HowThisWorks summary="How these figures are counted">
+          <p>
+            Coverage is measured against the degree register: every graduate the examinations branch recorded, whether
+            or not they ever signed in. Counting only people on the portal would always read close to 100% and answer
+            nothing.
+          </p>
+          <p>
+            Every figure states what it is out of and the sentence it was counted by. A plain count is marked
+            &ldquo;Count&rdquo;, so nobody turns it into a percentage. Where the college has not supplied a source, the
+            framework shows as blocked rather than estimated.
+          </p>
+        </HowThisWorks>
+      </div>
     </div>
   );
 }

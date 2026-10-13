@@ -1,33 +1,25 @@
+import * as React from 'react';
 import Link from 'next/link';
-import {
-  ShieldCheck,
-  Handshake,
-  CalendarDays,
-  Briefcase,
-  ArrowRight,
-  Clock,
-  MapPin,
-  Building2,
-  GraduationCap,
-  Send,
-} from 'lucide-react';
+import { ArrowRight, Clock, Send } from 'lucide-react';
 import {
   Alert,
+  Avatar,
   Badge,
   ButtonLink,
   Card,
   CardBody,
-  CardFooter,
+  CardDescription,
   CardHeader,
   CardTitle,
-  CardDescription,
   EmptyState,
-  Section,
-  Stat,
 } from '@/components/ui';
-import { BarList, ProportionBar } from '@/components/charts';
+import { BandChip } from '@/components/brand/PageBand';
+import { BarList } from '@/components/charts';
+import { JobSummary } from '@/components/content';
 import { MemberCard } from '@/components/members/MemberCard';
-import { can, type Session } from '@/lib/auth/guard';
+import { can, isActive, type Session } from '@/lib/auth/guard';
+import { REQUEST_EXPIRY_DAYS } from '@/lib/availability-copy';
+import { cn } from '@/lib/cn';
 import {
   getConnections,
   getConnectionQuota,
@@ -37,18 +29,20 @@ import {
   getOwnProfile,
   searchDirectory,
 } from '@/lib/data/repo';
-import { formatDate, formatDateRange, formatRelative, memberLine } from '@/lib/format';
+import { daysUntil, formatRelative } from '@/lib/format';
+import { firstNameOf, identityLine } from '@/lib/identity';
+import { greetingFor } from '@/lib/branding/copy';
 import type { BrandPack } from '@/lib/branding/pack';
-import type { JobPosting } from '@/lib/data/types';
+import { HomeBand, type BandAction } from './HomeBand';
+import { HappeningAt, SNAP_ITEM, SNAP_ROW } from './HappeningAt';
 
 /**
  * The student home.
  *
  * A final-year has exactly one job on this portal — reach the right
- * alumnus before the placement season closes — and about four weeks in
- * which to do it. So the page leads with who in their own branch has
- * already agreed to be contacted, and immediately after it, how many
- * requests they have left. The quota is not a punishment; it is the
+ * alumnus before the placement season closes. So the page leads with who
+ * in their own branch has already agreed to be asked, and one line on how
+ * many requests they have left. The quota is not a punishment; it is the
  * reason the alumni on the other side are still answering.
  *
  * There is no donations block here, and there is no route to one. See
@@ -58,12 +52,13 @@ import type { JobPosting } from '@/lib/data/types';
 export function StudentHome({ session, pack }: { session: Session; pack: BrandPack }) {
   const profile = getOwnProfile(session);
   const quota = getConnectionQuota(session);
+  const { copy, locale } = pack;
+  const tz = locale.timeZone;
+  const fmt = { locale: locale.locale, timeZone: tz };
 
   const deptCode = session.departmentId;
   const deptName =
     getDepartments().find((d) => d.code === deptCode)?.name ?? profile?.departmentName ?? null;
-
-  const firstName = (profile?.preferredName ?? profile?.fullName ?? 'there').split(' ')[0]!;
 
   const canSearch = pack.features.directory && can(session, 'directory.search.alumni');
 
@@ -89,10 +84,20 @@ export function StudentHome({ session, pack }: { session: Session; pack: BrandPa
   const mentors = (widened ?? inBranch)?.items ?? [];
   const mentorTotal = (widened ?? inBranch)?.total ?? 0;
 
-  const topCompanies = (inBranch?.facets.companies ?? []).slice(0, 6).map((f) => ({
-    label: f.label,
-    value: f.count,
-  }));
+  // Where the whole branch works, not only its mentors: the same guarded
+  // search, one row, read for its facets. The college itself is not an
+  // employer a student is looking for.
+  const branchAlumni =
+    canSearch && deptCode ? searchDirectory(session, { cohort: 'alumni', department: deptCode, perPage: 1 }) : null;
+  const topCompanies = (branchAlumni?.facets.companies ?? [])
+    .filter((f) => f.label !== copy.institutionName)
+    .slice(0, 5)
+    .map((f) => ({
+      label: f.label,
+      value: f.count,
+      href: `/directory?department=${deptCode}&company=${encodeURIComponent(f.value)}`,
+    }));
+  const showBars = (topCompanies[0]?.value ?? 0) >= 3;
 
   const sent = can(session, 'connection.send') ? getConnections(session, 'sent') : [];
   const open = sent.filter((c) => c.state === 'pending');
@@ -103,372 +108,280 @@ export function StudentHome({ session, pack }: { session: Session; pack: BrandPa
     : [];
 
   const jobs = pack.features.jobs ? getJobs(session, { state: 'live' }) : [];
-  const internships = jobs.filter((j) => j.isInternship).slice(0, 4);
-  const fullTime = jobs.filter((j) => !j.isInternship).slice(0, 4);
+  // Soonest deadline first; a posting with no closing date after them,
+  // and one that has already closed not at all.
+  const closing = jobs
+    .filter((j) => !j.closesOn || daysUntil(j.closesOn, tz) >= 0)
+    .sort((a, b) => (a.closesOn ?? '9999').localeCompare(b.closesOn ?? '9999'))
+    .slice(0, 5);
 
   const mentorHref = `/directory?mentoring=1${deptCode ? `&department=${deptCode}` : ''}`;
+  const findHref =
+    pack.features.mentorship && can(session, 'connection.send') ? '/mentorship' : mentorHref;
+
+  // ---- Band ---------------------------------------------------------
+  const first = profile ? firstNameOf(profile.fullName, profile.preferredName) : null;
+  const unverified = Boolean(profile && !profile.verifiedAt);
+  const blocked = !quota.canSend && Boolean(quota.reason);
+  const branchLabel = deptCode ?? copy.shortName;
+
+  let lead: string;
+  const actions: BandAction[] = [];
+  if (unverified) {
+    lead = `The ${copy.officeName} is checking your record.`;
+    if (canSearch) actions.push({ href: '/directory', label: 'Browse the directory' });
+  } else if (blocked) {
+    lead = quota.reason!;
+    actions.push({ href: '/connections', label: 'See your requests' });
+  } else if (mentorTotal > 0) {
+    lead = widened
+      ? `${mentorTotal} alumni are open to mentoring. Ask before you apply.`
+      : `${mentorTotal} ${branchLabel} alumni are open to mentoring. Ask before you apply.`;
+    actions.push({ href: findHref, label: 'Find a mentor' });
+  } else {
+    lead = `Find ${branchLabel} alumni before you apply.`;
+    if (canSearch) actions.push({ href: '/directory', label: 'Open the directory' });
+  }
+
+  // ---- Quota, as what is available ----------------------------------
+  const showQuota = pack.features.connections && can(session, 'connection.send');
+  const available = Math.max(
+    0,
+    Math.min(quota.openLimit - quota.openRequests, quota.monthlyLimit - quota.usedThisMonth),
+  );
+  const monthLeft = Math.max(0, quota.monthlyLimit - quota.usedThisMonth);
+  const quotaLine = [
+    available > 0
+      ? `${available} ${available === 1 ? 'request' : 'requests'} available`
+      : 'No requests available right now',
+    monthLeft > 0 ? `${monthLeft} left this month` : 'none left this month',
+    answered.length > 0 ? `${answered.length} replied yes` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
-    <>
-      <header className="space-y-3">
-        <p className="text-xs font-semibold uppercase tracking-wider text-brand-fg">
-          {memberLine([deptCode, profile?.batchYear ? `Batch of ${profile.batchYear}` : null, 'Final year'])}
-        </p>
-        <h1 className="font-display text-display-xs font-bold">Namaste, {firstName}</h1>
-        <p className="max-w-prose text-sm text-secondary">
-          {mentorTotal > 0
-            ? `${mentorTotal} ${deptName ?? 'DIET'} alumni have said they are open to mentoring. Ask before you apply, not after — most of them answer within a week.`
-            : 'Alumni who agree to mentor appear here. Until then the directory is still the fastest way to find someone from your branch.'}
-        </p>
-      </header>
+    <div className="space-y-6 lg:space-y-8">
+      <HomeBand
+        pack={pack}
+        eyebrow={identityLine({
+          roles: session.roles,
+          departmentCode: deptCode,
+          batchYear: null,
+          isStudent: true,
+        })}
+        title={first ? `${greetingFor(copy)}, ${first}` : greetingFor(copy)}
+        lead={lead}
+        meta={unverified ? <BandChip icon={<Clock />}>Being checked</BandChip> : undefined}
+        actions={actions}
+      />
 
-      {/* ---- Standing: verification, quota, replies -------------------- */}
-
-      <section aria-label="Your standing" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Card className="p-card">
-          <div className="flex items-start justify-between gap-3">
-            <p className="text-sm font-medium text-secondary">Account</p>
-            <ShieldCheck className="size-4 text-muted" aria-hidden="true" />
-          </div>
-          {profile?.verifiedAt ? (
-            <>
-              <p className="mt-2 flex items-center gap-2">
-                <Badge tone="success" dot>
-                  Verified
-                </Badge>
-              </p>
-              <p className="mt-1.5 text-xs text-muted">
-                {profile.verificationMethod === 'placement_cell_import'
-                  ? 'Loaded from the placement cell roll list'
-                  : 'Matched against the college register'}{' '}
-                on {formatDate(profile.verifiedAt)}
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="mt-2">
-                <Badge tone="warning" dot>
-                  Waiting on the college
-                </Badge>
-              </p>
-              <p className="mt-1.5 text-xs text-muted">
-                The alumni cell has your claim. Until it clears you can browse but not send requests.
-              </p>
-            </>
-          )}
-        </Card>
-
-        <Stat
-          label="Requests waiting for a reply"
-          value={quota.openRequests}
-          hint={`${quota.openLimit} can be open at once`}
-          icon={<Clock className="size-4" />}
-        />
-        <Stat
-          label="Sent this month"
-          value={`${quota.usedThisMonth} / ${quota.monthlyLimit}`}
-          hint="Resets on the 1st"
-          icon={<Send className="size-4" />}
-        />
-        <Stat
-          label="Alumni who replied yes"
-          value={answered.length}
-          hint={answered.length ? 'Their contact details are open to you' : 'None yet'}
-          icon={<Handshake className="size-4" />}
-        />
-      </section>
+      {showQuota ? (
+        <Link
+          href="/connections"
+          className="group flex min-h-11 items-center gap-3 rounded-lg border border-line bg-surface-raised px-4 py-2.5 text-sm shadow-sm transition-colors duration-fast ease-brand hover:border-line-strong"
+        >
+          <Send className="size-4 shrink-0 text-muted" aria-hidden="true" />
+          <span className="min-w-0 flex-1 font-medium text-primary">{quotaLine}</span>
+          <ArrowRight
+            className="size-4 shrink-0 text-brand-fg transition-transform duration-fast ease-brand group-hover:translate-x-0.5"
+            aria-hidden="true"
+          />
+          <span className="sr-only">, see your requests</span>
+        </Link>
+      ) : null}
 
       {!quota.canSend && quota.reason ? (
         <Alert tone="warning" title="You cannot send another request yet">
           {quota.reason}{' '}
           {quota.openRequests > 0
-            ? 'A request expires on its own after three weeks, which frees the slot.'
+            ? `A request expires on its own after ${REQUEST_EXPIRY_DAYS} days, which frees the slot.`
             : null}
         </Alert>
       ) : null}
 
-      {/* ---- Mentors in the branch ------------------------------------- */}
+      {/* ---- Requests still open -------------------------------------- */}
+
+      {open.length ? (
+        <Card as="section" aria-labelledby="requests-title">
+          <CardHeader className="items-center">
+            <CardTitle as="h2" id="requests-title" className="text-md">
+              Waiting for a reply
+            </CardTitle>
+            <Link
+              href="/connections"
+              className="-my-2 inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-brand-fg hover:underline"
+            >
+              All requests
+              <ArrowRight className="size-4" aria-hidden="true" />
+            </Link>
+          </CardHeader>
+          <CardBody className="pt-2">
+            <ul className="divide-y divide-line">
+              {open.map((c) => (
+                <li key={c.id} className="relative flex min-h-11 items-center gap-3 py-2.5">
+                  <Avatar name={c.to.fullName} src={c.to.photoUrl} size="sm" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">
+                      {/* The whole row is the target: the name alone is 17px tall. */}
+                      <Link href={`/directory/${c.to.slug}`} className="link-quiet after:absolute after:inset-0">
+                        {c.to.fullName}
+                      </Link>
+                    </p>
+                    <p className="text-xs text-secondary">
+                      Sent {formatRelative(c.createdAt, fmt)}
+                      {c.expiresAt ? ` · closes ${formatRelative(c.expiresAt, fmt)}` : ''}
+                    </p>
+                  </div>
+                  <Badge tone="brand">{kindLabel(c.kind)}</Badge>
+                </li>
+              ))}
+            </ul>
+          </CardBody>
+        </Card>
+      ) : null}
+
+      {/* ---- Mentors in the branch ------------------------------------ */}
 
       {canSearch ? (
-        <Section
-          title={
-            widened
-              ? 'Alumni open to mentoring'
-              : `${deptCode ?? 'DIET'} alumni open to mentoring`
-          }
-          description={
-            widened
-              ? `Nobody from ${deptName ?? 'your branch'} has switched mentoring on yet, so this is every branch.`
-              : 'They have each set this themselves. It is a standing yes to being asked.'
-          }
-          actions={
-            <ButtonLink href={mentorHref} variant="secondary" size="sm">
-              See all {mentorTotal}
-            </ButtonLink>
-          }
-        >
+        <section aria-labelledby="mentors-title" className="space-y-4">
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-x-4">
+              <h2 id="mentors-title" className="min-w-0 font-display text-xl font-semibold">
+                {widened ? 'Alumni open to mentoring' : `${deptCode ?? copy.shortName} alumni open to mentoring`}
+              </h2>
+              {mentorTotal > 0 ? (
+                <Link
+                  href={mentorHref}
+                  className="-my-2 inline-flex min-h-11 shrink-0 items-center gap-1 text-sm font-semibold text-brand-fg hover:underline"
+                >
+                  See all {mentorTotal}
+                  <ArrowRight className="size-4" aria-hidden="true" />
+                </Link>
+              ) : null}
+            </div>
+            <p className="text-sm text-secondary">
+              {widened
+                ? `Nobody from ${deptName ?? 'your branch'} has switched mentoring on yet, so this is every branch.`
+                : 'They have each set this themselves. It is a standing yes to being asked.'}
+            </p>
+          </div>
+
           {mentors.length ? (
-            <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {mentors.map((m) => (
-                <li key={m.id} className="relative">
-                  <MemberCard member={m} className="h-full" />
+            <ul className={SNAP_ROW}>
+              {mentors.slice(0, 3).map((m, i) => (
+                <li key={m.id} className={cn(SNAP_ITEM, i === 2 && 'sm:hidden xl:block')}>
+                  <MemberCard
+                    member={m}
+                    className="h-full"
+                    action={
+                      <ButtonLink
+                        href={`/directory/${m.slug}`}
+                        variant="secondary"
+                        size="sm"
+                        className="min-h-11 w-full"
+                      >
+                        Ask for help
+                        <span className="sr-only">: {m.fullName}</span>
+                      </ButtonLink>
+                    }
+                  />
                 </li>
               ))}
             </ul>
           ) : (
             <EmptyState
-              icon={<GraduationCap className="size-5" />}
-              title="No alumni have offered to mentor yet"
-              description="Mentoring is opt-in. As the 2013–2020 batches finish claiming their accounts this list fills up — the alumni cell is chasing the degree register now."
+              variant="inline"
+              title="No alumni have switched mentoring on yet. The ones who do appear here."
               action={
-                <ButtonLink href="/directory" variant="secondary" size="sm">
-                  Browse the directory anyway
-                </ButtonLink>
+                <Link href="/directory" className="inline-flex min-h-11 items-center text-sm font-semibold text-brand-fg hover:underline">
+                  Browse the directory
+                </Link>
               }
             />
           )}
-        </Section>
+        </section>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* ---- Open requests ------------------------------------------- */}
+      {/* ---- The college, then jobs ----------------------------------- */}
 
-        <div className="lg:col-span-2">
-          <Card>
-            <CardHeader>
-              <div className="space-y-1">
-                <CardTitle as="h2">Your requests</CardTitle>
-                <CardDescription>
-                  Alumni answer on their own time. Chasing the same person twice does not speed it up.
-                </CardDescription>
-              </div>
-            </CardHeader>
-
-            <CardBody className="space-y-4">
-              <ProportionBar
-                label="Connection request slots"
-                segments={[
-                  { label: 'Waiting for a reply', value: quota.openRequests, tone: 'warning' },
-                  {
-                    label: 'Free slots',
-                    value: Math.max(0, quota.openLimit - quota.openRequests),
-                    tone: 'neutral',
-                  },
-                ]}
-              />
-
-              {open.length ? (
-                <ul className="divide-y divide-line">
-                  {open.map((c) => (
-                    <li key={c.id} className="flex flex-wrap items-start gap-3 py-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">
-                          <Link href={`/directory/${c.to.slug}`} className="link-quiet">
-                            {c.to.fullName}
-                          </Link>
-                        </p>
-                        <p className="truncate text-xs text-muted">
-                          {memberLine([
-                            c.to.departmentCode,
-                            c.to.batchYear,
-                            c.to.currentCompany ?? 'No company on file',
-                          ])}
-                        </p>
-                        {c.message ? (
-                          <p className="mt-1.5 line-clamp-2 text-xs text-secondary">{c.message}</p>
-                        ) : null}
-                      </div>
-                      <div className="flex shrink-0 flex-col items-end gap-1">
-                        <Badge tone="warning">{kindLabel(c.kind)}</Badge>
-                        <span className="text-xs text-muted">
-                          Sent {formatRelative(c.createdAt)}
-                        </span>
-                        {c.expiresAt ? (
-                          <span className="text-xs text-muted">
-                            Expires {formatRelative(c.expiresAt)}
-                          </span>
-                        ) : null}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="rounded-lg border border-dashed border-line px-4 py-8 text-center text-sm text-secondary">
-                  Nothing waiting. You have {quota.openLimit - quota.openRequests} of{' '}
-                  {quota.openLimit} slots free — pick someone from your branch and say what you
-                  actually need help with.
-                </p>
-              )}
-            </CardBody>
-
-            <CardFooter>
-              <ButtonLink href="/connections" variant="ghost" size="sm">
-                All connections
-                <ArrowRight className="size-4" aria-hidden="true" />
-              </ButtonLink>
-            </CardFooter>
-          </Card>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-8">
+        <div className="min-w-0">
+          <HappeningAt
+            pack={pack}
+            events={can(session, 'event.register') ? events : null}
+            showPhotos={isActive(session)}
+          />
         </div>
 
-        {/* ---- Events -------------------------------------------------- */}
-
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <div className="space-y-1">
-                <CardTitle as="h2">Coming up</CardTitle>
-                <CardDescription>Events you are eligible to attend.</CardDescription>
-              </div>
-            </CardHeader>
-            <CardBody className="space-y-3">
-              {events.length ? (
-                events.map((e) => (
-                  <article key={e.id} className="space-y-1 border-b border-line pb-3 last:border-0 last:pb-0">
-                    <p className="text-sm font-medium">
-                      <Link href={`/events/${e.slug}`} className="link-quiet">
-                        {e.title}
-                      </Link>
-                    </p>
-                    <p className="flex items-center gap-1.5 text-xs text-secondary">
-                      <CalendarDays className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
-                      {formatDateRange(e.startsAt, e.endsAt)}
-                    </p>
-                    {e.venue ? (
-                      <p className="flex items-center gap-1.5 text-xs text-muted">
-                        <MapPin className="size-3.5 shrink-0" aria-hidden="true" />
-                        {e.venue}
-                      </p>
-                    ) : null}
-                    {e.viewerRegistration ? (
-                      <Badge tone="success" dot>
-                        You are registered
-                      </Badge>
-                    ) : e.capacity && e.registeredCount >= e.capacity ? (
-                      <Badge tone="danger">Full — {e.registeredCount} registered</Badge>
-                    ) : e.capacity ? (
-                      <Badge tone="neutral">
-                        {e.capacity - e.registeredCount} of {e.capacity} seats left
-                      </Badge>
-                    ) : null}
-                  </article>
-                ))
-              ) : (
-                <p className="text-sm text-secondary">
-                  No events open to students right now. Alumni-only events — reunions and batch
-                  meets — are not listed here at all.
-                </p>
-              )}
-            </CardBody>
-            <CardFooter>
-              <ButtonLink href="/events" variant="ghost" size="sm">
-                All events
-                <ArrowRight className="size-4" aria-hidden="true" />
-              </ButtonLink>
-            </CardFooter>
-          </Card>
-
-          {topCompanies.length ? (
-            <Card>
-              <CardHeader>
-                <div className="space-y-1">
-                  <CardTitle as="h2">Where {deptCode ?? 'DIET'} alumni work</CardTitle>
-                  <CardDescription>
-                    Counted from profiles on this portal, not from a placement brochure.
-                  </CardDescription>
-                </div>
+        <aside aria-label="Jobs and where alumni work" className="min-w-0 space-y-6">
+          {pack.features.jobs ? (
+            <Card as="section" aria-labelledby="jobs-title">
+              <CardHeader className="items-center">
+                <CardTitle as="h2" id="jobs-title" className="text-md">
+                  Jobs closing soon
+                </CardTitle>
+                {jobs.length ? (
+                  <Link
+                    href="/jobs"
+                    className="-my-2 inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-brand-fg hover:underline"
+                  >
+                    All {jobs.length}
+                    <span className="sr-only"> openings</span>
+                    <ArrowRight className="size-4" aria-hidden="true" />
+                  </Link>
+                ) : null}
               </CardHeader>
-              <CardBody>
-                <BarList
-                  label={`Companies employing ${deptCode ?? 'DIET'} alumni on the portal`}
-                  data={topCompanies}
-                />
+              <CardBody className="pt-1">
+                {closing.length ? (
+                  <ul className="divide-y divide-line">
+                    {closing.map((j, i) => (
+                      // Three on a phone, where this list sits under
+                      // everything else; five beside the news on a desktop.
+                      <li key={j.id} className={i > 2 ? 'hidden sm:block' : undefined}>
+                        <JobSummary job={j} href={`/jobs/${j.id}`} locale={locale} variant="row" />
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <EmptyState
+                    variant="inline"
+                    title="No openings are live today. Alumni and the placement cell post them here."
+                  />
+                )}
               </CardBody>
             </Card>
           ) : null}
-        </div>
+
+          {topCompanies.length ? (
+            <Card as="section" aria-labelledby="companies-title">
+              <CardHeader variant="stack">
+                <CardTitle as="h2" id="companies-title" className="text-md">
+                  Where {deptCode ?? copy.shortName} alumni work
+                </CardTitle>
+                <CardDescription>From profiles on this portal.</CardDescription>
+              </CardHeader>
+              <CardBody className="min-w-0">
+                {showBars ? (
+                  <BarList
+                    label={`Companies employing ${deptCode ?? copy.shortName} alumni on the portal`}
+                    data={topCompanies}
+                  />
+                ) : (
+                  <ul className="flex flex-wrap gap-1.5" aria-label="Companies">
+                    {topCompanies.map((c) => (
+                      <li key={c.label}>
+                        <Badge tone="outline">{c.label}</Badge>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardBody>
+            </Card>
+          ) : null}
+        </aside>
       </div>
-
-      {/* ---- Jobs ------------------------------------------------------ */}
-
-      {pack.features.jobs ? (
-        <Section
-          title="Jobs and internships"
-          description="Posted by alumni and by the placement cell. Every listing is moderated before it appears."
-          actions={
-            <ButtonLink href="/jobs" variant="secondary" size="sm">
-              All {jobs.length} openings
-            </ButtonLink>
-          }
-        >
-          <div className="grid gap-4 lg:grid-cols-2">
-            <JobColumn
-              title="Internships"
-              empty="No internships are live today. Alumni post them in bursts around January and June."
-              jobs={internships}
-            />
-            <JobColumn
-              title="Full-time roles"
-              empty="No full-time roles are live today."
-              jobs={fullTime}
-            />
-          </div>
-        </Section>
-      ) : null}
-    </>
-  );
-}
-
-function JobColumn({
-  title,
-  jobs,
-  empty,
-}: {
-  title: string;
-  jobs: JobPosting[];
-  empty: string;
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle as="h3" className="text-md">
-          {title}
-        </CardTitle>
-      </CardHeader>
-      <CardBody className="space-y-3">
-        {jobs.length ? (
-          jobs.map((j) => (
-            <article key={j.id} className="flex items-start gap-3 border-b border-line pb-3 last:border-0 last:pb-0">
-              <span
-                className="mt-0.5 grid size-8 shrink-0 place-items-center rounded bg-surface-sunken text-muted"
-                aria-hidden="true"
-              >
-                <Briefcase className="size-4" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">
-                  <Link href={`/jobs/${j.id}`} className="link-quiet">
-                    {j.title}
-                  </Link>
-                </p>
-                <p className="flex items-center gap-1.5 truncate text-xs text-secondary">
-                  <Building2 className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
-                  {memberLine([j.company, j.location ?? 'Location not stated'])}
-                </p>
-                <p className="mt-1 text-xs text-muted">
-                  {j.closesOn ? `Closes ${formatDate(j.closesOn)}` : 'No closing date'} ·{' '}
-                  {j.applicationCount} applied
-                </p>
-              </div>
-              {j.viewerHasApplied ? (
-                <Badge tone="success">Applied</Badge>
-              ) : null}
-            </article>
-          ))
-        ) : (
-          <p className="text-sm text-secondary">{empty}</p>
-        )}
-      </CardBody>
-    </Card>
+    </div>
   );
 }
 

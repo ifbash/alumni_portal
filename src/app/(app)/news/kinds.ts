@@ -24,12 +24,17 @@ import type { NewsKind } from '@/lib/data/content';
 export type BadgeTone = NonNullable<ComponentProps<typeof Badge>['tone']>;
 
 export interface KindMeta {
-  /** Singular — what sits on the badge beside one story. */
+  /** Singular — the eyebrow above one story. */
   label: string;
-  /** Plural — what sits on the filter tab. */
+  /** Plural — the filter chip. */
   tab: string;
+  /**
+   * Not used for decoration. Member pages set the kind as a quiet eyebrow
+   * with its icon and never colour it: a tone per kind would put a colour
+   * next to a death notice.
+   */
   tone: BadgeTone;
-  /** Null for a kind that is deliberately not iconographed. */
+  /** The eyebrow icon. Null for a kind that is deliberately not iconographed. */
   icon: ComponentType<{ className?: string }> | null;
   restrained: boolean;
   /** One line describing what belongs under this kind. */
@@ -53,9 +58,8 @@ export const KIND_META: Record<NewsKind, KindMeta> = {
     tone: 'brand',
     icon: Megaphone,
     restrained: false,
-    blurb: 'Notices from the alumni cell, the placement cell and the principal’s office.',
-    empty:
-      'Announcements are how the college tells the network something — a meet opening for registration, a change to how the portal works. There are none on the page right now.',
+    blurb: 'Notices from the college and its offices.',
+    empty: 'No announcements are up right now.',
   },
   achievement: {
     label: 'Achievement',
@@ -64,8 +68,7 @@ export const KIND_META: Record<NewsKind, KindMeta> = {
     icon: Trophy,
     restrained: false,
     blurb: 'A graduate’s appointment, award or recognition.',
-    empty:
-      'Achievements are written up when a graduate tells the alumni cell, or when somebody from their batch does. If you know of one, the cell would rather hear it twice than not at all.',
+    empty: 'No achievements are written up yet. They appear when a graduate, or their batch, tells the college.',
   },
   milestone: {
     label: 'Milestone',
@@ -73,9 +76,8 @@ export const KIND_META: Record<NewsKind, KindMeta> = {
     tone: 'accent',
     icon: Milestone,
     restrained: false,
-    blurb: 'What the network built — a funded lab, a scholarship, a chapter opening.',
-    empty:
-      'Milestones are the things graduates paid for or built together: a lab, a scholarship, a city chapter. Nothing has been recorded here yet.',
+    blurb: 'What graduates built together — a funded lab, a scholarship, a chapter opening.',
+    empty: 'No milestones are recorded yet.',
   },
   press: {
     label: 'In the press',
@@ -84,8 +86,7 @@ export const KIND_META: Record<NewsKind, KindMeta> = {
     icon: Newspaper,
     restrained: false,
     blurb: 'Coverage of the college or its graduates in an outside publication.',
-    empty:
-      'Press cuttings are added when the college or a graduate appears in an outside publication. Nothing has been filed under this yet.',
+    empty: 'No press coverage is filed yet.',
   },
   obituary: {
     label: 'In memoriam',

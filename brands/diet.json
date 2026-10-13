@@ -44,18 +44,36 @@
   },
 
   "assets": {
-    "$comment": "Awaiting the crest in vector. The Logo component falls back to the portal name in the display face, which always renders.",
-    "ogImage": "/brand/diet/og-card.png"
+    "$comment": [
+      "MEDIA AWAITED FROM THE COLLEGE. Every slot below renders nothing until it is filled: no empty frame, no 'photo coming soon'. Add a key only when its file exists.",
+      "Put files in public/brand/diet/ ('/brand/diet/...') or S3 ap-south-1 (https URL). Only photographs the college owns or has licensed; no identifiable students without consent.",
+      "crest: SVG. Hero, sign-in panel and footer, on a light disc.",
+      "logoPrimary: SVG for light grounds. logoInverse: SVG for the college-colour band.",
+      "heroImage: one landscape campus photograph, 2400x1350 or larger, WebP/AVIF/JPEG under 350 KB, with heroImageAlt (one sentence on what it shows) and optional heroFocus ('50% 40%').",
+      "heroVideo: optional 10-20 s silent loop, .mp4 (H.264) or .webm, 1920x1080, under 6 MB. Needs heroImage. Desktop only.",
+      "authImage: optional portrait-friendly photo for the desktop sign-in panel (falls back to heroImage).",
+      "campusPhotos: optional 3-8 photographs, each { src, alt (required), caption (optional), focus (optional) }.",
+      "Finished shape: see 'Media block' in the public-pages spec, section 6.4.",
+      "ogImage: optional 1200x630 share card. Until one exists the portal generates a card in the college's colours."
+    ]
   },
 
   "copy": {
+    "$comment": [
+      "Deliberately absent until the college supplies them. Each renders nothing (or a neutral default) until then:",
+      "  rollNumberExample (the printed format, confirmed by the examinations branch),",
+      "  reviewTurnaround and supportTurnaround (only once the alumni cell commits to them), affiliationLine (the college's own wording),",
+      "  websiteUrl, supportPhone, collegeMessage, announcements.",
+      "officeName defaults to 'alumni cell'. Confirm the office's own name with the college.",
+      "'Since <year>' returns to the tagline once the year of establishment is confirmed."
+    ],
     "portalName": "DIET Connect",
     "institutionName": "Dhanekula Institute of Engineering & Technology",
     "shortName": "DIET",
-    "tagline": "Ganguru, Vijayawada · Since 2009",
-    "heroHeadline": "Every DIET graduate, still reachable.",
-    "heroEmphasis": "still reachable",
-    "heroSubhead": "Find the batch you graduated with, mentor the students coming up behind you, and hear about campus events before they happen. Verified against the college's own degree records.",
+    "tagline": "Ganguru, Vijayawada",
+    "heroHeadline": "Welcome back to DIET.",
+    "heroEmphasis": "DIET",
+    "heroSubhead": "Find your batchmates, come back to campus, and help the final-year students coming up behind you.",
     "supportEmail": "alumni@diet.ac.in",
     "addressLines": [
       "Dhanekula Institute of Engineering & Technology",

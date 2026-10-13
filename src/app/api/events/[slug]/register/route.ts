@@ -3,6 +3,7 @@ import { getSession } from '@/lib/auth/session';
 import { require as requireCap } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
 import { getEventBySlug } from '@/lib/data/repo';
+import { displayNow } from '@/lib/format';
 import {
   draftId,
   fail,
@@ -75,7 +76,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
       });
     }
 
-    if (new Date(event.startsAt).getTime() < Date.now()) {
+    // The same "now" the pages use (format.ts displayNow). Comparing with
+    // the wall clock here meant the event page offered registration while
+    // this route refused it, once the real date passed the seeded start.
+    if (new Date(event.startsAt).getTime() < displayNow().getTime()) {
       throw new HttpError(409, 'closed', 'This event has already started. Registration is closed.');
     }
 

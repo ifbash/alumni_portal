@@ -1,28 +1,30 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { CalendarClock, Globe2, Heart, Receipt, ShieldAlert, Users } from 'lucide-react';
+import { ArrowRight, Briefcase, CalendarDays, Globe2, GraduationCap, Heart, Receipt, UserRound } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
-import { require as requireCap } from '@/lib/auth/guard';
+import { can, require as requireCap } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
 import { getCampaigns } from '@/lib/data/repo';
 import type { DonationCampaign } from '@/lib/data/types';
 import {
-  Alert,
   Badge,
   ButtonLink,
   Card,
-  CardBody,
-  CardHeader,
-  CardTitle,
+  CoverArt,
+  Disclosure,
   EmptyState,
-  PageHeader,
+  MediaFrame,
   Progress,
   Section,
-  Stat,
+  TrustChip,
 } from '@/components/ui';
-import { formatCompactINR, formatDate, formatNumber, formatPercent } from '@/lib/format';
+import { BandChip, PageBand } from '@/components/brand/PageBand';
+import { capitalise } from '@/lib/branding/copy';
+import { pickBandPhoto } from '@/lib/branding/media';
+import { canOpen } from '@/lib/navigation';
+import { daysUntil, formatCompactINR, formatDate, formatNumber, formatPercent } from '@/lib/format';
 
 /**
  * Metadata has to be gated too.
@@ -41,20 +43,16 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     title: 'Giving',
-    description: 'Alumni-funded campaigns, 80G receipts, and FCRA-segregated foreign contributions.',
+    description: `Back the next thing ${resolved.brand.pack.copy.shortName} builds.`,
   };
 }
 
-/**
- * Days from now until an ISO date. Positive means still to come.
- * Rounded up, so a campaign closing tonight reads "1 day left" rather
- * than "0".
- */
-function daysUntil(iso: string | null): number | null {
-  if (!iso) return null;
-  const ms = new Date(iso).getTime() - Date.now();
-  if (Number.isNaN(ms)) return null;
-  return Math.ceil(ms / 86400000);
+/** Soonest closing first; open-ended campaigns after every dated one. */
+function bySoonest(a: DonationCampaign, b: DonationCampaign): number {
+  if (a.endsOn && b.endsOn) return a.endsOn.localeCompare(b.endsOn);
+  if (a.endsOn) return -1;
+  if (b.endsOn) return 1;
+  return a.title.localeCompare(b.title);
 }
 
 export default async function GivingPage() {
@@ -81,237 +79,365 @@ export default async function GivingPage() {
   requireCap(session, 'donation.give');
 
   const campaigns = getCampaigns();
-  const open = campaigns.filter((c) => c.active);
-  const past = campaigns.filter((c) => !c.active);
+  const pack = brand.pack;
+  const { shortName, officeName } = pack.copy;
+  const tz = pack.locale.timeZone;
+  const timing = { locale: pack.locale.locale, timeZone: tz };
 
+  const open = campaigns.filter((c) => c.active).sort(bySoonest);
+  const past = campaigns.filter((c) => !c.active).sort((a, b) => (b.endsOn ?? '').localeCompare(a.endsOn ?? ''));
+  const featured = open[0] ?? null;
+  const others = open.slice(1);
+
+  // Money raised is a sum that means something. Donors counted per
+  // campaign double-count anyone who gave twice, so no total of them.
   const totalRaised = campaigns.reduce((n, c) => n + c.raised, 0);
-  const totalDonors = campaigns.reduce((n, c) => n + c.donorCount, 0);
+  const canManage = can(session, 'donation.campaign.manage');
+
+  const ways = [
+    canOpen(session, pack, '/mentorship')
+      ? {
+          href: '/mentorship',
+          icon: <GraduationCap className="size-5" />,
+          title: 'Mentor a final-year student',
+          line: 'Answer a question from someone sitting the papers you sat.',
+        }
+      : null,
+    canOpen(session, pack, '/jobs') && can(session, 'job.post')
+      ? {
+          href: '/jobs/new',
+          icon: <Briefcase className="size-5" />,
+          title: 'Post a job',
+          line: `Put a role at your company in front of ${shortName} final-years.`,
+        }
+      : null,
+    canOpen(session, pack, '/events')
+      ? {
+          href: '/events',
+          icon: <CalendarDays className="size-5" />,
+          title: 'Come to an event',
+          line: 'Meet your batch and the students coming up behind it.',
+        }
+      : null,
+  ].filter((w): w is NonNullable<typeof w> => w !== null);
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow="Alumni giving"
-        title="Give to the college"
-        description={`Campaigns run by the alumni cell of ${brand.pack.copy.institutionName}. Every contribution is receipted, and contributions from outside India are recorded separately from the rupee they arrive as.`}
+    <div className="space-y-8">
+      <PageBand
+        pack={pack}
+        photo={pickBandPhoto(pack, 'giving')}
+        eyebrow={`${shortName} alumni giving`}
+        title={`Give back to ${shortName}`}
+        lead="Back something specific at your college, and see what earlier gifts built."
+        meta={
+          totalRaised > 0 ? (
+            <BandChip icon={<Heart />}>
+              {formatCompactINR(totalRaised)} raised across {campaigns.length}{' '}
+              {campaigns.length === 1 ? 'campaign' : 'campaigns'}
+            </BandChip>
+          ) : null
+        }
+        actions={
+          <>
+            {featured ? (
+              <ButtonLink
+                href={`/giving/${featured.slug}`}
+                variant="band"
+                className="h-auto min-h-11 whitespace-normal py-2 text-left"
+              >
+                Give to {featured.title}
+              </ButtonLink>
+            ) : null}
+            {past.length > 0 ? (
+              <ButtonLink href="#impact" variant="band-outline" className="min-h-11">
+                See what alumni have funded
+              </ButtonLink>
+            ) : null}
+            {canManage ? (
+              <ButtonLink href="/admin/giving" variant="band-outline" className="min-h-11">
+                Manage campaigns
+              </ButtonLink>
+            ) : null}
+          </>
+        }
       />
 
       {!tenant.fcraRegistered ? (
-        <Alert
-          tone="warning"
-          title="Foreign contributions cannot be accepted yet"
-          icon={<Globe2 className="size-4" />}
+        <Disclosure
+          summary={
+            <span className="flex items-start gap-2">
+              <Globe2 className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
+              <span>
+                Giving from outside India? {shortName} cannot accept foreign contributions yet.
+              </span>
+            </span>
+          }
         >
-          <p>
-            {brand.pack.copy.shortName} has not confirmed FCRA registration for the trust. Until it
-            does, a contribution from a source outside India will be refused at the point of
-            collection rather than accepted and sorted out later — under the Foreign Contribution
-            (Regulation) Act, taking it first and asking afterwards is the offence.
-          </p>
-          <p className="mt-2">
-            If you are giving from abroad, the donate form will tell you before you enter an amount.
-          </p>
-        </Alert>
+          <div className="space-y-2">
+            <p>
+              {shortName} has not confirmed FCRA registration for the trust. Until it does, a contribution from a
+              source outside India will be refused at the point of collection rather than accepted and sorted out
+              later — under the Foreign Contribution (Regulation) Act, taking it first and asking afterwards is the
+              offence.
+            </p>
+            <p>If you are giving from abroad, the donate form will tell you before you enter an amount.</p>
+          </div>
+        </Disclosure>
       ) : null}
 
-      <div className="grid gap-gutter sm:grid-cols-3">
-        <Stat
-          label="Raised across all campaigns"
-          value={formatCompactINR(totalRaised)}
-          hint={`${campaigns.length} campaigns since the fund opened`}
-          icon={<Heart className="size-4" />}
+      {featured ? (
+        <FeaturedCampaign campaign={featured} tz={tz} />
+      ) : (
+        <EmptyState
+          icon={<Heart className="size-5" />}
+          title={`The ${officeName} has not opened a campaign yet.`}
+          description={ways.length ? 'There are other ways to give back below.' : undefined}
         />
-        <Stat
-          label="Alumni who have given"
-          value={formatNumber(totalDonors)}
-          hint="Counted per campaign, so repeat donors appear more than once"
-          icon={<Users className="size-4" />}
-        />
-        <Stat
-          label="Campaigns open now"
-          value={formatNumber(open.length)}
-          hint={open.length ? 'Accepting contributions' : 'Nothing open at the moment'}
-          icon={<CalendarClock className="size-4" />}
-        />
-      </div>
+      )}
 
-      <Section
-        title="Open campaigns"
-        description="Each one funds a named thing with a stated target. When the target is met the campaign closes."
-      >
-        {open.length === 0 ? (
-          <EmptyState
-            icon={<Heart className="size-5" />}
-            title="No campaign is open right now"
-            description="The alumni cell opens campaigns against a specific need — equipment, a scholarship cohort, a building. Closed campaigns and what they funded are listed below."
-          />
-        ) : (
-          <ul className="grid gap-gutter lg:grid-cols-2">
-            {open.map((c) => (
-              <li key={c.id} className="flex">
-                <CampaignCard campaign={c} />
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
+      {featured ? (
+        <ul className="flex flex-wrap gap-2" aria-label="How giving works here">
+          {pack.copy.donationReceiptNote ? (
+            <li>
+              <TrustChip icon={<Receipt />}>{pack.copy.donationReceiptNote}</TrustChip>
+            </li>
+          ) : null}
+          <li>
+            <TrustChip icon={<UserRound />}>Give in your own name or anonymously</TrustChip>
+          </li>
+        </ul>
+      ) : null}
 
-      {past.length ? (
-        <Section
-          title="Closed campaigns"
-          description="Kept visible on purpose. A giving page that only shows what is open tells a donor nothing about whether the last ask was delivered."
-        >
-          <ul className="grid gap-gutter lg:grid-cols-2">
-            {past.map((c) => (
-              <li key={c.id} className="flex">
-                <CampaignCard campaign={c} />
+      {others.length > 0 ? (
+        <Section title="Also open">
+          <ul className="grid grid-cols-1 gap-gutter md:grid-cols-2">
+            {others.map((c) => (
+              <li key={c.id} className="min-w-0">
+                <OpenCampaignCard campaign={c} tz={tz} />
               </li>
             ))}
           </ul>
         </Section>
       ) : null}
 
-      <Section title="How giving is handled here">
-        <div className="grid gap-gutter md:grid-cols-3">
-          <Card>
-            <CardHeader>
-              <CardTitle as="h3" className="text-md">
-                <Receipt className="mb-1 size-4 text-muted" aria-hidden="true" />
-                <span className="block">80G receipts</span>
-              </CardTitle>
-            </CardHeader>
-            <CardBody className="pt-1 text-sm text-secondary">
-              Receipts are issued against the trust&rsquo;s 80G registration and emailed within
-              seven working days. PAN is required above ₹50,000 — without it the receipt cannot be
-              filed against your return.
-            </CardBody>
-          </Card>
+      {past.length > 0 ? (
+        <Section id="impact" className="scroll-mt-20" title="What alumni giving has built">
+          <ul className="grid grid-cols-1 gap-gutter md:grid-cols-2">
+            {past.map((c) => (
+              <li key={c.id} className="min-w-0">
+                <OutcomeCard campaign={c} timing={timing} />
+              </li>
+            ))}
+          </ul>
+        </Section>
+      ) : null}
 
-          <Card>
-            <CardHeader>
-              <CardTitle as="h3" className="text-md">
-                <Globe2 className="mb-1 size-4 text-muted" aria-hidden="true" />
-                <span className="block">FCRA segregation</span>
-              </CardTitle>
-            </CardHeader>
-            <CardBody className="pt-1 text-sm text-secondary">
-              Source country is captured at the point of collection, not reconstructed at audit
-              time. A foreign contribution is flagged, routed to the designated FCRA account, and
-              reported separately — or refused outright if the trust is not registered.
-            </CardBody>
-          </Card>
+      {ways.length > 0 ? (
+        <Section title="Other ways to give back">
+          <ul className="grid grid-cols-1 gap-gutter md:grid-cols-3">
+            {ways.map((w) => (
+              <li key={w.href} className="min-w-0">
+                <Card interactive className="relative flex h-full items-start gap-3 p-card">
+                  <span className="grid size-10 shrink-0 place-items-center rounded bg-brand-soft text-brand-soft-fg" aria-hidden="true">
+                    {w.icon}
+                  </span>
+                  <div className="min-w-0 space-y-1">
+                    <h3 className="font-display text-md font-semibold">
+                      <Link href={w.href} className="link-quiet after:absolute after:inset-0 after:rounded-lg">
+                        {w.title}
+                      </Link>
+                    </h3>
+                    <p className="text-sm text-secondary">{w.line}</p>
+                  </div>
+                </Card>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      ) : null}
 
-          <Card>
-            <CardHeader>
-              <CardTitle as="h3" className="text-md">
-                <ShieldAlert className="mb-1 size-4 text-muted" aria-hidden="true" />
-                <span className="block">Payments are not live</span>
-              </CardTitle>
-            </CardHeader>
-            <CardBody className="pt-1 text-sm text-secondary">
-              The gateway (Razorpay, UPI first) is not connected in this build. You can walk the
-              whole donate flow, and it will tell you plainly at the end that no money moved.
-            </CardBody>
-          </Card>
-        </div>
-      </Section>
+      {!featured && canManage ? (
+        <p className="text-sm text-secondary">
+          {capitalise(officeName)} staff open campaigns from the{' '}
+          <Link href="/admin/giving" className="link">
+            staff console
+          </Link>
+          .
+        </p>
+      ) : null}
     </div>
   );
 }
 
 // ---------------------------------------------------------------
-// Campaign card
+// Campaigns
 // ---------------------------------------------------------------
 
-function CampaignCard({ campaign }: { campaign: DonationCampaign }) {
-  const { title, slug, description, target, raised, donorCount, endsOn, active } = campaign;
+function progressOf(c: DonationCampaign) {
+  const pct = c.target ? c.raised / c.target : null;
+  return { pct, funded: c.target !== null && c.raised >= c.target };
+}
 
-  const left = daysUntil(endsOn);
-  const funded = target !== null && raised >= target;
-  const pct = target ? raised / target : null;
+function daysLeftLabel(endsOn: string | null, tz: string): string | null {
+  if (!endsOn) return null;
+  const n = daysUntil(endsOn, tz);
+  if (n < 0) return null;
+  return n === 0 ? 'Closes today' : n === 1 ? '1 day left' : `${n} days left`;
+}
+
+/** The campaign's own image, else one real figure. Never a campus photo. */
+function CampaignArt({ campaign, aspect }: { campaign: DonationCampaign; aspect: '16/9' | '21/9' }) {
+  const { pct } = progressOf(campaign);
+  const motif =
+    campaign.donorCount > 0 && pct !== null
+      ? formatPercent(Math.min(pct, 9.99))
+      : campaign.target
+        ? formatCompactINR(campaign.target)
+        : formatCompactINR(campaign.raised);
+  const label =
+    campaign.donorCount > 0 && pct !== null
+      ? `of ${formatCompactINR(campaign.target!)}`
+      : campaign.target
+        ? 'to raise'
+        : 'raised';
+  return (
+    <MediaFrame
+      src={campaign.coverImage}
+      alt=""
+      aspect={aspect}
+      fallback={<CoverArt motif={motif} label={label} />}
+    />
+  );
+}
+
+function FeaturedCampaign({ campaign, tz }: { campaign: DonationCampaign; tz: string }) {
+  const { pct, funded } = progressOf(campaign);
+  const left = daysLeftLabel(campaign.endsOn, tz);
+  const first = campaign.donorCount === 0;
 
   return (
-    <Card interactive as="article" className="flex w-full flex-col p-card">
-      <div className="flex flex-wrap items-center gap-2">
-        {funded ? (
-          <Badge tone="success" dot>
-            Target met
-          </Badge>
-        ) : null}
-        {!active ? <Badge tone="neutral">Closed</Badge> : null}
-        {active && left !== null && left <= 30 ? (
-          <Badge tone="warning">
-            {left <= 0 ? 'Closing today' : `${left} day${left === 1 ? '' : 's'} left`}
-          </Badge>
-        ) : null}
-      </div>
+    <Card as="section" aria-labelledby="featured-campaign" className="grid grid-cols-1 gap-5 p-card md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] md:items-center lg:gap-8">
+      <CampaignArt campaign={campaign} aspect="16/9" />
 
-      <h3 className="mt-2 font-display text-md font-semibold leading-snug">
-        <Link href={`/giving/${slug}`} className="link-quiet">
-          {title}
-        </Link>
-      </h3>
+      <div className="min-w-0 space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone="brand">Open now</Badge>
+          {left ? <Badge tone={daysUntil(campaign.endsOn!, tz) <= 14 ? 'warning' : 'neutral'}>{left}</Badge> : null}
+          {funded ? <Badge tone="success">Target met</Badge> : null}
+        </div>
+        <div className="space-y-2">
+          <h2 id="featured-campaign" className="font-display text-xl font-semibold">
+            <Link href={`/giving/${campaign.slug}`} className="link-quiet">
+              {campaign.title}
+            </Link>
+          </h2>
+          {campaign.description ? <p className="max-w-prose text-md text-secondary">{campaign.description}</p> : null}
+        </div>
 
-      {description ? (
-        <p className="mt-1.5 text-sm text-secondary">{description}</p>
-      ) : (
-        <p className="mt-1.5 text-sm text-muted">No description was written for this campaign.</p>
-      )}
-
-      <div className="mt-4 space-y-2">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <p className="font-display text-lg font-bold tabular">{formatCompactINR(raised)}</p>
-          {target ? (
-            <p className="text-sm text-secondary">
-              of <span className="font-semibold tabular">{formatCompactINR(target)}</span>
-              {pct !== null ? (
-                <span className="ml-1.5 text-muted tabular">({formatPercent(pct)})</span>
-              ) : null}
+        {first ? (
+          <p className="font-display text-lg font-semibold">Be the first to give</p>
+        ) : (
+          <div className="space-y-2">
+            <p className="flex flex-wrap items-baseline gap-x-2 text-sm text-secondary">
+              <span className="font-display text-xl font-bold tabular text-primary">{formatCompactINR(campaign.raised)}</span>
+              {campaign.target ? <span>of {formatCompactINR(campaign.target)}</span> : <span>raised</span>}
+              {pct !== null ? <span className="tabular">· {formatPercent(pct)}</span> : null}
             </p>
-          ) : (
-            <p className="text-sm text-muted">No target set</p>
-          )}
-        </div>
+            {campaign.target ? (
+              <Progress
+                value={campaign.raised}
+                max={campaign.target}
+                tone={funded ? 'success' : 'brand'}
+                label={`${campaign.title}: ${formatCompactINR(campaign.raised)} raised of ${formatCompactINR(campaign.target)}`}
+              />
+            ) : null}
+            <p className="text-sm text-secondary">
+              {formatNumber(campaign.donorCount)} alumni and staff have given
+            </p>
+          </div>
+        )}
 
-        {target ? (
-          <Progress
-            value={raised}
-            max={target}
-            tone={funded ? 'success' : 'brand'}
-            label={`${title}: ${formatCompactINR(raised)} raised of ${formatCompactINR(target)}`}
-          />
-        ) : null}
-      </div>
-
-      <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-secondary">
-        <div className="flex items-center gap-1.5">
-          <dt className="sr-only">Donors</dt>
-          <Users className="size-3.5 text-muted" aria-hidden="true" />
-          <dd className="tabular">
-            {formatNumber(donorCount)} donor{donorCount === 1 ? '' : 's'}
-          </dd>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <dt className="sr-only">Closing date</dt>
-          <CalendarClock className="size-3.5 text-muted" aria-hidden="true" />
-          <dd>
-            {endsOn
-              ? active
-                ? `Closes ${formatDate(endsOn)}`
-                : `Closed ${formatDate(endsOn)}`
-              : 'No closing date'}
-          </dd>
-        </div>
-      </dl>
-
-      <div className="mt-auto pt-4">
-        <ButtonLink
-          href={`/giving/${slug}`}
-          variant={active ? 'primary' : 'secondary'}
-          size="sm"
-        >
-          {active ? 'Give to this campaign' : 'See what it funded'}
+        <ButtonLink href={`/giving/${campaign.slug}`} size="lg" className="min-h-11">
+          Give
         </ButtonLink>
       </div>
+    </Card>
+  );
+}
+
+function OpenCampaignCard({ campaign, tz }: { campaign: DonationCampaign; tz: string }) {
+  const { pct, funded } = progressOf(campaign);
+  const left = daysLeftLabel(campaign.endsOn, tz);
+
+  return (
+    <Card as="article" interactive className="relative flex h-full flex-col gap-3 p-card">
+      <h3 className="font-display text-md font-semibold leading-snug">
+        <Link href={`/giving/${campaign.slug}`} className="link-quiet after:absolute after:inset-0 after:rounded-lg">
+          {campaign.title}
+        </Link>
+      </h3>
+      {campaign.description ? <p className="line-clamp-2 text-sm text-secondary">{campaign.description}</p> : null}
+      <div className="mt-auto space-y-2">
+        {campaign.donorCount === 0 ? (
+          <p className="text-sm font-medium">Be the first to give</p>
+        ) : (
+          <>
+            <p className="flex flex-wrap items-baseline gap-x-2 text-sm text-secondary">
+              <span className="font-semibold tabular text-primary">{formatCompactINR(campaign.raised)}</span>
+              {campaign.target ? <span>of {formatCompactINR(campaign.target)}</span> : <span>raised</span>}
+              {pct !== null ? <span className="tabular">· {formatPercent(pct)}</span> : null}
+            </p>
+            {campaign.target ? (
+              <Progress value={campaign.raised} max={campaign.target} tone={funded ? 'success' : 'brand'} label={`${campaign.title}: ${formatPercent(pct ?? 0)} raised`} />
+            ) : null}
+          </>
+        )}
+        <p className="flex items-center justify-between gap-2 text-sm text-secondary">
+          <span>{left ?? 'Open until the target is met'}</span>
+          <ArrowRight className="size-4 shrink-0 text-muted" aria-hidden="true" />
+        </p>
+      </div>
+    </Card>
+  );
+}
+
+function OutcomeCard({
+  campaign,
+  timing,
+}: {
+  campaign: DonationCampaign;
+  timing: { locale: string; timeZone: string };
+}) {
+  const { funded } = progressOf(campaign);
+
+  return (
+    <Card as="article" interactive className="relative flex h-full flex-col gap-3 p-card">
+      <div className="flex flex-wrap items-center gap-2">
+        {funded ? <Badge tone="success">Target met</Badge> : <Badge tone="neutral">Closed</Badge>}
+      </div>
+      <h3 className="font-display text-md font-semibold leading-snug">{campaign.title}</h3>
+      {campaign.description ? <p className="line-clamp-2 text-sm text-secondary">{campaign.description}</p> : null}
+      <dl className="mt-auto grid grid-cols-3 gap-3 border-t border-line pt-3 text-sm">
+        <div className="min-w-0">
+          <dt className="text-secondary">Raised</dt>
+          <dd className="font-semibold tabular">{formatCompactINR(campaign.raised)}</dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="text-secondary">Donors</dt>
+          <dd className="font-semibold tabular">{formatNumber(campaign.donorCount)}</dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="text-secondary">Closed</dt>
+          <dd className="font-semibold">{formatDate(campaign.endsOn, timing)}</dd>
+        </div>
+      </dl>
+      <Link
+        href={`/giving/${campaign.slug}`}
+        className="link inline-flex min-h-11 items-center gap-1.5 text-sm font-medium after:absolute after:inset-0 after:rounded-lg"
+      >
+        See the result
+        <ArrowRight className="size-3.5" aria-hidden="true" />
+      </Link>
     </Card>
   );
 }

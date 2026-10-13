@@ -3,8 +3,8 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Mail, TriangleAlert, UserRoundCheck } from 'lucide-react';
-import { Alert, Badge, Button, Card, CardBody, Field, Input, describedBy } from '@/components/ui';
+import { ArrowRight, GraduationCap, KeyRound, LifeBuoy, Mail } from 'lucide-react';
+import { Badge, Button, ButtonLink, Field, Input, Separator, describedBy } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
 /**
@@ -14,6 +14,12 @@ import { cn } from '@/lib/cn';
  * used for recovery and WhatsApp — never as the credential. An alumni
  * list where the phone number is the login is a list that locks out
  * everyone who changed operators, which is most of a 2014 batch.
+ *
+ * Below the form, in order: the path for a graduate who has never signed
+ * in (register with the roll number), help for the two people most likely
+ * to be stuck, and — in fixture mode only — the demonstration accounts.
+ * The demo block is last and always expanded: it is how every demo starts,
+ * and the e2e suite asserts its buttons are visible without interaction.
  *
  * This is the only client component on the page. The demo accounts are
  * resolved on the server and passed in already narrowed to three display
@@ -26,47 +32,57 @@ export interface DemoAccountView {
   description: string;
 }
 
-const GENERIC_FAILURE =
-  'We could not send a code just now. Check the address and try again in a moment.';
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+const MSG_EMPTY = 'Enter the email address you registered with.';
+const MSG_MALFORMED = 'That does not look like an email address — check for a typo.';
+const MSG_RATE_LIMITED = 'Too many codes requested from here. Wait a minute, then try again.';
+const MSG_FAILURE = 'We could not send a code just now. Check the address and try again in a moment.';
 
 export function LoginForm({
   demoAccounts,
-  supportEmail,
   next,
   initialEmail = '',
+  rollMid,
+  officeName,
+  otpMinutes,
 }: {
   demoAccounts: DemoAccountView[];
-  supportEmail?: string;
   next?: string;
   initialEmail?: string;
+  /** The roll-number label as it reads mid-sentence ("roll number"). */
+  rollMid: string;
+  /** Used mid-sentence: "Contact the {officeName}". */
+  officeName: string;
+  otpMinutes: number;
 }) {
   const router = useRouter();
+  const emailRef = React.useRef<HTMLInputElement>(null);
   const [email, setEmail] = React.useState(initialEmail);
   const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [errorCode, setErrorCode] = React.useState<string | null>(null);
 
-  // The kit's `Input` is a plain server-safe function component with no
-  // forwarded ref, so focus is moved by id rather than by threading a ref
-  // through the whole form layer for one call.
-  function focusEmail() {
-    const el = document.getElementById('email');
-    if (el instanceof HTMLInputElement) el.focus();
+  // Focus the field only where there is a real pointer. On a phone,
+  // focusing on load raises the keyboard over the Register path, which is
+  // what half the people arriving from a WhatsApp link actually need.
+  React.useEffect(() => {
+    if (window.matchMedia('(pointer: fine)').matches) emailRef.current?.focus();
+  }, []);
+
+  function fail(message: string) {
+    setError(message);
+    setPending(false);
+    emailRef.current?.focus();
   }
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const address = email.trim();
-    if (!address) {
-      setError('Enter the email address the college has for you.');
-      setErrorCode(null);
-      focusEmail();
-      return;
-    }
+    if (!address) return fail(MSG_EMPTY);
+    if (!EMAIL_SHAPE.test(address)) return fail(MSG_MALFORMED);
 
     setPending(true);
     setError(null);
-    setErrorCode(null);
 
     try {
       const res = await fetch('/api/auth/otp', {
@@ -81,16 +97,10 @@ export function LoginForm({
         | { error?: string; code?: string; devCode?: string; retryAfter?: number }
         | null;
 
+      // `/api/auth/otp` answers every well-formed address identically, by
+      // design, so there is no "no account on that address" case to handle.
       if (!res.ok || data?.error) {
-        setErrorCode(data?.code ?? null);
-        setError(
-          data?.error ??
-            (res.status === 429
-              ? 'Too many codes requested from here. Wait a minute before trying again.'
-              : GENERIC_FAILURE),
-        );
-        setPending(false);
-        return;
+        return fail(data?.error ?? (res.status === 429 ? MSG_RATE_LIMITED : MSG_FAILURE));
       }
 
       // Fixture mode echoes the code so a demo works without an email
@@ -108,30 +118,45 @@ export function LoginForm({
       if (next) params.set('next', next);
       router.push(`/verify?${params.toString()}`);
     } catch {
-      setError(GENERIC_FAILURE);
-      setPending(false);
+      fail(MSG_FAILURE);
     }
   }
 
+  function pickDemo(a: DemoAccountView) {
+    setEmail(a.email);
+    setError(null);
+    emailRef.current?.scrollIntoView({ block: 'center' });
+    // The submit button, not the input: moving focus into a text field
+    // would raise the keyboard on a phone for an address already filled.
+    document.getElementById('login-submit')?.focus();
+  }
+
+  const trimmed = email.trim();
+  const registerHref = EMAIL_SHAPE.test(trimmed)
+    ? `/claim?email=${encodeURIComponent(trimmed)}`
+    : '/claim';
+  const picked = demoAccounts.find((a) => a.email.toLowerCase() === trimmed.toLowerCase()) ?? null;
+
   return (
-    <div className="space-y-6">
+    <div>
       <form onSubmit={onSubmit} noValidate className="space-y-5">
         <Field
           htmlFor="email"
           label="Email address"
-          hint="Use the address the college has on file. If you are not sure which one that is, try the personal address you gave at graduation."
+          hint="The address you registered with, or the one your placement cell's invitation came to. Codes are only sent to registered addresses."
           error={error}
           required
         >
           <Input
+            ref={emailRef}
             id="email"
             name="email"
             type="email"
             inputMode="email"
             autoComplete="email"
-            autoFocus
             required
             sizeVariant="lg"
+            className="min-h-11"
             placeholder="you@example.com"
             leading={<Mail className="size-4" />}
             value={email}
@@ -141,95 +166,107 @@ export function LoginForm({
           />
         </Field>
 
-        {errorCode === 'unknown_email' ? (
-          <Alert tone="warning" title="No account on that address" icon={<TriangleAlert className="size-4" />}>
-            <p>
-              Nothing on the portal is registered to that address. If you graduated from here,{' '}
-              <Link href="/claim">claim your profile</Link> with your roll number and the alumni cell
-              will match you against the degree register.
-            </p>
-          </Alert>
-        ) : null}
-
-        <Button type="submit" size="lg" loading={pending} className="w-full">
+        <Button id="login-submit" type="submit" size="lg" loading={pending} className="min-h-11 w-full">
           {pending ? 'Sending your code' : 'Email me a sign-in code'}
           {pending ? null : <ArrowRight className="size-4" aria-hidden="true" />}
         </Button>
 
-        <p className="text-sm text-secondary">
-          Never signed in before?{' '}
-          <Link href="/claim" className="link">
-            Claim your profile
-          </Link>{' '}
-          — you will need your roll number and year of passing.
+        <p className="flex items-start gap-2 text-xs text-secondary">
+          <KeyRound className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          <span>Each code works once and expires after {otpMinutes} minutes.</span>
         </p>
       </form>
 
-      {demoAccounts.length > 0 ? (
-        <Card>
-          <CardBody className="space-y-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="space-y-1">
-                <h2 className="font-display text-base font-semibold">Demonstration accounts</h2>
-                <p className="text-sm text-secondary">
-                  This portal is running on seeded data with no database behind it. Pick a role to
-                  fill in its address, then send yourself a code — it is printed on the next screen.
-                </p>
-              </div>
-              <Badge tone="warning" dot>
-                Fixture mode
-              </Badge>
-            </div>
+      {/* ------------------------------------------------ New-member path */}
+      <div className="mt-8 space-y-3">
+        <Separator label="New here?" />
+        <p className="text-sm text-secondary">
+          Graduates register once with their {rollMid} and year of passing.
+        </p>
+        <ButtonLink href={registerHref} variant="secondary" size="lg" className="min-h-11 w-full">
+          Register with your {rollMid}
+        </ButtonLink>
+      </div>
 
-            <ul className="max-h-80 space-y-2 overflow-y-auto pr-1">
-              {demoAccounts.map((a) => {
-                const active = a.email.toLowerCase() === email.trim().toLowerCase();
-                return (
-                  <li key={a.email}>
-                    <button
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() => {
-                        setEmail(a.email);
-                        setError(null);
-                        setErrorCode(null);
-                        focusEmail();
-                      }}
+      {/* ------------------------------------------------------------ Help */}
+      <ul className="mt-6 space-y-3 text-sm text-secondary">
+        <li className="flex gap-2">
+          <GraduationCap className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
+          <span>
+            <strong className="font-semibold text-primary">Final-year student?</strong> Use the email
+            address your placement cell&apos;s invitation was sent to. You do not need to register.
+          </span>
+        </li>
+        <li className="flex gap-2">
+          <LifeBuoy className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
+          <span>
+            <strong className="font-semibold text-primary">Changed your email since graduating?</strong>{' '}
+            <Link className="link" href="/contact#cannot-sign-in">
+              Contact the {officeName}
+            </Link>{' '}
+            with your {rollMid} and year of passing.
+          </span>
+        </li>
+      </ul>
+
+      {/* ------------------------------------------- Demonstration accounts */}
+      {demoAccounts.length > 0 ? (
+        <section
+          aria-labelledby="demo-title"
+          className="mt-10 rounded-lg border border-dashed border-line-strong p-4"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 id="demo-title" className="text-sm font-semibold">
+              Demonstration accounts
+            </h2>
+            <Badge tone="warning" dot>
+              Fixture mode
+            </Badge>
+          </div>
+          <p className="mt-1 text-sm text-secondary">
+            Seeded data, and no email is sent. Pick a role, then choose Email me a sign-in code — the
+            code appears on the next screen.
+          </p>
+
+          <ul className="mt-3 grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
+            {demoAccounts.map((a) => {
+              const active = picked?.email === a.email;
+              return (
+                <li key={a.email}>
+                  <button
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => pickDemo(a)}
+                    className={cn(
+                      'min-h-11 w-full rounded border px-3 py-2 text-left transition-colors duration-fast ease-brand',
+                      active
+                        ? 'border-line-strong bg-brand-soft'
+                        : 'border-line bg-surface hover:bg-surface-sunken',
+                    )}
+                  >
+                    <span className={cn('block text-sm font-semibold', active && 'text-brand-soft-fg')}>
+                      {a.label}
+                    </span>
+                    <span
                       className={cn(
-                        'w-full rounded-lg border p-3 text-left transition-colors duration-fast ease-brand',
-                        active
-                          ? 'border-line-strong bg-brand-soft'
-                          : 'border-line bg-surface hover:bg-surface-sunken',
+                        'block truncate font-mono text-xs',
+                        active ? 'text-brand-soft-fg' : 'text-secondary',
                       )}
                     >
-                      <span className="flex items-center gap-2">
-                        <UserRoundCheck
-                          className={cn('size-4 shrink-0', active ? 'text-brand-soft-fg' : 'text-muted')}
-                          aria-hidden="true"
-                        />
-                        <span className={cn('font-semibold', active && 'text-brand-soft-fg')}>
-                          {a.label}
-                        </span>
-                        <span className="ml-auto font-mono text-xs text-muted">{a.email}</span>
-                      </span>
-                      <span className="mt-1 block text-sm text-secondary">{a.description}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </CardBody>
-        </Card>
-      ) : null}
+                      {a.email}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
 
-      {supportEmail ? (
-        <p className="text-sm text-secondary">
-          Changed your email since graduation and cannot get in? Write to{' '}
-          <a href={`mailto:${supportEmail}`} className="link">
-            {supportEmail}
-          </a>{' '}
-          with your roll number and year of passing.
-        </p>
+          <p aria-live="polite" className="mt-3 text-sm text-secondary">
+            {picked
+              ? `${picked.label}: ${picked.description}`
+              : 'Each role sees a different portal. Pick one to see what it can do.'}
+          </p>
+        </section>
       ) : null}
     </div>
   );

@@ -76,6 +76,30 @@
 
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
   --dur-fast: 120ms; --dur: 200ms; --dur-slow: 380ms;
+
+  /* Chart floor, restated from the ramps; the tenant tokens replace it. */
+  --chart-bar: var(--brand-600); --chart-bar-highlight: var(--accent-600); --chart-track: var(--border-strong);
+}
+
+/*
+ * Signed-in shell. The phone tab bar sets its height here so sticky
+ * action bars and sticky form actions sit above it, and it is 0 wherever
+ * there is no tab bar (desktop, the console, the vendor).
+ */
+:root { --shell-tabbar-h: 0px; }
+.has-tabbar { --shell-tabbar-h: calc(3.5rem + env(safe-area-inset-bottom)); }
+@media (min-width: 1024px) { .has-tabbar { --shell-tabbar-h: 0px; } }
+
+/* Chip rows and tab strips scroll sideways on phones; the fade says there is more. */
+@media (max-width: 639px) {
+  .scroll-fade-x { mask-image: linear-gradient(to right, black calc(100% - 1.5rem), transparent); }
+}
+
+.print-only { display: none; }
+@media print {
+  [data-print-hide] { display: none !important; }
+  .print-only { display: block; }
+  main { padding: 0 !important; }
 }
 
 @layer base {
@@ -174,6 +198,30 @@
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
   }
+
+  /*
+   * Light- and dark-ground logos, swapped with the theme. The same two
+   * conditions as the token CSS: an explicit toggle, or the OS when the
+   * user has not chosen.
+   */
+  .logo-on-light { display: block; }
+  .logo-on-dark { display: none; }
+  [data-theme='dark'] .logo-on-light { display: none; }
+  [data-theme='dark'] .logo-on-dark { display: block; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) .logo-on-light { display: none; }
+    :root:not([data-theme='light']) .logo-on-dark { display: block; }
+  }
+
+  /* The college band: the seed colour, the same in light and dark. Text on it uses band-* tokens only.
+     The tenant focus ring measures 2.2-2.95:1 on a dark band, so focus is drawn in the band's foreground.
+     Headings need an explicit text-band-fg (the base layer paints h1-h4 in --text-primary).
+     Never use .link, .link-quiet, text-primary or text-secondary on the band. */
+  .band-surface { background-color: var(--band); color: var(--band-fg); --focus-ring: var(--band-fg); }
+  /* A light island inside a band (e.g. a Card): restores page text and the page focus ring. */
+  .band-exit { color: var(--text-primary); --focus-ring: var(--focus-ring-surface); }
+  /* Landing hero over a photo (lg+). Text sits only in the solid 0-60% zone. */
+  .scrim-hero { background: linear-gradient(to right, var(--scrim) 0%, var(--scrim) 60%, var(--scrim-edge) 100%); }
 
   .link-quiet {
     color: inherit;

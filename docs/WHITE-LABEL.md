@@ -166,9 +166,9 @@ host is an allowlist that means nothing (`next.config.ts` says so at the top).
 
 | Field | Limit | Default | Notes |
 |---|---|---|---|
-| `portalName` | 2–60 | **required** | "DIET Connect", "Vydehi Connect". Appears in the title template as `%s · <portalName>`. |
+| `portalName` | 2–60 | **required** | "DIET Connect", "Tamarind Connect". Appears in the title template as `%s · <portalName>`. |
 | `institutionName` | 2–120 | **required** | The legal name, used in footers and notices. |
-| `shortName` | 1–24 | **required** | "DIET", "SVU". Used where the full name will not fit. |
+| `shortName` | 1–24 | **required** | "DIET", "Tamarind". Used where the full name will not fit. |
 | `tagline` | ≤160 | — | Under the logo and as the meta description. Omitted → the description falls back to "Alumni portal for `<institutionName>`". |
 | `heroHeadline` | ≤120 | — | The public landing headline. |
 | `heroEmphasis` | ≤60 | — | The phrase circled by a marker stroke in the hero. **Must appear verbatim inside `heroHeadline`** or nothing is circled. |

@@ -1,15 +1,17 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { Check, Clock, Hourglass, Mail } from 'lucide-react';
+import { Check, Clock, Hourglass, Info, Mail, MessageCircle } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
 import { getTenantBrand } from '@/lib/tenant';
+import { inSentence } from '@/lib/branding/copy';
+import { siteOrigin, whatsappShareUrl } from '@/lib/share';
 import { Alert, Badge, ButtonLink, Card, CardBody } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
 export const metadata: Metadata = {
-  title: 'Your claim is being reviewed',
-  description: 'What happens next after submitting an alumni verification claim.',
+  title: 'Your registration is being checked',
+  description: 'What happens after you register as an alumnus.',
 };
 
 /**
@@ -17,9 +19,20 @@ export const metadata: Metadata = {
  *
  * This page exists because the alternative — a toast that says
  * "submitted" and a redirect to the sign-in screen — makes people submit
- * the same claim four times and then email the college asking whether the
- * portal is broken. It says who has it, how long they take, and what to
- * do if the answer never comes.
+ * the same registration four times and then email the college asking
+ * whether the portal is broken. It says who has it, what they do with it,
+ * and what to do if the answer never comes.
+ *
+ * It states a review time only when the pack sets `reviewTurnaround`. A
+ * number typed into this component would be a promise the college never
+ * made. It says what happens in the registrant's terms — checked against
+ * the college's records, confirmed by a person — and never how: no
+ * matcher, scores, queues or notice versions.
+ *
+ * `?match=1` (sent by the registration form when the register matched
+ * exactly) marks the records check as done. It only changes which step is
+ * current; an exact match still waits for the office to confirm it, which
+ * is what the product does.
  */
 export default async function PendingPage({
   searchParams,
@@ -32,25 +45,44 @@ export default async function PendingPage({
 
   const sp = await searchParams;
   const email = typeof sp.email === 'string' ? sp.email.trim() : '';
+  const matched = sp.match === '1';
 
   const { brand } = (await getTenantBrand())!;
   const copy = brand.pack.copy;
+  const office = copy.officeName;
+  const rollMid = inSentence(copy.rollNumberLabel);
+
+  // The WhatsApp growth loop: somebody who has just registered is the
+  // likeliest person to forward the link to their batch group. The link
+  // is the portal's home page on this tenant's own host — never this
+  // page, which carries the registrant's address in its query string.
+  const shareHref = whatsappShareUrl(
+    copy.shareText ??
+      `${copy.portalName}, the alumni network of ${copy.institutionName}. Find your batch and register with your ${rollMid}:`,
+    `${await siteOrigin()}/`,
+  );
 
   const steps: Array<{ state: 'done' | 'current' | 'waiting'; title: string; body: string }> = [
     {
       state: 'done',
-      title: 'Claim received',
-      body: 'Your roll number, name, branch and year of passing are in the verification queue, with the consent you gave recorded against the notice version you were shown.',
+      title: 'Registration received',
+      body: `We have your ${rollMid}, name, branch and year of passing, and your agreement to check them.`,
     },
+    matched
+      ? {
+          state: 'done',
+          title: "Found in the college's records",
+          body: 'Your details matched the list of graduates the examinations branch keeps.',
+        }
+      : {
+          state: 'current',
+          title: "Checked against the college's records",
+          body: 'Your details are compared with the list of graduates the examinations branch keeps.',
+        },
     {
-      state: 'current',
-      title: 'Matched against the degree register',
-      body: 'The matcher scores your details against the records from the examinations branch and attaches the candidate rows it found. Nobody is asked to approve a claim with no evidence in front of them.',
-    },
-    {
-      state: 'waiting',
-      title: 'Reviewed by the alumni cell',
-      body: 'A person confirms the match — usually within three working days, longer around examinations and admissions. You are emailed either way, including if the answer is no.',
+      state: matched ? 'current' : 'waiting',
+      title: `Confirmed by the ${office}`,
+      body: `A person confirms the match and opens your account${copy.reviewTurnaround ? `, usually within ${copy.reviewTurnaround}` : ''}. You are emailed either way.`,
     },
   ];
 
@@ -60,7 +92,9 @@ export default async function PendingPage({
         <Badge tone="warning" dot>
           Awaiting verification
         </Badge>
-        <h1 className="font-display text-display-sm font-bold">Your claim is with the alumni cell</h1>
+        <h1 className="font-display text-display-sm font-bold">
+          Your registration is with the {office}
+        </h1>
         <p className="text-secondary">
           {email ? (
             <>
@@ -79,7 +113,7 @@ export default async function PendingPage({
 
       <Card>
         <CardBody>
-          <h2 className="mb-5 font-display text-base font-semibold">Where your claim is</h2>
+          <h2 className="mb-5 font-display text-base font-semibold">Where your registration is</h2>
 
           <ol>
             {steps.map((step, i) => {
@@ -127,22 +161,28 @@ export default async function PendingPage({
         </CardBody>
       </Card>
 
-      <Alert tone="info" title="Do not submit the form again">
+      <Alert
+        tone="neutral"
+        title="Do not submit the form again"
+        icon={<Info className="size-4 text-brand-fg" />}
+      >
         <p>
-          A second claim on the same roll number does not move you up the queue — it creates a
-          duplicate the alumni cell has to close before they can look at the first one.
+          A second registration does not speed things up. It only gives the {office} a duplicate to
+          close first.
         </p>
       </Alert>
 
       <Card>
         <CardBody className="space-y-3">
-          <h2 className="font-display text-base font-semibold">If you have not heard in a week</h2>
+          <h2 className="font-display text-base font-semibold">
+            {copy.reviewTurnaround
+              ? `If you have not heard within ${copy.reviewTurnaround}`
+              : 'If you have not heard back'}
+          </h2>
           <p className="text-sm text-secondary">
-            Check the spam folder first — the approval email carries a sign-in code and mail
-            providers are suspicious of those. After that, write to the alumni cell with your roll
-            number, year of passing and a scan of your degree certificate. The most common reason a
-            claim stalls is a name that reads differently on the certificate than in the register,
-            and a scan settles it in one exchange.
+            Check your spam folder first. Then write to the {office} with your {rollMid}, year of
+            passing and a scan of your degree certificate. A name that reads differently on the
+            certificate is the most common hold-up, and a scan usually settles it in one exchange.
           </p>
           {copy.supportEmail ? (
             <p className="flex items-center gap-2 text-sm">
@@ -170,6 +210,27 @@ export default async function PendingPage({
           .
         </p>
       </div>
+
+      <section aria-labelledby="share-title" className="space-y-2">
+        <h2 id="share-title" className="font-display text-base font-semibold">
+          Bring your batch along
+        </h2>
+        <p className="text-sm text-secondary">
+          Forward the link to your batch group. Everyone registers with their own {rollMid}.
+        </p>
+        <ButtonLink
+          href={shareHref}
+          target="_blank"
+          rel="noreferrer noopener"
+          variant="secondary"
+          size="md"
+          className="min-h-11"
+        >
+          <MessageCircle className="size-4" aria-hidden="true" />
+          Share on WhatsApp
+          <span className="sr-only"> (opens WhatsApp)</span>
+        </ButtonLink>
+      </section>
     </div>
   );
 }

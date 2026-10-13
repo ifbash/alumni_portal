@@ -1,38 +1,39 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { CalendarDays, ImageOff, Images, ShieldCheck, Ticket, Users } from 'lucide-react';
+import { Camera, Images, Info, Ticket } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
 import { isActive } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
 import { getDepartments, getEventBySlug, searchDirectory } from '@/lib/data/repo';
-import { getAlbumBySlug, getAlbumPhotos } from '@/lib/data/content';
+import { getAlbumBySlug, getAlbumPhotos, getAlbums, type GalleryAlbum } from '@/lib/data/content';
 import type { MemberSummary } from '@/lib/data/types';
 import {
-  Alert,
-  Avatar,
   Badge,
   Breadcrumbs,
-  ButtonLink,
-  Card,
-  CardBody,
-  DetailRow,
+  CoverArt,
   EmptyState,
-  PageHeader,
+  MediaFrame,
+  Section,
+  ShareActions,
+  Tooltip,
 } from '@/components/ui';
-import { MarginNote } from '@/components/brand/Marks';
-import { formatDate, formatRelative, memberLine } from '@/lib/format';
+import { AlbumCard, isContributed, parseContributor } from '@/components/content';
+import { formatDate, memberLine } from '@/lib/format';
+import { mailto } from '@/lib/mailto';
+import { albumShareText } from '@/lib/share-text';
+import { siteOrigin, whatsappShareUrl } from '@/lib/share';
 import { PhotoWall, type PhotoTag, type WallPhoto } from './Lightbox';
 
 /**
  * One album.
  *
- * The interesting state is the one the fixtures insist on: an album that
- * exists, has a real photograph count against it, and has no image files
- * yet. That is exactly what a college looks like in week one, and it is
- * what the archive looked like the day the previous system's contract
- * lapsed — so the page is built for it rather than around it.
+ * The state the fixtures insist on is an album that exists, has a real
+ * photograph count against it, and has no image files yet. That is what a
+ * college looks like in week one, so it gets one plain sentence and a way
+ * to send photos in — no placeholder tiles, no pixel sizes. When some
+ * files have arrived, only those are drawn and the rest are counted.
  *
  * Tags resolve through `searchDirectory`, which applies the viewer's
  * projection and the directory's own visibility rules. A member the viewer
@@ -50,7 +51,7 @@ export async function generateMetadata({
   if (!album) return { title: 'Album not found' };
   return {
     title: album.title,
-    description: album.description ?? `${album.photoCount} photographs filed under ${album.title}.`,
+    description: album.description ?? `Photographs filed under ${album.title}.`,
   };
 }
 
@@ -73,9 +74,6 @@ export default async function AlbumPage({ params }: { params: Promise<{ slug: st
   if (!album) notFound();
 
   const photos = getAlbumPhotos(album.id);
-  const uploaded = photos.filter((p) => p.url).length;
-  const missing = photos.length - uploaded;
-  const unindexed = Math.max(0, album.photoCount - photos.length);
 
   const departments = getDepartments();
   const branchName = album.departmentCode
@@ -100,212 +98,192 @@ export default async function AlbumPage({ params }: { params: Promise<{ slug: st
     tags: photo.taggedMemberIds.map((id) => toTag(id, members.get(id))),
   }));
 
-  const taggedPeople = new Set(photos.flatMap((p) => p.taggedMemberIds));
-  const by = credit(album.contributedBy);
+  // Only photographs with a file are drawn; the rest are counted.
+  const shown = wall.filter((p) => p.url);
+  const coming = Math.max(0, album.photoCount - shown.length);
+  const hasTags = shown.some((p) => p.tags.length > 0);
+
+  const office = pack.copy.officeName;
+  const locale = pack.locale;
+  const support = pack.copy.supportEmail ?? null;
+  const coverSrc = album.coverImage ?? shown[0]?.url ?? null;
+  const creditLine = albumCredit(album.contributedBy, office);
+  const contributor = parseContributor(album.contributedBy);
+  // The count is stated only when there are photos to show; a count over
+  // an empty page is a promise the page then breaks.
+  const photoCount =
+    shown.length > 0 ? `${album.photoCount.toLocaleString('en-IN')} photo${album.photoCount === 1 ? '' : 's'}` : null;
+  const date = formatDate(album.takenOn, locale);
+  const facts = [date, photoCount, creditLine].filter(Boolean).join(' · ');
+  const place = memberLine([branchName, album.batchYear ? `Batch of ${album.batchYear}` : null]);
+
+  const origin = await siteOrigin();
+  const url = `${origin}/gallery/${album.slug}`;
+  const addHref = support
+    ? mailto(support, `Photos for ${album.title}`, [
+        `Album: ${album.title}`,
+        'How many photos I have:',
+        'How I would like to be credited:',
+        '',
+      ])
+    : null;
+  const untagHref = support
+    ? mailto(support, 'Please untag me', [`Album: ${album.title}`, 'Photo (a caption or a description):', ''])
+    : null;
+
+  // More from the same batch and the same branch, each only when there is
+  // something; an album filed college-wide gets the newest others instead.
+  const others = getAlbums().filter((a) => a.id !== album.id);
+  const sameBatch = album.batchYear ? others.filter((a) => a.batchYear === album.batchYear).slice(0, 4) : [];
+  const sameBranch = album.departmentCode
+    ? others.filter((a) => a.departmentCode === album.departmentCode && !sameBatch.includes(a)).slice(0, 4)
+    : [];
+  const rows: Array<{ title: string; albums: GalleryAlbum[] }> = [
+    ...(sameBatch.length ? [{ title: `More from Batch of ${album.batchYear}`, albums: sameBatch }] : []),
+    ...(sameBranch.length ? [{ title: `More from ${branchName ?? album.departmentCode}`, albums: sameBranch }] : []),
+  ];
+  if (rows.length === 0 && others.length > 0) rows.push({ title: 'More albums', albums: others.slice(0, 4) });
+
+  const actions = (
+    <div className="space-y-3">
+      <ShareActions
+        url={url}
+        whatsappHref={whatsappShareUrl(albumShareText(pack, album), url)}
+        title={album.title}
+        size="sm"
+      />
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        {event ? (
+          <Link href={`/events/${event.slug}`} className="link inline-flex min-h-11 items-center gap-1.5 text-sm">
+            <Ticket className="size-4 shrink-0 text-muted" aria-hidden="true" />
+            From the event: {event.title}
+          </Link>
+        ) : null}
+        {addHref ? (
+          <a href={addHref} className="link inline-flex min-h-11 items-center gap-1.5 text-sm">
+            <Camera className="size-4 shrink-0 text-muted" aria-hidden="true" />
+            Add your photos
+          </a>
+        ) : null}
+      </div>
+    </div>
+  );
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        breadcrumbs={
-          <Breadcrumbs
-            items={[
-              { label: 'Photographs', href: '/gallery' },
-              { label: album.title },
-            ]}
-          />
-        }
-        eyebrow={memberLine([
-          album.departmentCode ?? 'All branches',
-          album.batchYear ? `Batch of ${album.batchYear}` : null,
-        ])}
-        title={album.title}
-        description={
-          album.description ??
-          'No description was written for this album. What is in it is below, in the order the alumni cell filed it.'
-        }
-        actions={
-          <>
-            {event ? (
-              <ButtonLink href={`/events/${event.slug}`} variant="secondary">
-                <Ticket className="size-4" aria-hidden="true" />
-                {event.title}
-              </ButtonLink>
-            ) : null}
-            <ButtonLink href="/gallery" variant="ghost">
-              All albums
-            </ButtonLink>
-          </>
-        }
-      />
+    <div className="space-y-8">
+      <div className="space-y-4">
+        <Breadcrumbs items={[{ label: 'Photos', href: '/gallery' }, { label: album.title }]} />
 
-      <div className="grid gap-gutter lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
-        <div className="min-w-0 space-y-4">
-          {photos.length === 0 ? (
-            <EmptyState
-              icon={<Images className="size-5" />}
-              title="This album has no photographs in it yet"
-              description={
-                album.photoCount > 0
-                  ? `${album.photoCount.toLocaleString('en-IN')} photographs are counted against this album, but none of them has reached the portal. The alumni cell is working through the export from the previous system.`
-                  : 'The album was created ahead of the event it is for. Photographs appear here as they are uploaded.'
-              }
-              action={
-                <ButtonLink href="/gallery" variant="secondary">
-                  Back to the albums
-                </ButtonLink>
+        {coverSrc ? (
+          <>
+            <MediaFrame
+              src={coverSrc}
+              alt=""
+              aspect="16/9"
+              loading="eager"
+              className="lg:[&>div]:aspect-[21/9]"
+              overlay={
+                <div className="space-y-1">
+                  {place ? <p className="text-sm font-semibold">{place}</p> : null}
+                  <h1 className="font-display text-display-sm font-bold text-band-fg">{album.title}</h1>
+                  <p className="text-sm">{facts}</p>
+                </div>
               }
             />
-          ) : (
-            <>
-              {missing > 0 ? (
-                <Alert
-                  tone="neutral"
-                  icon={<ImageOff className="size-4" />}
-                  title={
-                    uploaded === 0
-                      ? 'None of these photographs has been uploaded yet'
-                      : `${missing} of these ${photos.length} photographs are still missing their file`
-                  }
-                >
-                  <p>
-                    The records exist — caption, dimensions, who is in them — but the image files have not arrived.
-                    Each tile below is drawn at the true shape of the photograph it is waiting for, so nothing on this
-                    page will move when they land.
-                  </p>
-                </Alert>
-              ) : null}
-
-              <PhotoWall photos={wall} albumTitle={album.title} />
-
-              {unindexed > 0 ? (
-                <p className="text-xs text-muted">
-                  Showing <span className="tabular">{photos.length}</span> of{' '}
-                  <span className="tabular">{album.photoCount.toLocaleString('en-IN')}</span> photographs recorded
-                  against this album. The rest are still on the alumni cell&rsquo;s drive, waiting on the migration
-                  from the college&rsquo;s previous system.
-                </p>
-              ) : null}
-            </>
-          )}
-
-          <Alert tone="neutral" icon={<ShieldCheck className="size-4" />} title="About the tags">
-            <p>
-              A tag is a link to that person&rsquo;s profile and nothing more. It releases no email address, no
-              mobile number and no employer — the profile applies its own rules to whoever opens it, exactly as it
-              does from the directory. If you are tagged and would rather not be, tell the alumni cell and the tag
-              comes off; nobody will ask you to justify it.
-            </p>
-          </Alert>
-        </div>
-
-        <aside className="space-y-4">
-          <Card>
-            <CardBody>
-              <h2 className="mb-2 font-display text-lg font-semibold">About this album</h2>
-              <dl>
-                <DetailRow label="Photographs">
-                  <span className="tabular">{album.photoCount.toLocaleString('en-IN')}</span>
-                  {unindexed > 0 ? (
-                    <span className="text-muted"> · {photos.length} in the portal</span>
-                  ) : null}
-                </DetailRow>
-                <DetailRow label="Taken">
-                  <span className="flex flex-wrap items-baseline gap-x-2">
-                    {formatDate(album.takenOn, pack.locale)}
-                    <span className="text-xs font-normal text-muted">{formatRelative(album.takenOn)}</span>
-                  </span>
-                </DetailRow>
-                <DetailRow label="Branch">{branchName ?? 'All branches'}</DetailRow>
-                <DetailRow label="Batch">
-                  {album.batchYear ? `Class of ${album.batchYear}` : <span className="text-muted">Not batch-specific</span>}
-                </DetailRow>
-                <DetailRow label="Event">
-                  {event ? (
-                    <Link href={`/events/${event.slug}`} className="link">
-                      {event.title}
-                    </Link>
-                  ) : album.eventSlug ? (
-                    <span className="text-muted">Linked to an event you cannot open</span>
-                  ) : (
-                    <span className="text-muted">Not from an event</span>
-                  )}
-                </DetailRow>
-                <DetailRow label="People tagged">
-                  {taggedPeople.size > 0 ? (
-                    <span className="tabular">{taggedPeople.size}</span>
-                  ) : (
-                    <span className="text-muted">Nobody yet</span>
-                  )}
-                </DetailRow>
-              </dl>
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardBody className="space-y-3">
-              <h2 className="font-display text-lg font-semibold">Contributed by</h2>
-
-              <div className="flex items-center gap-3">
-                <Avatar name={by.name} size="md" />
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{by.name}</p>
-                  <p className="truncate text-xs text-muted">{by.byMember ? by.line : 'College record'}</p>
-                </div>
-              </div>
-
-              {by.byMember ? (
-                <>
-                  <Badge tone="accent">
-                    <Users className="size-3" aria-hidden="true" />
-                    Sent in by a graduate
-                  </Badge>
-                  <MarginNote>
-                    These photographs are here because one person went looking for them. The credit stays on the
-                    album permanently — it is not removed when the alumni cell edits a caption or picks a different
-                    cover.
-                  </MarginNote>
-                </>
-              ) : (
-                <p className="text-sm text-secondary">
-                  Filed by the college. If you have photographs from the same day, the alumni cell will add them to
-                  this album under your own name.
-                </p>
-              )}
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardBody className="space-y-2">
-              <h2 className="flex items-center gap-2 font-display text-lg font-semibold">
-                <CalendarDays className="size-4 text-muted" aria-hidden="true" />
-                Near this one
-              </h2>
-              <p className="text-sm text-secondary">
-                {album.departmentCode || album.batchYear
-                  ? 'The archive filters on the same branch and batch this album is filed under.'
-                  : 'This album is filed college-wide, so it turns up under every branch filter as well as none.'}
+            {contributor ? <Badge tone="accent">Contributed</Badge> : null}
+            {album.description ? <p className="max-w-prose text-md text-secondary">{album.description}</p> : null}
+            {actions}
+          </>
+        ) : (
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-[18rem_minmax(0,1fr)] lg:items-start lg:gap-8">
+            <div className="aspect-[5/2] overflow-hidden rounded-lg border border-line lg:aspect-[3/2]">
+              <CoverArt
+                motif={album.batchYear ? String(album.batchYear) : (album.departmentCode ?? date.slice(-4))}
+                label={photoCount ?? undefined}
+                tone={isContributed(album) ? 'accent' : 'brand'}
+              />
+            </div>
+            <div className="min-w-0 space-y-3">
+              {place ? <p className="text-xs font-semibold uppercase tracking-wider text-brand-fg">{place}</p> : null}
+              <h1 className="font-display text-display-sm font-bold">{album.title}</h1>
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-secondary">
+                <span>{facts}</span>
+                {contributor ? <Badge tone="accent">Contributed</Badge> : null}
               </p>
-              <div className="flex flex-wrap gap-2 pt-1">
-                {album.departmentCode ? (
-                  <ButtonLink href={`/gallery?branch=${album.departmentCode}`} variant="secondary" size="sm">
-                    More from {album.departmentCode}
-                  </ButtonLink>
-                ) : null}
-                {album.batchYear ? (
-                  <ButtonLink href={`/gallery?batch=${album.batchYear}`} variant="secondary" size="sm">
-                    More from {album.batchYear}
-                  </ButtonLink>
-                ) : null}
-                {!album.departmentCode && !album.batchYear ? (
-                  <ButtonLink href="/gallery" variant="secondary" size="sm">
-                    Browse the archive
-                  </ButtonLink>
-                ) : null}
-              </div>
-            </CardBody>
-          </Card>
-        </aside>
+              {album.description ? <p className="max-w-prose text-md text-secondary">{album.description}</p> : null}
+              <div className="pt-1">{actions}</div>
+            </div>
+          </div>
+        )}
       </div>
+
+      {shown.length === 0 ? (
+        <EmptyState
+          variant="inline"
+          icon={<Images className="size-5" />}
+          // "Add your photos" sits in the actions above; one ask is enough.
+          title={
+            addHref
+              ? 'There are no photos to show in this album yet. Graduates who were there can add theirs.'
+              : 'There are no photos to show in this album yet.'
+          }
+        />
+      ) : (
+        <section aria-labelledby="album-photos" className="space-y-3">
+          <h2 id="album-photos" className="sr-only">
+            Photos
+          </h2>
+          {hasTags ? (
+            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-secondary">
+              <Tooltip label="Tags link to profiles and never share contact details">
+                <span
+                  tabIndex={0}
+                  aria-label="Tags link to profiles and never share contact details"
+                  className="inline-flex min-h-11 items-center gap-1.5 rounded focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
+                >
+                  <Info className="size-4 shrink-0 text-muted" aria-hidden="true" />
+                  About tags
+                </span>
+              </Tooltip>
+              {untagHref ? (
+                <a href={untagHref} className="link inline-flex min-h-11 items-center">
+                  Ask to be untagged
+                </a>
+              ) : null}
+            </p>
+          ) : null}
+          <PhotoWall
+            photos={shown}
+            albumTitle={album.title}
+            credit={contributor ? creditLine : null}
+          />
+          {coming > 0 ? (
+            <p className="text-sm text-secondary">+{coming.toLocaleString('en-IN')} more coming</p>
+          ) : null}
+        </section>
+      )}
+
+      {rows.map((row) => (
+        <Section key={row.title} title={row.title} className="border-t border-line pt-6">
+          <ul className="grid grid-cols-2 gap-x-4 gap-y-6 lg:grid-cols-4">
+            {row.albums.map((a) => (
+              <li key={a.id} className="min-w-0">
+                <AlbumCard
+                  album={a}
+                  coverSrc={a.coverImage ?? getAlbumPhotos(a.id).find((p) => p.url)?.url ?? null}
+                  href={`/gallery/${a.slug}`}
+                  locale={locale}
+                  credit={albumCredit(a.contributedBy, office)}
+                  showCount={getAlbumPhotos(a.id).some((p) => p.url)}
+                  className={
+                    a.coverImage || getAlbumPhotos(a.id).some((p) => p.url) ? undefined : '[&_figure>div]:aspect-[5/2]'
+                  }
+                />
+              </li>
+            ))}
+          </ul>
+        </Section>
+      ))}
     </div>
   );
 }
@@ -336,12 +314,18 @@ function toTag(id: string, member: MemberSummary | undefined): PhotoTag {
   };
 }
 
-/** Same rule as the album grid: "Name (BRANCH, YEAR)" is a member credit. */
-const MEMBER_CREDIT = /^(.+?)\s*\(([A-Za-z]+),\s*(\d{4})\)$/;
-
-function credit(contributedBy: string | null): { name: string; byMember: boolean; line: string | null } {
-  if (!contributedBy) return { name: 'Alumni Cell', byMember: false, line: null };
-  const match = MEMBER_CREDIT.exec(contributedBy.trim());
-  if (!match) return { name: contributedBy, byMember: false, line: null };
-  return { name: match[1]!, byMember: true, line: `${match[2]} · Batch of ${match[3]}` };
+/**
+ * One line of credit, as on the album grid: "Sent in by Sandeep Kolli ·
+ * CSE ’15" for a graduate's own album, "Posted by the alumni cell" for the
+ * office's, and any other college body named as it named itself.
+ */
+function albumCredit(contributedBy: string | null, office: string): string {
+  const member = parseContributor(contributedBy);
+  if (member) return `Sent in by ${member.name} · ${member.branch} ’${String(member.year).slice(-2)}`;
+  if (!contributedBy || contributedBy.trim().toLowerCase() === office.trim().toLowerCase()) {
+    return `Posted by the ${office}`;
+  }
+  const body = contributedBy.trim();
+  const needsThe = !/^the\b/i.test(body) && /\b(department|office|cell|club|committee|society|association|council)\b/i.test(body);
+  return `Posted by ${needsThe ? 'the ' : ''}${body}`;
 }

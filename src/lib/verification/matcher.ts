@@ -109,13 +109,26 @@ function tokenSimilarity(a: string, b: string): number {
   const [short, long] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
   let matched = 0;
 
+  // One-to-one: each token on the longer side can be claimed once. Without
+  // this, "Rao Rao" matches "Venkata Rao" twice over and scores a perfect
+  // name from a single surname.
+  const taken = new Set<number>();
+
   for (const t of short) {
-    const best = long.reduce((acc, u) => {
-      const d = levenshtein(t, u);
-      const sim = 1 - d / Math.max(t.length, u.length);
-      return Math.max(acc, sim);
-    }, 0);
-    if (best >= 0.8) matched += best;
+    let best = 0;
+    let bestIndex = -1;
+    long.forEach((u, i) => {
+      if (taken.has(i)) return;
+      const sim = 1 - levenshtein(t, u) / Math.max(t.length, u.length);
+      if (sim > best) {
+        best = sim;
+        bestIndex = i;
+      }
+    });
+    if (best >= 0.8) {
+      matched += best;
+      taken.add(bestIndex);
+    }
   }
 
   return matched / short.length;
@@ -208,6 +221,24 @@ export function matchClaim(claim: Claim, candidates: DegreeRecord[]): Outcome {
 
   const top = scored[0];
   const runnerUp = scored[1];
+
+  // Auto-approval creates an account from a self-registration with nobody
+  // looking, so it needs more than a roll number and a name. Rolls are
+  // sequential and guessable, and a full name is public.
+  //
+  //  - at least two name tokens, because the name score divides by the
+  //    shorter name and a lone surname otherwise reads as a perfect match;
+  //  - the department or the batch year agreeing as well, so the claim
+  //    carries something beyond the two easiest facts to look up.
+  //
+  // Either failing sends the claim to a human rather than rejecting it.
+  const enoughName = nameTokens(claim.name).length >= 2;
+  const corroborated =
+    top.reasons.includes('department_match') || top.reasons.includes('batch_match');
+  if (top.confidence >= AUTO_APPROVE_AT) {
+    if (!enoughName) reasons.push('name_too_short_to_auto_approve');
+    if (!corroborated) reasons.push('no_corroborating_detail');
+  }
 
   // Ambiguity guard: two plausible records means a human decides,
   // however high the top score. Twins and same-name cousins are common.

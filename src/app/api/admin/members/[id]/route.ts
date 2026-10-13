@@ -242,6 +242,43 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         );
       }
 
+      const ACTIVE = ['active_student', 'active_alumni'];
+      const opening = ACTIVE.includes(body.status) && !ACTIVE.includes(member.status);
+      const closing = !ACTIVE.includes(body.status) && ACTIVE.includes(member.status);
+
+      // Making someone active is a verification decision - it opens the
+      // directory, contact release and the giving module to them - and it
+      // belongs in the verification queue, where the degree register is
+      // consulted. `profile.write.any` is held by the alumni cell, which
+      // reviews claims but has no override; letting it set `active_alumni`
+      // here would be the override, by another door.
+      if (opening && !can(session, 'verification.override')) {
+        throw new HttpError(
+          403,
+          'override_required',
+          'Activating an account is a verification decision. Approve their claim in the verification queue, or ask the college admin to override it.',
+        );
+      }
+
+      // Never close the last way into the console. Roles are a set, but a
+      // lapsed administrator holds no capability at all, and a college with
+      // no active `college_admin` cannot grant roles, run a rollover or read
+      // a data request - only the vendor, who cannot do any of those, could
+      // help them.
+      if (
+        closing &&
+        member.roles.some((r) => r.role === 'college_admin') &&
+        !everyone.some(
+          (m) => m.id !== member.id && ACTIVE.includes(m.status) && m.roles.some((r) => r.role === 'college_admin'),
+        )
+      ) {
+        throw new HttpError(
+          409,
+          'last_admin',
+          'This is the only active college administrator. Grant the role to someone else first, then change this account.',
+        );
+      }
+
       after = {
         ...before,
         status: body.status,

@@ -1,48 +1,27 @@
 import type { Metadata } from 'next';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import {
-  CalendarDays,
-  CircleCheck,
-  Clock,
-  History,
-  Lock,
-  MapPin,
-  ShieldCheck,
-  Ticket,
-  Users,
-  Video,
-} from 'lucide-react';
+import { CalendarPlus, Images, Lock, MapPin } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap, can } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
 import { getEventBySlug, getEventRegistrations, getEvents } from '@/lib/data/repo';
-import {
-  Alert,
-  Badge,
-  Breadcrumbs,
-  ButtonLink,
-  Card,
-  CardBody,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  DetailRow,
-  EmptyState,
-  PageHeader,
-} from '@/components/ui';
-import {
-  formatCurrency,
-  formatDate,
-  formatDateRange,
-  formatDateTime,
-  formatRelative,
-} from '@/lib/format';
-import { TicketCode } from './TicketCode';
+import { getAlbums } from '@/lib/data/content';
+import { Breadcrumbs, ButtonLink, DetailRow, Disclosure } from '@/components/ui';
+import { Crest } from '@/components/brand/Crest';
+import { Logo } from '@/components/brand/Logo';
+import { formatCurrency, formatDate } from '@/lib/format';
+import { isOnlineVenue, seatStatus } from '@/lib/event-status';
+import { directionsUrl } from '@/lib/maps';
+import { mailto } from '@/lib/mailto';
+import { siteOrigin } from '@/lib/share';
+import { calendarLinks, whenLine } from '../../calendar';
+import { ShowAtDesk, TicketCode } from './TicketCode';
 
 /**
- * The viewer's own registration.
+ * The viewer's own pass.
  *
  * Eligibility is decided upstream by `getEventBySlug()` — an alumni-only
  * event is not addressable by a student and an unpublished draft needs
@@ -51,8 +30,11 @@ import { TicketCode } from './TicketCode';
  *
  * Not being registered is *not* one of those outcomes. Somebody who taps
  * a ticket link on WhatsApp before they have signed up has made an
- * ordinary mistake, and the answer to it is the registration form, not a
+ * ordinary mistake, and the answer to it is the way to register, not a
  * dead end.
+ *
+ * The pass is built to fit one phone screen: the college on the band, the
+ * event, the holder, and the code, with the rest behind "Details".
  */
 
 export async function generateMetadata({
@@ -67,7 +49,7 @@ export async function generateMetadata({
   if (!event) return { title: 'Event not found' };
   return {
     title: `Your ticket · ${event.title}`,
-    description: `Check-in code and registration details for ${event.title}.`,
+    description: `Your pass for ${event.title}.`,
   };
 }
 
@@ -97,6 +79,7 @@ export default async function EventTicketPage({
   const currency = pack.locale.currency;
   const timing = { locale, timeZone };
   const money = (n: number) => formatCurrency(n, { locale, currency });
+  const office = pack.copy.officeName;
 
   // Past-or-upcoming comes from the repo's own clock rather than a second
   // one invented here, so this page and the event page cannot disagree
@@ -111,314 +94,214 @@ export default async function EventTicketPage({
   const registration =
     getEventRegistrations(event.id).find((r) => r.memberId === session.memberId) ?? null;
 
-  const online = Boolean(event.venue && /online|zoom|meet|webinar|link/i.test(event.venue));
-  const amountLabel = registration
-    ? registration.amountPaid > 0
-      ? money(registration.amountPaid * (1 + registration.guests))
-      : 'Free'
-    : 'Free';
-
-  const heading = (
-    <PageHeader
-      breadcrumbs={
-        <Breadcrumbs
-          items={[
-            { label: 'Events', href: '/events' },
-            { label: event.title, href: `/events/${event.slug}` },
-            { label: 'Your ticket' },
-          ]}
-        />
-      }
-      eyebrow={event.title}
-      title="Your ticket"
-      description={
-        <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="inline-flex items-center gap-1.5">
-            <CalendarDays className="size-3.5 text-muted" aria-hidden="true" />
-            {formatDateRange(event.startsAt, event.endsAt, timing)}
-          </span>
-          {event.venue ? (
-            <span className="inline-flex items-center gap-1.5">
-              {online ? (
-                <Video className="size-3.5 text-muted" aria-hidden="true" />
-              ) : (
-                <MapPin className="size-3.5 text-muted" aria-hidden="true" />
-              )}
-              {event.venue}
-            </span>
-          ) : null}
-        </span>
-      }
-      actions={
-        registration ? (
-          <Badge tone={registration.checkedInAt ? 'success' : isPast ? 'neutral' : 'brand'} dot>
-            {registration.checkedInAt ? 'Checked in' : isPast ? 'On the list' : 'Registered'}
-          </Badge>
-        ) : null
-      }
-    />
-  );
+  const online = isOnlineVenue(event.venue);
+  const eventHref = `/events/${event.slug}`;
+  const origin = await siteOrigin();
+  const calendar = calendarLinks(event, {
+    url: `${origin}${eventHref}`,
+    addressLines: pack.copy.addressLines,
+    timeZone,
+  });
+  const directions = isPast ? null : directionsUrl(event.venue, pack.copy.addressLines);
+  const album = pack.features.gallery ? (getAlbums().find((a) => a.eventSlug === event.slug) ?? null) : null;
+  const guests = registration?.guests ?? 0;
 
   // ---------------------------------------------------------------
-  // No registration — an ordinary mistake, not a refusal
+  // What sits in the pass below the perforation
   // ---------------------------------------------------------------
 
-  if (!registration) {
-    return (
-      <div className="space-y-6">
-        {heading}
+  let stub: ReactNode;
+  let actions: ReactNode = null;
+  let note: ReactNode = null;
 
-        <EmptyState
-          icon={<Ticket className="size-5" />}
-          title="You do not have a ticket for this one"
-          description={
-            isPast
-              ? `${event.title} has already been held, and there is no registration on file against your name.`
-              : `Nothing is held for you at the desk for ${event.title}. Registering takes one tap and puts you on the check-in list.`
-          }
-          action={
-            <div className="flex flex-wrap justify-center gap-2">
-              <ButtonLink href={`/events/${event.slug}`}>
-                {isPast ? 'Open the event' : 'Open the event and register'}
-              </ButtonLink>
-              <ButtonLink href="/events?when=upcoming" variant="secondary">
-                What is coming up
-              </ButtonLink>
-            </div>
-          }
-        />
-
-        <Card className="mx-auto max-w-prose">
-          <CardBody className="space-y-3 text-sm text-secondary">
-            <p>
-              {canRegister
-                ? 'A ticket appears here the moment you register. It carries a check-in code the alumni cell scans or types at the desk — there is no printed pass and nothing arrives by post.'
-                : 'You are here as an organiser. Registration is a member action — your roles carry event.create.any and event.checkin, not event.register, so there is no ticket to issue against your name.'}
+  if (registration && !isPast) {
+    stub = (
+      <>
+        {/* The desk finds people by name and batch first, so they lead. */}
+        <div className="flex items-end justify-between gap-4">
+          <p className="min-w-0">
+            <span className="block truncate font-display text-xl font-semibold">{registration.memberName}</span>
+            {registration.batchYear ? (
+              <span className="block text-sm text-secondary">Batch of {registration.batchYear}</span>
+            ) : null}
+          </p>
+          {guests > 0 ? (
+            <p className="shrink-0 text-right font-medium tabular">
+              +{guests} guest{guests === 1 ? '' : 's'}
             </p>
-            {canManage ? (
-              <p>
-                The full roster, with check-in, is in{' '}
-                <Link href="/admin/events" className="link">
-                  the events console
-                </Link>
-                .
-              </p>
-            ) : (
-              <p>
-                If someone registered on your behalf, they will have used their own account — the
-                ticket sits with them, and the desk needs whoever holds the code.
-              </p>
-            )}
-          </CardBody>
-        </Card>
+          ) : null}
+        </div>
+        <TicketCode registrationId={registration.id} />
+      </>
+    );
+    note = online ? (
+      <p className="text-sm text-secondary">An online event, so there is no desk to show this at. Keep it for your record.</p>
+    ) : (
+      <p className="text-sm text-secondary">
+        Show this at the registration desk. They find you by name, batch or this code. Carry a photo ID.
+      </p>
+    );
+    actions = (
+      <div className="grid grid-cols-2 gap-2 [&>*]:min-h-11">
+        {online ? null : (
+          <ShowAtDesk
+            registrationId={registration.id}
+            holderName={registration.memberName}
+            holderLine={registration.batchYear ? `Batch of ${registration.batchYear}` : null}
+            eventTitle={event.title}
+            guests={guests}
+            brand={<Logo pack={pack} variant="band" height={20} />}
+            className="col-span-2 w-full"
+          />
+        )}
+        <ButtonLink
+          href={calendar.icsHref}
+          download={calendar.icsFilename}
+          variant="secondary"
+          className={online || !directions ? 'col-span-2' : undefined}
+        >
+          <CalendarPlus className="size-4 shrink-0" aria-hidden="true" />
+          Add to calendar
+        </ButtonLink>
+        {directions ? (
+          <ButtonLink href={directions} target="_blank" rel="noreferrer noopener" variant="secondary">
+            <MapPin className="size-4 shrink-0" aria-hidden="true" />
+            Directions
+            <span className="sr-only"> (opens Google Maps in a new tab)</span>
+          </ButtonLink>
+        ) : null}
       </div>
+    );
+  } else if (registration && isPast) {
+    const reportHref = pack.copy.supportEmail
+      ? mailto(pack.copy.supportEmail, `Check-in not recorded — ${event.title}`, [
+          `Registration reference: ${registration.id}`,
+          'I attended, but my check-in was not recorded.',
+          '',
+        ])
+      : null;
+    stub = (
+      <p className="text-sm">
+        {registration.checkedInAt ? (
+          <span className="font-medium">You attended on {formatDate(registration.checkedInAt, timing)}.</span>
+        ) : (
+          <>
+            No check-in was recorded.{' '}
+            {reportHref ? (
+              <a href={reportHref} className="link">
+                Tell the {office}
+              </a>
+            ) : (
+              `Tell the ${office}`
+            )}{' '}
+            if that is wrong.
+          </>
+        )}
+      </p>
+    );
+  } else if (canManage) {
+    stub = <p className="text-sm font-medium">Organisers do not need a pass.</p>;
+    actions = (
+      <div className="grid gap-2 [&>*]:min-h-11">
+        <ButtonLink href={`/admin/events/${event.id}`} variant="secondary">
+          Open the attendee list
+        </ButtonLink>
+        {canRegister && !isPast && event.published ? (
+          <ButtonLink href={`${eventHref}#register`} variant="ghost">
+            Register for yourself
+          </ButtonLink>
+        ) : null}
+      </div>
+    );
+  } else if (isPast) {
+    stub = <p className="text-sm text-secondary">You were not registered for this event.</p>;
+  } else {
+    const full = seatStatus(event).full;
+    stub = (
+      <p className="text-sm text-secondary">
+        You are not registered for this event yet. Your pass appears here when you are.
+      </p>
+    );
+    actions = (
+      <ButtonLink href={`${eventHref}#register`} variant={full ? 'secondary' : 'primary'} className="min-h-11 w-full">
+        {full ? 'Full — ask for a seat' : 'Register'}
+      </ButtonLink>
     );
   }
 
-  // ---------------------------------------------------------------
-  // The ticket
-  // ---------------------------------------------------------------
-
-  const attended = Boolean(registration.checkedInAt);
+  if (isPast && album) {
+    actions = (
+      <ButtonLink href={`/gallery/${album.slug}`} className="min-h-11 w-full">
+        <Images className="size-4 shrink-0" aria-hidden="true" />
+        See photos from the day
+      </ButtonLink>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      {heading}
+    <div className="mx-auto max-w-md space-y-4">
+      <Breadcrumbs items={[{ label: 'Events', href: '/events' }, { label: event.title, href: eventHref }]} />
 
-      {isPast ? (
-        <Alert
-          tone={attended ? 'success' : 'neutral'}
-          title={attended ? 'You attended' : 'You were on the list, but no check-in was scanned'}
-          icon={attended ? <CircleCheck className="size-4" /> : <History className="size-4" />}
-        >
-          <p>
-            {event.title} was held {formatRelative(event.startsAt, timing)} —{' '}
-            {formatDate(event.startsAt, timing)}.{' '}
-            {attended
-              ? `Your check-in was recorded at the desk on ${formatDateTime(registration.checkedInAt, timing)}, and it counts towards the turnout the alumni cell reports for this event.`
-              : 'If you did attend, tell the alumni cell so the record matches — attendance is what the department quotes when it asks for the next event to be funded.'}
-          </p>
-        </Alert>
-      ) : null}
+      <article aria-labelledby="pass-title" className="overflow-hidden rounded-xl border border-line shadow-sm">
+        <header className="band-surface flex min-h-14 items-center justify-between gap-3 px-4 py-2.5">
+          <span className="flex min-w-0 items-center gap-2.5">
+            <Crest pack={pack} size={40} />
+            <Logo pack={pack} variant="band" height={20} />
+          </span>
+          <span className="shrink-0 text-xs font-semibold uppercase tracking-wider text-band-accent">Event pass</span>
+        </header>
 
-      <div className="grid gap-gutter lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <div className="min-w-0 space-y-6">
-          <Card>
-            <CardHeader className="flex-col items-start gap-1">
-              <CardTitle as="h2">
-                {isPast ? 'This ticket has been used' : 'Show this at the desk'}
-              </CardTitle>
-              <CardDescription>
-                {isPast
-                  ? 'The code stopped working when the event closed. It is kept here so your record of the day is complete.'
-                  : 'One code, one registration. It is tied to your account, so it identifies you whether it is scanned or typed.'}
-              </CardDescription>
-            </CardHeader>
+        {event.coverImage ? (
+          // The event's own cover only; never a campus photo. See next.config.ts on tenant URLs.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={event.coverImage} alt="" className="h-16 w-full object-cover" loading="eager" />
+        ) : null}
 
-            <CardBody className="pt-4">
-              {isPast ? (
-                <div className="space-y-4">
-                  <div className="flex flex-col items-start gap-3 rounded-lg border border-line bg-surface-sunken p-card">
-                    <Badge tone={attended ? 'success' : 'neutral'} dot>
-                      {attended ? 'Checked in at the desk' : 'No check-in recorded'}
-                    </Badge>
-                    <p className="text-sm text-secondary">
-                      {attended
-                        ? `Marked present on ${formatDateTime(registration.checkedInAt, timing)}${
-                            registration.guests > 0
-                              ? `, with ${registration.guests} guest${registration.guests === 1 ? '' : 's'} counted alongside you`
-                              : ''
-                          }.`
-                        : 'Your registration is on file. Nobody scanned or typed your code on the day, which usually means you did not make it — or that the queue at the door moved faster than the desk did.'}
-                    </p>
-                  </div>
+        <div className="band-exit space-y-4 bg-surface-raised px-4 py-4">
+          <div>
+            <h1 id="pass-title" className="font-display text-xl font-bold leading-snug">
+              <Link href={eventHref} className="link-quiet">
+                {event.title}
+              </Link>
+            </h1>
+            <p className="mt-1 text-sm text-secondary">{whenLine(event, locale, timeZone)}</p>
+            <p className="text-sm text-secondary">{event.venue ?? 'Venue to be announced'}</p>
+          </div>
 
-                  <p className="text-xs text-muted">
-                    Attendance is never removed from a past event by this screen. If it is wrong,
-                    the alumni cell corrects it against the check-in list, and the correction is
-                    recorded.
-                  </p>
-                </div>
-              ) : (
-                <TicketCode
-                  registrationId={registration.id}
-                  eventTitle={event.title}
-                  holderName={registration.memberName}
-                />
-              )}
-            </CardBody>
-          </Card>
+          <div aria-hidden="true" className="-mx-4 border-t border-dashed border-line-strong" />
 
-          <Card>
-            <CardHeader className="flex-col items-start gap-1">
-              <CardTitle as="h2">Your registration</CardTitle>
-              <CardDescription>
-                Exactly what the desk sees against your name, and nothing that belongs to anyone
-                else on the list.
-              </CardDescription>
-            </CardHeader>
-            <CardBody className="pt-2">
+          {stub}
+
+          {registration ? (
+            <Disclosure summary="Details" className="-mx-1">
               <dl className="divide-y divide-line">
-                <DetailRow label="Event">{event.title}</DetailRow>
-                <DetailRow label="When">
-                  {formatDateRange(event.startsAt, event.endsAt, timing)}
-                </DetailRow>
-                <DetailRow label={online ? 'Joining' : 'Where'}>
-                  {event.venue ?? <span className="font-normal text-muted">To be announced</span>}
-                </DetailRow>
-                <DetailRow label="In your name">{registration.memberName}</DetailRow>
-                <DetailRow label="Guests">
-                  {registration.guests > 0 ? (
-                    <span className="tabular">
-                      {registration.guests}
-                      <span className="ml-2 font-normal text-secondary">
-                        counted with you at the gate
-                      </span>
-                    </span>
-                  ) : (
-                    <span className="font-normal text-muted">Just you</span>
-                  )}
-                </DetailRow>
-                <DetailRow label="Amount paid">
-                  {registration.amountPaid > 0 ? (
-                    <span className="space-y-0.5">
-                      <span className="block tabular">{amountLabel}</span>
-                      {registration.guests > 0 ? (
-                        <span className="block text-xs font-normal text-secondary">
-                          {money(registration.amountPaid)} a head, {registration.guests + 1} people
-                        </span>
-                      ) : null}
-                    </span>
-                  ) : (
-                    <Badge tone="success">Free — no ticket to pay for</Badge>
-                  )}
-                </DetailRow>
-                <DetailRow label="Registered on">
-                  {formatDate(registration.createdAt, timing)}{' '}
-                  <span className="font-normal text-muted">
-                    ({formatRelative(registration.createdAt, timing)})
-                  </span>
-                </DetailRow>
                 <DetailRow label="Reference">
-                  <span className="font-mono text-xs text-secondary">{registration.id}</span>
+                  <span className="font-mono text-xs">{registration.id}</span>
                 </DetailRow>
+                <DetailRow label="Registered on">{formatDate(registration.createdAt, timing)}</DetailRow>
+                {registration.amountPaid > 0 ? (
+                  <DetailRow label="Ticket">
+                    <span className="tabular">
+                      {money(registration.amountPaid * (1 + guests))}
+                      {guests > 0 ? ` for ${guests + 1} people` : ''}
+                    </span>
+                  </DetailRow>
+                ) : null}
               </dl>
-            </CardBody>
-          </Card>
-        </div>
-
-        <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
-          {!isPast ? (
-            <Card>
-              <CardHeader className="flex-col items-start gap-1">
-                <CardTitle as="h2" className="text-md">
-                  At the desk
-                </CardTitle>
-              </CardHeader>
-              <CardBody className="space-y-3 pt-4 text-xs text-secondary">
-                <p className="flex gap-2">
-                  <Users className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden="true" />
-                  <span>
-                    Carry a photo ID as well. The code identifies the registration; the ID is what
-                    the volunteer checks it against when two people on the roster share a name,
-                    which in a branch of 240 happens more often than you would think.
-                  </span>
-                </p>
-                <p className="flex gap-2">
-                  <Ticket className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden="true" />
-                  <span>
-                    {registration.guests > 0
-                      ? `Your ${registration.guests} guest${registration.guests === 1 ? '' : 's'} come in on this one code — they do not need their own. Bringing more than you registered for slows the queue behind you.`
-                      : 'You registered for a seat on your own. If someone is coming with you, change the guest count on the event page before the day rather than at the door.'}
-                  </span>
-                </p>
-                <p className="flex gap-2">
-                  <Clock className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden="true" />
-                  <span>
-                    All times are {timeZone.replace('_', ' ')}. The desk opens before the start time
-                    shown above, and the queue is longest in the first twenty minutes.
-                  </span>
-                </p>
-              </CardBody>
-            </Card>
+            </Disclosure>
           ) : null}
+        </div>
+      </article>
 
-          <Card>
-            <CardHeader className="flex-col items-start gap-1">
-              <CardTitle as="h2" className="text-md">
-                Who sees this
-              </CardTitle>
-            </CardHeader>
-            <CardBody className="space-y-3 pt-4 text-xs text-secondary">
-              <p className="flex gap-2">
-                <Lock className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden="true" />
-                <span>
-                  This page is your own registration. The roster it is drawn from is visible to the
-                  alumni cell and to the department organising the event, and to no other member —
-                  who else is coming to a reunion is not public information.
-                </span>
-              </p>
-              <p className="flex gap-2">
-                <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden="true" />
-                <span>
-                  The code is derived from your registration reference, not from anything about you.
-                  Somebody reading it over your shoulder learns the reference and nothing more — no
-                  name, no batch, no contact detail.
-                </span>
-              </p>
-            </CardBody>
-          </Card>
+      {note}
+      {actions}
 
-          <ButtonLink
-            href={`/events/${event.slug}`}
-            variant="secondary"
-            size="sm"
-            className="w-full"
-          >
-            Back to the event
-          </ButtonLink>
-        </aside>
-      </div>
+      {registration ? (
+        <p className="flex items-start gap-2 text-xs text-secondary">
+          <Lock className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden="true" />
+          <span>Only you and the organisers can see this registration.</span>
+        </p>
+      ) : null}
     </div>
   );
 }

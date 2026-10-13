@@ -6,26 +6,12 @@ import { getTenantBrand } from '@/lib/tenant';
 import { getNews } from '@/lib/data/content';
 import { getDepartments } from '@/lib/data/repo';
 import { Breadcrumbs, PageHeader } from '@/components/ui';
-import { KIND_META, KIND_ORDER } from '../kinds';
+import { deskFor, type DeskRole } from '@/lib/branding/copy';
+import { siteOrigin } from '@/lib/share';
+import { KIND_META, KIND_ORDER, PINNED_CAP } from '../kinds';
 import { NewsForm, type KindOption } from './NewsForm';
 
-export const metadata = { title: 'Write a story' };
-
-/**
- * The desk a story is filed under, derived from the roles the author
- * actually holds.
- *
- * Members read the desk, not the person: "Alumni Cell" and "Office of the
- * Principal" carry weight that an individual name does not, and staff
- * leave. The individual is recorded in the audit log, which is where the
- * question "who wrote that" belongs.
- */
-const DESK_BY_ROLE: Array<[string, string]> = [
-  ['college_admin', 'Office of the Principal'],
-  ['alumni_cell_operator', 'Alumni Cell'],
-  ['placement_officer', 'Training & Placement Cell'],
-  ['platform_admin', 'Alumni Cell'],
-];
+export const metadata = { title: 'Write a story · Staff console' };
 
 export default async function NewNewsPage() {
   const { session, member: actor } = await getSessionMember();
@@ -43,17 +29,30 @@ export default async function NewNewsPage() {
   const departments = getDepartments();
   const held = new Set(session.roles.map((r) => r.role as string));
 
+  /**
+   * The desk a story is filed under. Members read the desk, not the
+   * person: the office carries weight an individual name does not, and
+   * staff leave. The college names its desks in the brand pack; the
+   * individual is recorded in the audit log.
+   */
+  const deskRole: DeskRole | null = held.has('college_admin')
+    ? 'college_admin'
+    : held.has('alumni_cell_operator')
+      ? 'alumni_cell_operator'
+      : held.has('placement_officer')
+        ? 'placement_officer'
+        : null;
   const hodDepartment = session.roles.find((r) => r.role === 'hod')?.departmentId ?? null;
-  const desk =
-    DESK_BY_ROLE.find(([role]) => held.has(role))?.[1] ??
-    (hodDepartment
-      ? `${departments.find((d) => d.code === hodDepartment)?.name ?? hodDepartment} Department`
-      : 'Alumni Cell');
+  const desk = deskRole
+    ? deskFor(pack.copy, deskRole)
+    : hodDepartment
+      ? `${departments.find((d) => d.code === hodDepartment)?.name ?? hodDepartment} department`
+      : deskFor(pack.copy, 'alumni_cell_operator');
 
   const kinds: KindOption[] = KIND_ORDER.map((value) => ({ value, ...KIND_META[value] }));
 
   const departmentOptions = [
-    { value: '', label: 'Every branch — not tied to a department' },
+    { value: '', label: 'Every branch' },
     ...departments.map((d) => ({ value: d.code, label: `${d.code} — ${d.name}` })),
   ];
 
@@ -62,21 +61,24 @@ export default async function NewNewsPage() {
   // story is exactly as broken as colliding with a live one.
   const takenSlugs = getNews({ includeDrafts: true }).map((n) => n.slug);
 
+  // Counted the way the server counts it: published stories only.
+  const pinnedCount = getNews().filter((n) => n.pinned).length;
+
   return (
     <div className="space-y-6">
       <PageHeader
         breadcrumbs={
           <Breadcrumbs
             items={[
-              { label: 'Admin', href: '/admin' },
+              { label: 'Staff console', href: '/admin' },
               { label: 'News', href: '/admin/news' },
               { label: 'Write a story' },
             ]}
           />
         }
-        eyebrow="Engagement"
+        eyebrow="News"
         title="Write a story"
-        description="Pick the kind first — it decides how the feed presents the story and whether publishing notifies anybody. Save a draft while the facts are still being checked; a draft is invisible to members and sends nothing."
+        description="Pick the kind first: it decides how the feed shows the story and whether anyone is notified."
       />
 
       <NewsForm
@@ -84,9 +86,11 @@ export default async function NewNewsPage() {
         departmentOptions={departmentOptions}
         takenSlugs={takenSlugs}
         authorDesk={desk}
-        actorName={actor?.fullName ?? 'the signed-in editor'}
-        portalName={pack.copy.portalName}
-        whatsappEnabled={pack.features.whatsapp}
+        actorName={actor?.fullName ?? null}
+        share={{ copy: pack.copy, locale: pack.locale }}
+        origin={await siteOrigin()}
+        pinnedCount={pinnedCount}
+        pinnedCap={PINNED_CAP}
       />
     </div>
   );

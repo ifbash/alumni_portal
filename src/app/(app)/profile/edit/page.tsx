@@ -1,11 +1,14 @@
 import type { Metadata } from 'next';
 import { notFound, redirect } from 'next/navigation';
-import { Breadcrumbs, PageHeader } from '@/components/ui';
+import { Eye } from 'lucide-react';
+import { Breadcrumbs, ButtonLink, PageHeader } from '@/components/ui';
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap } from '@/lib/auth/guard';
 import { getOwnProfile } from '@/lib/data/repo';
 import { getTenantBrand } from '@/lib/tenant';
-import { ProfileForm, type ProfileFormValues } from './ProfileForm';
+import { isVendorOnlySession } from '@/lib/navigation';
+import { CONNECTION_LIMITS } from '@/lib/config';
+import { ProfileForm, type ProfileFormCollege, type ProfileFormValues } from './ProfileForm';
 
 /**
  * Edit your own profile.
@@ -14,8 +17,8 @@ import { ProfileForm, type ProfileFormValues } from './ProfileForm';
  * finance or platform account can sign in and read its record, but has no
  * grant to edit member data anywhere, including on itself. The form is a
  * client leaf; everything it needs is resolved here on the server and
- * handed down, because a client component cannot be trusted with — or
- * even reach — the repository.
+ * handed down field by field. Contact details go to the owner's own form
+ * only; nothing placement-side is passed.
  */
 
 export const metadata: Metadata = {
@@ -31,7 +34,19 @@ export default async function ProfileEditPage() {
   if (!profile) notFound();
 
   const resolved = await getTenantBrand();
-  const supportEmail = resolved?.brand.pack.copy.supportEmail ?? null;
+  const pack = resolved?.brand.pack;
+  const supportEmail = pack?.copy.supportEmail ?? null;
+
+  const roles = new Set(profile.roles.map((r) => r.role));
+  const college: ProfileFormCollege = {
+    shortName: pack?.copy.shortName ?? 'college',
+    officeName: pack?.copy.officeName ?? 'alumni cell',
+    rollNumberLabel: pack?.copy.rollNumberLabel ?? 'Roll number',
+    whatsapp: Boolean(pack?.features.whatsapp),
+    audience: (roles.has('faculty') || roles.has('hod')) && !roles.has('alumni') ? 'faculty' : 'alumni',
+    openLimit: CONNECTION_LIMITS.studentOpenRequests,
+  };
+  const previewable = Boolean(pack?.features.directory) && !isVendorOnlySession(session);
 
   const values: ProfileFormValues = {
     fullName: profile.fullName,
@@ -67,8 +82,17 @@ export default async function ProfileEditPage() {
             ]}
           />
         }
+        eyebrow="My profile"
         title="Edit your profile"
-        description="Changes appear in the directory as soon as you save. Your contact details are stored separately and are not published by adding them here."
+        description="Your name and college record are fixed. Everything else here is yours to change."
+        actions={
+          previewable ? (
+            <ButtonLink href="/profile/preview" variant="secondary" className="min-h-11">
+              <Eye className="size-4" aria-hidden="true" />
+              What others see
+            </ButtonLink>
+          ) : null
+        }
       />
 
       <ProfileForm
@@ -85,6 +109,7 @@ export default async function ProfileEditPage() {
           isStudent: profile.isStudent,
         }}
         supportEmail={supportEmail}
+        college={college}
       />
     </div>
   );

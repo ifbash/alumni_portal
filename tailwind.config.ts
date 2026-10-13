@@ -45,6 +45,15 @@ const config: Config = {
         },
         marker: 'var(--marker)',
 
+        // The college band: the seed colour, the same in both modes. Text
+        // on it uses these tokens only; see `.band-surface` in globals.css.
+        band: { DEFAULT: 'var(--band)', fg: 'var(--band-fg)', muted: 'var(--band-muted)', accent: 'var(--band-accent)', rule: 'var(--band-rule)' },
+        // The only ground text may sit on over a photograph.
+        scrim: { DEFAULT: 'var(--scrim)', edge: 'var(--scrim-edge)' },
+        // Chart marks: bars at 3:1 on a card in both modes, the highlighted
+        // bar in the accent, the track a strong hairline. See tokens.ts.
+        chart: { bar: 'var(--chart-bar)', highlight: 'var(--chart-bar-highlight)', track: 'var(--chart-track)' },
+
         success: { DEFAULT: 'var(--success)', fg: 'var(--success-fg)', soft: 'var(--success-soft)', on: 'var(--success-on)' },
         warning: { DEFAULT: 'var(--warning)', fg: 'var(--warning-fg)', soft: 'var(--warning-soft)', on: 'var(--warning-on)' },
         danger: { DEFAULT: 'var(--danger)', fg: 'var(--danger-fg)', soft: 'var(--danger-soft)', on: 'var(--danger-on)' },

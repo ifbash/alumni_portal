@@ -53,11 +53,11 @@ export const dynamic = 'force-dynamic';
  * this route should draw one instead.
  *
  * A site-relative path is only handed off when the file is genuinely on
- * disk. `brands/diet.json` names `/brand/diet/og-card.png` and the
- * college has not sent it yet — `public/brand/diet/` is an empty folder —
- * so redirecting there unconditionally would turn every WhatsApp share of
- * the portal into a preview-less grey box. A missing asset falls back to
- * the generated card, which is the whole point of having one.
+ * disk. A pack that names a card the college has not sent yet would
+ * otherwise turn every WhatsApp share of the portal into a preview-less
+ * grey box (DIET's pack did exactly that until the reference was dropped).
+ * A missing asset falls back to the generated card, which is the whole
+ * point of having one.
  *
  * An `https://` reference is taken at its word: it is on a host we cannot
  * check without a network call, and this route makes none.

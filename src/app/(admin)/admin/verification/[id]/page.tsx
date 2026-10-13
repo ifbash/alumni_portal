@@ -1,35 +1,35 @@
+import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import {
   AlertTriangle,
   ArrowLeftRight,
+  ArrowRight,
   CheckCircle2,
   CircleSlash,
-  FileSearch,
   MinusCircle,
   ScanSearch,
-  ShieldCheck,
   XCircle,
 } from 'lucide-react';
 
 import {
-  Alert,
   Badge,
   ButtonLink,
   Breadcrumbs,
   Card,
   CardBody,
-  CardDescription,
   CardHeader,
   CardTitle,
   DetailRow,
+  Disclosure,
+  HowThisWorks,
   PageHeader,
-  Progress,
-  Section,
-  Separator,
-  TableWrap,
 } from '@/components/ui';
 import { getSession, getSessionMember } from '@/lib/auth/session';
 import { require as requireCap, can } from '@/lib/auth/guard';
+import { getTenantBrand } from '@/lib/tenant';
+import { canOpen } from '@/lib/navigation';
+import { capitalise, greetingFor, joinList } from '@/lib/branding/copy';
+import { firstNameOf } from '@/lib/identity';
 import { getDepartments, getVerificationClaims, searchDegreeRegister } from '@/lib/data/repo';
 import type { DegreeRecord, VerificationClaim } from '@/lib/data/types';
 import {
@@ -39,10 +39,18 @@ import {
   nameTokens,
   normaliseRoll,
 } from '@/lib/verification/matcher';
-import { formatDate, formatDateTime, formatRelative } from '@/lib/format';
+import { daysUntil, formatDate, formatDateTime, formatRelative, memberLine } from '@/lib/format';
+import { cn } from '@/lib/cn';
+import {
+  evidenceWords,
+  reasonLabel,
+  reasonTone,
+  rescoredCandidates,
+  sourceFileLabel,
+} from '../../_shared/verification-labels';
 import { ReviewActions, type ReviewCandidate } from '../ReviewActions';
 
-export const metadata = { title: 'Review a verification claim' };
+export const metadata = { title: 'Review a registration · Staff console' };
 
 // ---------------------------------------------------------------
 // Field-level comparison
@@ -75,6 +83,7 @@ interface FieldComparison {
   register: string;
   verdict: Verdict;
   note?: string;
+  mono?: boolean;
   /** Marked when this is the field that separates two identical-looking rows. */
   discriminating?: boolean;
 }
@@ -115,8 +124,9 @@ function compare(claim: VerificationClaim, record: DegreeRecord, contested: bool
       register: record.name,
       verdict: nameVerdict(claim.claimedName, record.name),
       note:
-        tokenKey(claim.claimedName) === tokenKey(record.name) && claim.claimedName !== record.name
-          ? 'Same name tokens in a different order — the register keeps surname first.'
+        tokenKey(claim.claimedName) === tokenKey(record.name) &&
+        nameTokens(claim.claimedName).join(' ') !== nameTokens(record.name).join(' ')
+          ? 'Same name, written in a different order'
           : undefined,
     },
     {
@@ -125,7 +135,7 @@ function compare(claim: VerificationClaim, record: DegreeRecord, contested: bool
       register: record.rollNumber,
       verdict: normaliseRoll(claim.claimedRoll) === normaliseRoll(record.rollNumber) ? 'match' : 'differs',
       discriminating: contested,
-      note: contested ? 'This is the field that separates the two rows.' : undefined,
+      mono: true,
     },
     {
       field: 'Branch',
@@ -150,124 +160,145 @@ function compare(claim: VerificationClaim, record: DegreeRecord, contested: bool
       register: record.admissionYear ? String(record.admissionYear) : '—',
       verdict: yearVerdict(derivedAdmission, record.admissionYear),
       discriminating: contested,
-      note: derivedAdmission
-        ? 'Read from the first two digits of the roll number the applicant typed — not something they were asked separately.'
-        : 'The roll number does not start with two year digits, so nothing can be derived from it.',
-    },
-    {
-      field: 'Programme',
-      claimed: '—',
-      register: record.programme ?? '—',
-      verdict: 'unknown',
-      note: 'Registration does not ask for the programme; it comes from the register.',
-    },
-    {
-      field: 'Source file',
-      claimed: '—',
-      register: record.sourceFile ?? 'unknown',
-      verdict: 'unknown',
-      discriminating: contested,
-      note: 'Which file from the examinations branch this row arrived in.',
     },
   ];
 }
 
-// ---------------------------------------------------------------
-// Matcher reasons
-// ---------------------------------------------------------------
-
-const REASON_LABEL: Record<string, string> = {
-  roll_exact: 'Roll number matches the register exactly',
-  name_exact: 'Name matches after normalisation',
-  name_close: 'Name is close after normalisation',
-  name_weak: 'Name overlaps only weakly',
-  name_mismatch: 'Name does not match',
-  department_match: 'Branch matches',
-  department_mismatch: 'Branch does not match',
-  batch_match: 'Year of passing matches',
-  batch_near: 'Year of passing is one year out',
-  batch_mismatch: 'Year of passing does not match',
-  ambiguous_match: 'Two register rows score too closely to separate',
-  batch_before_admission: 'Batch year is not after the admission year in the roll number',
-  low_confidence: 'No candidate scored high enough to act on',
-  no_register_match: 'No row in the register matched',
-  roll_format_invalid: 'Roll number is not in JNTU format',
+const FIELD_NAME: Record<string, string> = {
+  Name: 'the name',
+  'Roll number': 'roll number',
+  Branch: 'branch',
+  'Year of passing': 'year of passing',
+  'Admission year': 'admission year',
 };
 
-function reasonLabel(raw: string): string {
-  return REASON_LABEL[raw] ?? raw;
-}
-
-function reasonTone(raw: string): 'success' | 'warning' | 'danger' | 'neutral' {
-  if (/mismatch|invalid|no_register|low_confidence|does not/i.test(raw)) return 'danger';
-  if (/ambiguous|near|weak|differs|close|absent|order/i.test(raw)) return 'warning';
-  if (/exact|match/i.test(raw)) return 'success';
-  return 'neutral';
+/** One line, above the evidence, saying what the evidence says. */
+function verdictSummary(rows: FieldComparison[], roll: string): string {
+  const named = (v: Verdict) => rows.filter((r) => r.verdict === v).map((r) => FIELD_NAME[r.field] ?? r.field);
+  const matches = named('match').filter((f) => f !== 'the name');
+  const nameRow = rows.find((r) => r.field === 'Name');
+  const parts: string[] = [];
+  if (matches.length) parts.push(`Matches register row ${roll} on ${joinList(matches)}`);
+  else parts.push(`Register row ${roll} matches on nothing but the name`);
+  if (nameRow?.verdict === 'match') parts[0] += ', and the name agrees';
+  const close = named('near');
+  const differs = named('differs');
+  if (close.length) parts.push(`${capitalise(joinList(close))} ${close.length === 1 ? 'is' : 'are'} close`);
+  if (differs.length) parts.push(`${capitalise(joinList(differs))} ${differs.length === 1 ? 'differs' : 'differ'}`);
+  return `${parts.join('. ')}.`;
 }
 
 // ---------------------------------------------------------------
-// Register sweep
+// Comparison views
 // ---------------------------------------------------------------
 
-/**
- * What the register holds for the claimed batch, searched on the name the
- * applicant typed rather than on the matcher's shortlist.
- *
- * A reviewer should not have to open a second tab to answer "is there
- * anyone in that batch this could be". An empty result here is itself
- * evidence, and is written as such.
- */
-function RegisterSweep({
-  batchLabel,
-  batchTotal,
-  claimedName,
-  lookAlikes,
-}: {
-  batchLabel: string;
-  batchTotal: number;
-  claimedName: string;
-  lookAlikes: DegreeRecord[];
-}) {
+function ComparisonTable({ rows, roll }: { rows: FieldComparison[]; roll: string }) {
   return (
-    <div className="space-y-3 rounded-lg border border-line bg-surface p-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h3 className="flex items-center gap-2 text-sm font-semibold">
-          <ScanSearch className="size-4 text-muted" aria-hidden="true" />
-          The rest of {batchLabel}, swept for this name
-        </h3>
-        <p className="text-xs text-secondary tabular">{batchTotal} rows in that batch</p>
+    <>
+      {/* sm and up: side by side. */}
+      <div className="hidden overflow-x-auto rounded-lg border border-line sm:block">
+        <table className="w-full border-collapse text-sm">
+          <caption className="sr-only">The registration compared with register row {roll}, field by field</caption>
+          <thead className="border-b border-line bg-surface-sunken">
+            <tr>
+              {['Field', 'Applicant said', 'Degree register', 'Verdict'].map((h) => (
+                <th key={h} scope="col" className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-secondary">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {rows.map((r) => (
+              <tr key={r.field} className={r.discriminating ? 'bg-[color-mix(in_srgb,var(--warning)_9%,transparent)]' : undefined}>
+                <th scope="row" className="whitespace-nowrap px-3 py-2.5 text-left align-top font-medium">
+                  {r.field}
+                  {r.discriminating ? (
+                    <span className="mt-0.5 block text-xs font-semibold text-warning-fg">Separates the two rows</span>
+                  ) : null}
+                </th>
+                <td className={cn('px-3 py-2.5 align-top', r.mono && 'font-mono')}>{r.claimed}</td>
+                <td className="px-3 py-2.5 align-top">
+                  <span className={cn(r.mono && 'font-mono')}>{r.register}</span>
+                  {r.note ? <span className="mt-0.5 block text-xs text-secondary">{r.note}</span> : null}
+                </td>
+                <td className="px-3 py-2.5 align-top">
+                  <VerdictBadge verdict={r.verdict} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
-      {lookAlikes.length === 0 ? (
-        <p className="text-sm text-secondary">
-          Every row for that branch and year was compared against{' '}
-          <span className="font-medium text-primary">{claimedName}</span> on name tokens, ignoring order, initials and
-          case. None of them could be this person. The register has been looked at — this is an absence, not an
-          oversight.
-        </p>
-      ) : (
-        <>
-          <p className="text-sm text-secondary">
-            These carry a name that could be <span className="font-medium text-primary">{claimedName}</span> spelled
-            differently, in the same branch and year, but are not among the candidates above — the roll numbers do not
-            agree. One of them may still be the applicant under a roll they mistyped. A name alone is never enough:
-            ask for the memorandum of marks before binding an account to any of them.
-          </p>
-          <ul className="space-y-2">
-            {lookAlikes.map((r) => (
-              <li key={r.id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
-                <span className="font-mono font-medium">{r.rollNumber}</span>
-                <span className="min-w-0 flex-1 truncate">{r.name}</span>
-                <span className="text-xs text-secondary">
-                  admitted {r.admissionYear ?? '—'} ·{' '}
-                  <span className="font-mono">{r.sourceFile ?? 'source unknown'}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-    </div>
+      {/* Phones: one definition block per field, never a wide table. */}
+      <dl className="divide-y divide-line rounded-lg border border-line sm:hidden">
+        {rows.map((r) => (
+          <div
+            key={r.field}
+            className={cn('space-y-1.5 px-3 py-2.5', r.discriminating && 'bg-[color-mix(in_srgb,var(--warning)_9%,transparent)]')}
+          >
+            <dt className="flex items-center justify-between gap-3 text-sm font-medium">
+              <span>
+                {r.field}
+                {r.discriminating ? (
+                  <span className="block text-xs font-semibold text-warning-fg">Separates the two rows</span>
+                ) : null}
+              </span>
+              <VerdictBadge verdict={r.verdict} />
+            </dt>
+            <dd className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-sm">
+              <span className="text-secondary">Applicant said</span>
+              <span className={cn('break-words', r.mono && 'font-mono')}>{r.claimed}</span>
+              <span className="text-secondary">Register</span>
+              <span className="break-words">
+                <span className={cn(r.mono && 'font-mono')}>{r.register}</span>
+                {r.note ? <span className="block text-xs text-secondary">{r.note}</span> : null}
+              </span>
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </>
+  );
+}
+
+function ScoreMeter({ confidence }: { confidence: number }) {
+  const pct = Math.round(confidence * 100);
+  return (
+    <span className="block w-36 shrink-0 space-y-1">
+      <span className="flex items-baseline justify-between gap-2 text-sm">
+        <span className="font-medium">{evidenceWords(confidence)}</span>
+        <span className="tabular text-secondary">{pct}%</span>
+      </span>
+      <span className="block h-1.5 overflow-hidden rounded-full bg-chart-track" aria-hidden="true">
+        <span className="block h-full rounded-full bg-chart-bar" style={{ width: `${pct}%` }} />
+      </span>
+    </span>
+  );
+}
+
+function RollLink({ record, linkable }: { record: DegreeRecord; linkable: boolean }) {
+  return linkable ? (
+    <Link href={`/admin/degree-register/${record.id}`} className="font-mono link-quiet">
+      {record.rollNumber}
+    </Link>
+  ) : (
+    <span className="font-mono">{record.rollNumber}</span>
+  );
+}
+
+function RowList({ rows, linkable }: { rows: DegreeRecord[]; linkable: boolean }) {
+  return (
+    <ul className="divide-y divide-line text-sm">
+      {rows.map((r) => (
+        <li key={r.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-1.5">
+          <RollLink record={r} linkable={linkable} />
+          <span className="min-w-0 flex-1">{r.name}</span>
+          <span className="text-xs text-secondary">admitted {r.admissionYear ?? '—'}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -292,12 +323,19 @@ export default async function VerificationClaimPage({ params }: { params: Promis
   if (!claim) notFound();
 
   const { member } = await getSessionMember();
+  const resolved = await getTenantBrand();
+  if (!resolved) redirect('/login');
+  const pack = resolved.brand.pack;
+  const tz = pack.locale.timeZone;
+  const fmt = { locale: pack.locale.locale, timeZone: tz };
   const departments = getDepartments();
-  const wide = can(session, 'verification.review.any');
-  const hodScope = session.roles.find((r) => r.role === 'hod' && r.departmentId)?.departmentId ?? null;
-  const scopedTo = !wide && hodScope ? hodScope : null;
 
-  const ranked = [...claim.candidates].sort((a, b) => b.confidence - a.confidence);
+  const openRegister = canOpen(session, pack, '/admin/degree-register');
+  const openImports = canOpen(session, pack, '/admin/imports');
+
+  // Scored here by the matcher against what the applicant typed, so the
+  // score and any warning agree with the comparison table on the page.
+  const ranked = rescoredCandidates(claim).sort((a, b) => b.confidence - a.confidence);
   const top = ranked[0] ?? null;
   const runnerUp = ranked[1] ?? null;
   const gap = top && runnerUp ? top.confidence - runnerUp.confidence : 1;
@@ -313,9 +351,8 @@ export default async function VerificationClaimPage({ params }: { params: Promis
   /**
    * Rows elsewhere in the register that could be the same person: the same
    * branch, the same year of passing, and a name whose tokens are a subset
-   * of the other's. Register spellings differ between files — "Kandula
-   * Ravi Teja" in one, "Kandula R. Teja" in the next — so equality on the
-   * printed name would miss precisely the pair a reviewer needs to see.
+   * of the other's. Register spellings differ between files, so equality
+   * on the printed name would miss precisely the pair a reviewer needs.
    */
   const registerTwins = (record: DegreeRecord): DegreeRecord[] => {
     const mine = new Set(nameTokens(record.name));
@@ -336,19 +373,14 @@ export default async function VerificationClaimPage({ params }: { params: Promis
       .slice(0, 4);
   };
 
-  const twinsByCandidate = new Map<string, DegreeRecord[]>(
-    ranked.map((c) => [c.record.id, registerTwins(c.record)]),
-  );
+  const twinsByCandidate = new Map<string, DegreeRecord[]>(ranked.map((c) => [c.record.id, registerTwins(c.record)]));
   const anyTwins = homonymInQueue || [...twinsByCandidate.values()].some((v) => v.length > 0);
+  const contestedClaim = ranked.length > 1 && (homonymInQueue || ambiguous);
 
   /**
-   * A sweep of the claimed batch, run against the name the applicant
-   * typed rather than against the matcher's candidates.
-   *
-   * "An approver must never be asked to decide against no evidence"
-   * includes evidence of absence: when the sweep comes back empty, the
-   * reviewer knows the register was actually looked at, and has not been
-   * left to wonder whether the matcher simply missed something.
+   * A sweep of the claimed batch, run against the name the applicant typed
+   * rather than against the matcher's candidates. An empty result is
+   * evidence too: the register was looked at.
    */
   const batch = searchDegreeRegister('', {
     department: claim.claimedDepartmentCode ?? undefined,
@@ -367,7 +399,12 @@ export default async function VerificationClaimPage({ params }: { params: Promis
     })
     .slice(0, 5);
 
-  const batchLabel = `${claim.claimedDepartmentCode ?? 'every branch'} ${claim.claimedBatchYear ?? ''}`.trim();
+  const batchLabel = memberLine([claim.claimedDepartmentCode, claim.claimedBatchYear]) || 'the claimed batch';
+  const batchFile =
+    claim.claimedBatchYear && claim.claimedDepartmentCode
+      ? `the ${claim.claimedBatchYear} ${claim.claimedDepartmentCode} file`
+      : 'the file for that batch';
+  const branchName = departments.find((d) => d.code === claim.claimedDepartmentCode)?.name ?? null;
 
   const reviewCandidates: ReviewCandidate[] = ranked.map((c) => ({
     id: c.record.id,
@@ -376,7 +413,7 @@ export default async function VerificationClaimPage({ params }: { params: Promis
     departmentCode: c.record.departmentCode,
     yearOfPassing: c.record.yearOfPassing,
     admissionYear: c.record.admissionYear,
-    sourceFile: c.record.sourceFile,
+    sourceLabel: sourceFileLabel(c.record.sourceFile),
     confidence: c.confidence,
     contested: homonymInQueue || ambiguous || (twinsByCandidate.get(c.record.id)?.length ?? 0) > 0,
   }));
@@ -386,10 +423,38 @@ export default async function VerificationClaimPage({ params }: { params: Promis
       ? {
           status: claim.status,
           reviewedBy: claim.reviewedBy,
-          reviewedAt: formatDateTime(claim.reviewedAt),
+          reviewedAt: formatDateTime(claim.reviewedAt, fmt),
           note: claim.reviewNote,
         }
       : null;
+
+  // "Next registration": the next one in the queue's own order (oldest first),
+  // from the list this viewer can see.
+  const queue = getVerificationClaims(session, { status: 'queued' }).sort((a, b) => a.submittedAt.localeCompare(b.submittedAt));
+  const at = queue.findIndex((c) => c.id === claim.id);
+  const next = at >= 0 ? (queue[at + 1] ?? null) : (queue[0] ?? null);
+  const nextHref = next ? `/admin/verification/${next.id}` : null;
+
+  const waited = -daysUntil(claim.submittedAt, tz);
+  const late = claim.status === 'queued' && waited > 14;
+  const first = firstNameOf(claim.claimedName);
+  const office = capitalise(pack.copy.officeName);
+
+  const topRows = top ? compare(claim, top.record, contestedClaim || anyTwins) : [];
+  const summary = !top
+    ? 'No register row matches this registration.'
+    : contestedClaim
+      ? 'Two register rows could be this person. The roll number and the admission year inside it separate them.'
+      : verdictSummary(topRows, top.record.rollNumber);
+
+  const statusBadge =
+    claim.status === 'approved' ? (
+      <Badge tone="success">Approved</Badge>
+    ) : claim.status === 'rejected' ? (
+      <Badge tone="danger">Rejected</Badge>
+    ) : (
+      <Badge tone="brand">Waiting</Badge>
+    );
 
   return (
     <div className="space-y-6">
@@ -397,354 +462,288 @@ export default async function VerificationClaimPage({ params }: { params: Promis
         breadcrumbs={
           <Breadcrumbs
             items={[
-              { label: 'Admin', href: '/admin' },
+              { label: 'Staff console', href: '/admin' },
               { label: 'Verification queue', href: '/admin/verification' },
               { label: claim.claimedName },
             ]}
           />
         }
-        eyebrow={`Claim ${claim.id}`}
+        eyebrow="Registration"
         title={claim.claimedName}
-        description={`Submitted ${formatRelative(claim.submittedAt)} — ${formatDateTime(claim.submittedAt)}. Decide against the register, field by field.`}
-        actions={
+        description={
           <>
-            <ButtonLink href={`/admin/degree-register?q=${encodeURIComponent(claim.claimedRoll)}`} variant="secondary">
-              <FileSearch className="size-4" aria-hidden="true" />
-              Search the register
-            </ButtonLink>
-            <ButtonLink href="/admin/verification" variant="ghost">
-              Back to the queue
-            </ButtonLink>
+            {memberLine([claim.claimedDepartmentCode, claim.claimedBatchYear])} ·{' '}
+            <span className="font-mono">{claim.claimedRoll}</span> ·{' '}
+            {claim.status === 'queued'
+              ? waited <= 0
+                ? 'waiting since today'
+                : `waiting ${waited} ${waited === 1 ? 'day' : 'days'}`
+              : `submitted ${formatRelative(claim.submittedAt, fmt)}`}
           </>
+        }
+        meta={
+          <>
+            {statusBadge}
+            {late ? <Badge tone="warning">Over 14 days</Badge> : null}
+          </>
+        }
+        actions={
+          nextHref ? (
+            <ButtonLink href={nextHref} variant="secondary">
+              Next registration
+              <ArrowRight className="size-4" aria-hidden="true" />
+            </ButtonLink>
+          ) : null
         }
       />
 
-      {scopedTo ? (
-        <p className="text-xs text-muted">
-          <ShieldCheck className="mr-1 inline size-3.5 align-[-2px]" aria-hidden="true" />
-          You are reviewing within {scopedTo}. Claims outside your branch are not addressable from this console.
-        </p>
-      ) : null}
-
-      {anyTwins ? (
-        <Alert
-          tone="warning"
-          title="Two register rows carry this name in the same branch and year"
-          icon={<ArrowLeftRight className="size-4" />}
-        >
-          <p>
-            Name, branch and year of passing cannot separate these people — in a CSE cohort of 240 this is not rare. The
-            fields that <em>do</em> separate them are the roll number, the admission year encoded in it, and the source
-            file the row came from. Those three are marked below. If none of them settles it, ask the applicant for
-            their memorandum of marks rather than guessing.
-          </p>
-        </Alert>
-      ) : ambiguous ? (
-        <Alert tone="warning" title="The matcher cannot choose between two rows" icon={<AlertTriangle className="size-4" />}>
-          <p>
-            The top two candidates are within {Math.round(gap * 100)} points of each other, which is inside the
-            ambiguity guard of 15. That is why this claim is in front of a person instead of being approved
-            automatically.
-          </p>
-        </Alert>
-      ) : null}
-
-      <div className="grid items-start gap-gutter lg:grid-cols-[21rem_minmax(0,1fr)]">
-        {/* ---- What the applicant submitted ---- */}
-        <Card className="lg:sticky lg:top-4">
-          <CardHeader>
-            <div className="space-y-1">
-              <CardTitle as="h2">What the applicant submitted</CardTitle>
-              <CardDescription>Typed by the person registering. None of it is evidence on its own.</CardDescription>
-            </div>
-          </CardHeader>
-          <CardBody className="space-y-4">
-            <dl className="divide-y divide-line">
-              <DetailRow label="Name">{claim.claimedName}</DetailRow>
-              <DetailRow label="Roll number">
-                <span className="font-mono">{claim.claimedRoll}</span>
-              </DetailRow>
-              <DetailRow label="Branch">
-                {claim.claimedDepartmentCode ?? '—'}
-                {claim.claimedDepartmentCode ? (
-                  <span className="block text-xs font-normal text-secondary">
-                    {departments.find((d) => d.code === claim.claimedDepartmentCode)?.name ?? 'Unknown branch code'}
-                  </span>
-                ) : null}
-              </DetailRow>
-              <DetailRow label="Year of passing">
-                <span className="tabular">{claim.claimedBatchYear ?? '—'}</span>
-              </DetailRow>
-              <DetailRow label="Email">
-                <span className="break-all">{claim.email}</span>
-                <span className="block text-xs font-normal text-secondary">
-                  The login credential. Verified by OTP before this claim was created.
-                </span>
-              </DetailRow>
-              <DetailRow label="Mobile">
-                {claim.mobile ? (
-                  <>
-                    <span className="font-mono">{claim.mobile}</span>
-                    <span className="block text-xs font-normal text-secondary">
-                      Used for WhatsApp and recovery. Never a login credential.
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-secondary">Not given</span>
-                )}
-              </DetailRow>
-              <DetailRow label="Submitted">
-                <span className="tabular">{formatDate(claim.submittedAt)}</span>
-                <span className="block text-xs font-normal text-secondary">{formatRelative(claim.submittedAt)}</span>
-              </DetailRow>
-            </dl>
-
-            <Alert tone="neutral">
-              <p className="text-xs">
-                Registration collects the name, roll number, branch and year of passing. It does not ask for the
-                programme or the admission year — the admission year below is read out of the roll number itself.
+      {decided ? (
+        <Card>
+          <CardBody className="flex flex-wrap items-start gap-x-6 gap-y-3">
+            <span
+              className={cn(
+                'grid size-10 shrink-0 place-items-center rounded-full',
+                decided.status === 'approved' ? 'bg-success-soft text-success-fg' : 'bg-danger-soft text-danger-fg',
+              )}
+              aria-hidden="true"
+            >
+              {decided.status === 'approved' ? <CheckCircle2 className="size-5" /> : <XCircle className="size-5" />}
+            </span>
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="font-display text-lg font-semibold">
+                {decided.status === 'approved' ? 'Approved' : 'Rejected'} on {decided.reviewedAt}
               </p>
-            </Alert>
+              <p className="text-sm text-secondary">
+                By {decided.reviewedBy ?? 'an unrecorded reviewer'}.{' '}
+                {decided.note ? <>Reason: {decided.note}</> : 'No reason was recorded.'}
+              </p>
+            </div>
           </CardBody>
         </Card>
+      ) : null}
 
-        {/* ---- Candidate register rows ---- */}
-        <div className="space-y-gutter">
+      <div className="grid grid-cols-1 items-start gap-gutter lg:grid-cols-[minmax(0,1fr)_20rem]">
+        {/* ---- Evidence ---- */}
+        <div className="min-w-0 space-y-gutter lg:col-start-1">
+          <p
+            className={cn(
+              'flex items-start gap-2 rounded-lg border px-4 py-3 text-sm font-medium',
+              !top
+                ? 'border-[color-mix(in_srgb,currentColor_26%,transparent)] bg-danger-soft text-danger-fg'
+                : contestedClaim
+                  ? 'border-[color-mix(in_srgb,currentColor_26%,transparent)] bg-warning-soft text-warning-fg'
+                  : 'border-line bg-surface-raised text-primary',
+            )}
+          >
+            {!top ? (
+              <CircleSlash className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            ) : contestedClaim ? (
+              <ArrowLeftRight className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            ) : (
+              <ScanSearch className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
+            )}
+            <span>{summary}</span>
+          </p>
+
           {ranked.length === 0 ? (
             <Card>
-              <CardBody className="space-y-4">
-                <Alert
-                  tone="danger"
-                  title="No register row matches this claim"
-                  icon={<CircleSlash className="size-4" />}
-                >
-                  <p>
-                    Nothing in <span className="font-mono">degree_register</span> carries roll number{' '}
-                    <span className="font-mono">{claim.claimedRoll}</span>, and no row within two years of{' '}
-                    {claim.claimedBatchYear ?? 'the claimed batch'} carries this name in{' '}
-                    {claim.claimedDepartmentCode ?? 'this branch'}.
-                  </p>
-                </Alert>
-
-                <div className="space-y-2 text-sm">
-                  <p className="font-medium">There are exactly two honest explanations, and they need different actions.</p>
-                  <ol className="list-decimal space-y-2 pl-5 text-secondary">
-                    <li>
-                      <span className="font-medium text-primary">The batch file has not been loaded.</span> The register
-                      is built from files the examinations branch sends, one per year and branch. If{' '}
-                      <span className="font-mono">
-                        DIET_{claim.claimedBatchYear ?? 'YYYY'}_{claim.claimedDepartmentCode ?? 'BRANCH'}.csv
-                      </span>{' '}
-                      is not in the import history, the applicant is not at fault — chase the file, and leave the claim
-                      queued.
-                    </li>
-                    <li>
-                      <span className="font-medium text-primary">The roll number is wrong.</span> Ask for the memorandum
-                      of marks. A roll typed from memory eight years after graduating is wrong more often than anyone
-                      expects.
-                    </li>
-                  </ol>
-                  <p className="text-secondary">
-                    Approving with neither resolved puts an unverified person into the alumni directory. That is the one
-                    outcome this queue exists to prevent.
-                  </p>
-                </div>
-
-                <RegisterSweep
-                  batchLabel={batchLabel}
-                  batchTotal={batch.total}
-                  claimedName={claim.claimedName}
-                  lookAlikes={lookAlikes}
-                />
-
+              <CardBody className="space-y-4 text-sm">
+                <p className="text-secondary">
+                  Nothing in the register carries <span className="font-mono text-primary">{claim.claimedRoll}</span>,
+                  and no row near {claim.claimedBatchYear ?? 'that year'} carries this name in{' '}
+                  {claim.claimedDepartmentCode ?? 'this branch'}. Either {batchFile} has not been loaded yet,
+                  or the roll number is wrong.
+                </p>
                 <div className="flex flex-wrap gap-2">
-                  <ButtonLink href="/admin/imports" variant="secondary" size="sm">
-                    Check the import history
-                  </ButtonLink>
-                  <ButtonLink
-                    href={`/admin/degree-register?q=${encodeURIComponent(claim.claimedName.split(' ')[0] ?? '')}&year=${claim.claimedBatchYear ?? ''}`}
-                    variant="secondary"
-                    size="sm"
-                  >
-                    <ScanSearch className="size-4" aria-hidden="true" />
-                    Look for the name by hand
-                  </ButtonLink>
+                  {openImports ? (
+                    <ButtonLink href="/admin/imports" variant="secondary" size="sm">
+                      Check which files are loaded
+                    </ButtonLink>
+                  ) : null}
+                  {openRegister ? (
+                    <ButtonLink
+                      href={`/admin/degree-register?q=${encodeURIComponent(nameTokens(claim.claimedName)[0] ?? '')}${claim.claimedBatchYear ? `&year=${claim.claimedBatchYear}` : ''}`}
+                      variant="secondary"
+                      size="sm"
+                    >
+                      <ScanSearch className="size-4" aria-hidden="true" />
+                      Look for the name by hand
+                    </ButtonLink>
+                  ) : null}
                 </div>
               </CardBody>
             </Card>
           ) : (
             ranked.map((candidate, index) => {
               const twins = twinsByCandidate.get(candidate.record.id) ?? [];
-              const contested = homonymInQueue || ambiguous || twins.length > 0;
-              const rows = compare(claim, candidate.record, contested);
-              const pct = Math.round(candidate.confidence * 100);
-              const tone =
-                candidate.confidence >= AUTO_APPROVE_AT
-                  ? 'success'
-                  : candidate.confidence >= REVIEW_AT
-                    ? 'warning'
-                    : 'danger';
+              const contested = contestedClaim || twins.length > 0;
+              const rows = index === 0 ? topRows : compare(claim, candidate.record, contested);
+              const identityMatch = rows.some(
+                (r) => (r.field === 'Name' || r.field === 'Roll number') && (r.verdict === 'match' || r.verdict === 'near'),
+              );
+              const collapse = index > 0 && !contested && !identityMatch;
+              const record = candidate.record;
+              // What agrees is already green in the table; only what needs a
+              // second look is repeated as a chip.
+              const cautions = candidate.reasons.filter((r) => reasonTone(r) !== 'success');
+              const footnote = `From ${sourceFileLabel(record.sourceFile)}${record.programme ? ` · ${record.programme}` : ''}`;
+
+              const body = (
+                <div className="space-y-4">
+                  <ComparisonTable rows={rows} roll={record.rollNumber} />
+
+                  {cautions.length ? (
+                    <ul className="flex flex-wrap gap-1.5" aria-label="What needs a second look">
+                      {cautions.map((r) => (
+                        <li key={r}>
+                          <Badge tone={reasonTone(r)}>{reasonLabel(r)}</Badge>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+
+                  {twins.length > 0 ? (
+                    <div className="space-y-1 rounded-lg border border-line bg-surface p-3">
+                      <p className="text-sm font-medium">
+                        Also in {memberLine([record.departmentCode, record.yearOfPassing])} with this name
+                      </p>
+                      <RowList rows={twins} linkable={openRegister} />
+                    </div>
+                  ) : null}
+
+                  <p className="text-xs text-secondary">{footnote}</p>
+                </div>
+              );
+
+              if (collapse) {
+                return (
+                  <Disclosure
+                    key={record.id}
+                    summary={
+                      <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                        <span className="font-semibold">Candidate {index + 1}</span>
+                        <span className="font-mono text-secondary">{record.rollNumber}</span>
+                        <span className="text-secondary">
+                          {record.name} · {Math.round(candidate.confidence * 100)}% · nothing that identifies them matches
+                        </span>
+                      </span>
+                    }
+                  >
+                    {body}
+                  </Disclosure>
+                );
+              }
 
               return (
-                <Card key={candidate.record.id}>
-                  <CardHeader>
-                    <div className="min-w-0 space-y-1">
-                      <CardTitle as="h2">
-                        {index === 0 ? 'Best candidate' : `Candidate ${index + 1}`}
-                        <span className="ml-2 font-mono text-sm font-normal text-secondary">
-                          {candidate.record.rollNumber}
+                <Card key={record.id} className="min-w-0">
+                  <CardHeader className="flex-wrap">
+                    <div className="min-w-0 space-y-0.5">
+                      <CardTitle as="h2" className="text-md">
+                        {index === 0 ? 'Best candidate' : `Candidate ${index + 1}`}{' '}
+                        <span className="text-sm font-normal text-secondary">
+                          · <RollLink record={record} linkable={openRegister} />
                         </span>
                       </CardTitle>
-                      <CardDescription>
-                        {candidate.record.name} · {candidate.record.departmentCode ?? 'branch not recorded'} · passed{' '}
-                        {candidate.record.yearOfPassing ?? '—'}
-                      </CardDescription>
-                    </div>
-                    <div className="w-40 shrink-0 space-y-1">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="text-xs text-secondary">Confidence</span>
-                        <span className="font-display text-lg font-bold tabular">{pct}%</span>
-                      </div>
-                      <Progress value={pct} tone={tone} label={`Match confidence ${pct} per cent`} />
-                      <p className="text-right text-xs text-muted">
-                        {candidate.confidence >= AUTO_APPROVE_AT
-                          ? 'above the auto-approve line'
-                          : candidate.confidence >= REVIEW_AT
-                            ? 'in the review band'
-                            : 'below the review line'}
+                      <p className="text-sm text-secondary">
+                        {memberLine([record.name, record.departmentCode, record.yearOfPassing ? `passed ${record.yearOfPassing}` : null])}
                       </p>
                     </div>
+                    <ScoreMeter confidence={candidate.confidence} />
                   </CardHeader>
-
-                  <CardBody className="space-y-5">
-                    {/* Field-by-field, claim on the left, register on the right. */}
-                    <TableWrap
-                      caption={`Field by field comparison of the claim against register row ${candidate.record.rollNumber}`}
-                    >
-                      <table className="w-full border-collapse text-sm">
-                        <caption className="sr-only">
-                          Field by field comparison of the claim against register row {candidate.record.rollNumber}
-                        </caption>
-                        <thead className="border-b border-line bg-surface-sunken">
-                          <tr>
-                            <th scope="col" className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-secondary">
-                              Field
-                            </th>
-                            <th scope="col" className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-secondary">
-                              Applicant said
-                            </th>
-                            <th scope="col" className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-secondary">
-                              Degree register
-                            </th>
-                            <th scope="col" className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-secondary">
-                              Verdict
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-line">
-                          {rows.map((r) => (
-                            <tr
-                              key={r.field}
-                              className={r.discriminating ? 'bg-[color-mix(in_srgb,var(--warning)_9%,transparent)]' : undefined}
-                            >
-                              <th scope="row" className="whitespace-nowrap px-3 py-3 text-left align-top text-sm font-medium">
-                                {r.field}
-                                {r.discriminating ? (
-                                  <span className="mt-1 block text-xs font-semibold uppercase tracking-wide text-warning-fg">
-                                    Discriminating
-                                  </span>
-                                ) : null}
-                              </th>
-                              <td className="px-3 py-3 align-top">
-                                <span className={r.field === 'Roll number' ? 'font-mono' : undefined}>{r.claimed}</span>
-                              </td>
-                              <td className="px-3 py-3 align-top">
-                                <span className={r.field === 'Roll number' || r.field === 'Source file' ? 'font-mono' : undefined}>
-                                  {r.register}
-                                </span>
-                                {r.note ? <span className="mt-1 block text-xs text-secondary">{r.note}</span> : null}
-                              </td>
-                              <td className="px-3 py-3 align-top">
-                                <VerdictBadge verdict={r.verdict} />
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </TableWrap>
-
-                    <div className="space-y-2">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-secondary">
-                        Why the matcher surfaced this row
-                      </p>
-                      <ul className="flex flex-wrap gap-2">
-                        {candidate.reasons.map((r) => (
-                          <li key={r}>
-                            <Badge tone={reasonTone(r)}>{reasonLabel(r)}</Badge>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    {twins.length > 0 ? (
-                      <div className="space-y-2 rounded-lg border border-line bg-surface p-4">
-                        <Separator
-                          label={`Also in ${candidate.record.departmentCode ?? 'this branch'} ${candidate.record.yearOfPassing ?? ''}: ${twins.length} row${twins.length === 1 ? '' : 's'} that could be the same person`}
-                        />
-                        <p className="text-xs text-secondary">
-                          Same branch, same year of passing, and a name that is this one spelled differently — the
-                          register prints initials in one file and full middle names in the next. The matcher did not
-                          surface these, because a reviewer choosing between two people should see every row that could
-                          be them, not only the ones that scored.
-                        </p>
-                        <ul className="space-y-2">
-                          {twins.map((t) => (
-                            <li key={t.id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
-                              <span className="font-mono font-medium">{t.rollNumber}</span>
-                              <span className="min-w-0 flex-1 truncate">{t.name}</span>
-                              <span className="text-xs text-secondary">
-                                admitted {t.admissionYear ?? '—'} ·{' '}
-                                <span className="font-mono">{t.sourceFile ?? 'source unknown'}</span>
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ) : null}
-                  </CardBody>
+                  <CardBody>{body}</CardBody>
                 </Card>
               );
             })
           )}
 
-          {ranked.length > 0 && lookAlikes.length > 0 ? (
+          {lookAlikes.length > 0 ? (
             <Card>
-              <CardBody>
-                <RegisterSweep
-                  batchLabel={batchLabel}
-                  batchTotal={batch.total}
-                  claimedName={claim.claimedName}
-                  lookAlikes={lookAlikes}
-                />
+              <CardBody className="space-y-2">
+                <p className="text-sm font-medium">
+                  {lookAlikes.length} more {lookAlikes.length === 1 ? 'row' : 'rows'} in {batchLabel} with a similar name
+                </p>
+                <RowList rows={lookAlikes} linkable={openRegister} />
               </CardBody>
             </Card>
+          ) : ranked.length > 0 ? (
+            <p className="text-sm text-secondary">
+              No other row in {batchLabel} carries a similar name.
+            </p>
           ) : null}
+
+        </div>
+
+        {/* ---- Decision rail ---- */}
+        <aside aria-label="Decision" className="min-w-0 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-stretch">
+          <div className="lg:sticky lg:top-20">
+            <ReviewActions
+              claimId={claim.id}
+              claimName={claim.claimedName}
+              firstName={first}
+              claimRoll={claim.claimedRoll}
+              claimEmail={claim.email}
+              claimMobile={claim.mobile}
+              candidates={reviewCandidates}
+              reviewerName={member?.fullName ?? 'You'}
+              canOverride={can(session, 'verification.override')}
+              decided={decided}
+              greeting={greetingFor(pack.copy)}
+              signature={`— ${office}, ${pack.copy.shortName}`}
+              whatsapp={pack.features.whatsapp}
+              nextHref={nextHref}
+              auditHref={can(session, 'audit.read') ? '/admin/audit' : null}
+            />
+          </div>
+        </aside>
+
+        <div className="min-w-0 space-y-gutter lg:col-start-1">
+          <Card>
+            <CardHeader variant="stack">
+              <CardTitle as="h2" className="text-md">
+                What they submitted
+              </CardTitle>
+            </CardHeader>
+            <CardBody className="pt-2">
+              <dl className="divide-y divide-line">
+                <DetailRow label="Branch">{branchName ?? claim.claimedDepartmentCode ?? '—'}</DetailRow>
+                <DetailRow label="Email">
+                  <span className="break-all">{claim.email}</span>
+                </DetailRow>
+                <DetailRow label="Mobile">
+                  {claim.mobile ? <span className="font-mono">{claim.mobile}</span> : <span className="text-secondary">Not given</span>}
+                </DetailRow>
+                <DetailRow label="Submitted">
+                  <span className="tabular">{formatDate(claim.submittedAt, fmt)}</span>
+                </DetailRow>
+              </dl>
+            </CardBody>
+          </Card>
+
+          <HowThisWorks summary="How to read this">
+            <p>
+              Each row compares what the applicant typed with the degree register. Register names are typed by hand
+              from mark sheets, so word order, initials and capitals often differ; the roll number carries the match.
+              The admission year on the left is read from the first two digits of the roll number they typed.
+            </p>
+            <p>
+              When two rows could be the same person, the roll number and admission year separate them. When no row
+              matches, either that batch’s file has not been loaded yet or the roll number is wrong, so ask for a
+              document rather than rejecting.
+            </p>
+          </HowThisWorks>
         </div>
       </div>
 
-      <Section>
-        <ReviewActions
-          claimId={claim.id}
-          claimName={claim.claimedName}
-          claimRoll={claim.claimedRoll}
-          claimEmail={claim.email}
-          claimMobile={claim.mobile}
-          candidates={reviewCandidates}
-          reviewerName={member?.fullName ?? 'You'}
-          canOverride={can(session, 'verification.override')}
-          decided={decided}
-        />
-      </Section>
+      {/* Room at the foot of a phone for the decision bar, so it never
+          covers the last lines of the page. */}
+      {!decided || can(session, 'verification.override') ? (
+        <div aria-hidden="true" data-print-hide="" className="h-16 lg:hidden" />
+      ) : null}
     </div>
   );
 }
+
+// The matcher's bands decide what reaches this page; the page itself
+// shows their outcome in words.
+void AUTO_APPROVE_AT;
+void REVIEW_AT;

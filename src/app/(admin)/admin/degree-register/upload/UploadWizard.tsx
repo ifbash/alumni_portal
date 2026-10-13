@@ -2,21 +2,10 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  AlertTriangle,
-  ArrowLeft,
-  ArrowRight,
-  Check,
-  CheckCircle2,
-  Copy,
-  FileSpreadsheet,
-  RefreshCw,
-  Users,
-} from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowRight, Check, CheckCircle2, FileSpreadsheet, Users } from 'lucide-react';
 
 import {
   Alert,
-  Badge,
   Button,
   ButtonLink,
   Card,
@@ -26,6 +15,7 @@ import {
   CardHeader,
   CardTitle,
   ConfirmDialog,
+  DropZone,
   Field,
   Select,
   Table,
@@ -67,7 +57,8 @@ import { api, outcomeToast } from '@/lib/client/api';
 const TARGETS = [
   { key: 'roll_number', label: 'Roll number', required: true, hint: 'The key every row is matched on.' },
   { key: 'name', label: 'Name', required: true, hint: 'Exactly as printed on the memorandum of marks.' },
-  { key: 'department', label: 'Branch', required: true, hint: 'CSE, ECE, EEE, MECH, CIVIL, IT, AIML.' },
+  // The branch hint is built from the college's own codes (`departmentCodes`).
+  { key: 'department', label: 'Branch', required: true, hint: '' },
   { key: 'programme', label: 'Programme', required: false, hint: 'Defaults to B.Tech when the column is absent.' },
   {
     key: 'admission_year',
@@ -214,7 +205,7 @@ function Steps({ current }: { current: number }) {
               'flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold',
               active && 'border-line-strong bg-brand-soft text-brand-soft-fg',
               done && 'border-line bg-surface-sunken text-secondary',
-              !active && !done && 'border-line bg-surface text-muted',
+              !active && !done && 'border-line bg-surface text-secondary',
             )}
           >
             <span
@@ -240,20 +231,17 @@ function Steps({ current }: { current: number }) {
 
 export function UploadWizard({
   departmentCodes,
-  registerTotal,
   sampleFileName,
   sampleCsv,
 }: {
   departmentCodes: string[];
   /**
-   * `existingRolls` and `loadedFiles` are still supplied by the page and
-   * deliberately not read here. The browser no longer decides what is a
-   * duplicate — the endpoint does, against the register as it stands at
-   * the moment of the request, which is the only copy that can be right.
+   * The browser never decides what is a duplicate — the endpoint does,
+   * against the register as it stands at the moment of the request — so
+   * the register's rolls and file names are not sent here at all.
+   * `registerTotal` is accepted for the page's convenience and unused.
    */
-  existingRolls: string[];
-  registerTotal: number;
-  loadedFiles: string[];
+  registerTotal?: number;
   sampleFileName: string;
   sampleCsv: string;
 }) {
@@ -308,9 +296,7 @@ export function UploadWizard({
     [toast],
   );
 
-  const onPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const onFile = async (file: File) => {
     try {
       load(file.name, await file.text());
     } catch {
@@ -446,7 +432,8 @@ export function UploadWizard({
   // ---------------------------------------------------------------
 
   if (committed) {
-    const { report, persisted } = committed;
+    // Whether it persisted is said once, by the outcome toast.
+    const { report } = committed;
 
     return (
       <Card>
@@ -461,36 +448,24 @@ export function UploadWizard({
               {report.counts.rejected} rejected.
             </CardDescription>
           </div>
-          <Badge tone="success">{report.auditedAs ?? 'register.import'}</Badge>
         </CardHeader>
         <CardBody className="space-y-4">
-          <Alert tone="success" title="What changed" icon={<CheckCircle2 className="size-4" />}>
-            <p>
-              The register now holds {report.registerTotalAfter} rows. {report.counts.new} graduates who could not be
-              verified an hour ago can be verified now. One row was written to{' '}
-              <span className="font-mono">audit_log</span>: actor, file name, row counts, and the rejection list.
-            </p>
-          </Alert>
-
-          <p className="text-sm text-secondary">{report.note}</p>
+          <p className="text-sm">
+            The register now holds {report.registerTotalAfter} rows. {report.counts.new}{' '}
+            {report.counts.new === 1 ? 'graduate' : 'graduates'} can now be verified when they register. Recorded in
+            the audit log with your name and the list of refused rows.
+          </p>
 
           {report.counts.rejected > 0 ? (
             <Alert tone="warning" title="Fix and re-send" icon={<AlertTriangle className="size-4" />}>
               <p>
-                {report.counts.rejected} rows were rejected and are not in the register. Send the reasons back to the
-                examinations branch, then load the corrected file — the rows that went in today will be skipped, so
-                re-running is safe.
+                {report.counts.rejected} rows were refused and are not in the register. Send the reasons back to the
+                examinations branch and load the corrected file; the rows added today will be skipped.
               </p>
             </Alert>
           ) : null}
 
-          {!persisted ? (
-            <p className="text-xs text-muted">
-              This build runs on seeded data with no database behind it. The capability check, every row verdict and the
-              audit entry all ran on the server; the insert did not, so the register still holds{' '}
-              {report.registerTotal} rows. The counts above are what the loader would have done with this exact file.
-            </p>
-          ) : null}
+
         </CardBody>
         <CardFooter>
           <ButtonLink href="/admin/degree-register">Back to the register</ButtonLink>
@@ -522,30 +497,19 @@ export function UploadWizard({
             <div className="space-y-1">
               <CardTitle as="h2">Choose the file</CardTitle>
               <CardDescription>
-                A CSV from the examinations branch. It is parsed here in the browser, so you can check the columns of a
-                file before any of it is sent anywhere.
+                A CSV from the examinations branch. It is read here in your browser first, so nothing is sent until
+                the columns are right.
               </CardDescription>
             </div>
           </CardHeader>
           <CardBody className="space-y-4">
-            <Field
-              htmlFor="register-file"
-              label="Register file"
-              hint="CSV, UTF-8, with a header row. An .xlsx must be saved as CSV first."
-            >
-              <input
-                id="register-file"
-                type="file"
-                accept=".csv,text/csv"
-                onChange={onPick}
-                className={cn(
-                  'block w-full cursor-pointer rounded border border-dashed border-line-strong bg-surface px-3 py-8 text-sm text-secondary',
-                  'file:mr-3 file:cursor-pointer file:rounded file:border-0 file:bg-surface-sunken file:px-3 file:py-1.5',
-                  'file:text-sm file:font-semibold file:text-primary',
-                  'hover:border-[var(--focus-ring)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]',
-                )}
-              />
-            </Field>
+            <DropZone
+              id="register-file"
+              label="Drop the CSV here, or choose it"
+              accept=".csv,text/csv"
+              hint="CSV (UTF-8) with a header row. Save an .xlsx as CSV first."
+              onFile={(f) => void onFile(f)}
+            />
 
             {parseError ? (
               <Alert tone="danger" title="That file could not be used" icon={<AlertTriangle className="size-4" />}>
@@ -556,13 +520,13 @@ export function UploadWizard({
             <div className="rounded-lg border border-line bg-surface p-4">
               <p className="text-sm font-medium">No file to hand?</p>
               <p className="mt-1 text-sm text-secondary">
-                Load <span className="font-mono">{sampleFileName}</span> — a real export shape, including four rows
-                already in the register, two graduates who share a name, and five rows the loader will refuse.
+                Try a sample in the usual shape: four rows already in the register, two graduates who share a name,
+                and five rows the loader will refuse.
               </p>
               <div className="mt-3">
                 <Button variant="secondary" size="sm" onClick={() => load(sampleFileName, sampleCsv)}>
                   <FileSpreadsheet className="size-4" aria-hidden="true" />
-                  Use {sampleFileName}
+                  Use the sample file
                 </Button>
               </div>
             </div>
@@ -593,7 +557,7 @@ export function UploadWizard({
                     htmlFor={`map-${t.key}`}
                     label={t.label}
                     required={t.required}
-                    hint={t.key === 'department' ? `Configured on this college: ${departmentCodes.join(', ')}.` : t.hint}
+                    hint={t.key === 'department' ? `Branch codes used here: ${departmentCodes.join(', ')}.` : t.hint}
                   >
                     <Select
                       id={`map-${t.key}`}
@@ -608,7 +572,7 @@ export function UploadWizard({
                         </option>
                       ))}
                     </Select>
-                    <p className="pt-1 text-xs text-muted">
+                    <p className="pt-1 text-xs text-secondary">
                       {column ? (
                         <>
                           First row: <span className="font-mono text-secondary">{sampleValue || '(blank)'}</span>
@@ -672,12 +636,12 @@ export function UploadWizard({
                 <p className="font-display text-display-xs font-bold tabular text-success-fg">
                   {preview.counts.new}
                 </p>
-                <p className="text-xs text-muted">Graduates who become verifiable</p>
+                <p className="text-xs text-secondary">Graduates who become verifiable</p>
               </div>
               <div className="rounded-lg border border-line bg-surface p-4">
                 <p className="text-sm text-secondary">Already present</p>
                 <p className="font-display text-display-xs font-bold tabular">{preview.counts.duplicate}</p>
-                <p className="text-xs text-muted">
+                <p className="text-xs text-secondary">
                   {preview.counts.duplicateInRegister} in the register · {preview.counts.duplicateInFile} repeated in
                   the file
                 </p>
@@ -687,7 +651,7 @@ export function UploadWizard({
                 <p className="font-display text-display-xs font-bold tabular text-danger-fg">
                   {preview.counts.rejected}
                 </p>
-                <p className="text-xs text-muted">Listed row by row below</p>
+                <p className="text-xs text-secondary">Listed row by row below</p>
               </div>
             </div>
 
@@ -700,22 +664,11 @@ export function UploadWizard({
               ]}
             />
 
-            <Alert tone="info" title="Running this file twice changes nothing" icon={<Copy className="size-4" />}>
-              <p>
-                Rows are keyed on <span className="font-mono">{preview.idempotentOn}</span>. Commit this file now and{' '}
-                <span className="font-semibold">{preview.counts.new}</span> rows are inserted; commit the same file
-                again and all {preview.counts.new + preview.counts.duplicate} rows are recognised and skipped, with
-                nothing duplicated and nothing overwritten. A load that fails halfway can be re-run from the start.
-              </p>
-              {preview.fileAlreadyLoaded ? (
-                <p className="mt-2">
-                  <span className="font-semibold">
-                    A file named {fileName} has already been loaded into this register.
-                  </span>{' '}
-                  That is fine — it is exactly the case the roll-number key handles. Expect most rows to be skipped.
-                </p>
-              ) : null}
-            </Alert>
+            <p className="text-sm text-secondary">
+              Running the same file again adds nothing: rows are matched on roll number, and a row already present is
+              skipped, never overwritten.
+              {preview.fileAlreadyLoaded ? ` A file named ${fileName} has been loaded before, so expect most rows to be skipped.` : ''}
+            </p>
 
             {preview.homonyms.length > 0 ? (
               <Alert
@@ -757,7 +710,7 @@ export function UploadWizard({
                           <TD>
                             <span className="font-mono">{r.rollNumber || '—'}</span>
                           </TD>
-                          <TD>{r.name || <span className="text-muted">(blank)</span>}</TD>
+                          <TD>{r.name || <span className="text-secondary">(blank)</span>}</TD>
                           <TD>{r.reason}</TD>
                         </TR>
                       ))}
@@ -765,7 +718,7 @@ export function UploadWizard({
                   </Table>
                 </TableWrap>
                 {preview.rejectedListTruncatedAt ? (
-                  <p className="text-xs text-muted">
+                  <p className="text-xs text-secondary">
                     Showing the first {preview.rejectedListTruncatedAt} of {preview.counts.rejected}. The full list goes
                     into the import record.
                   </p>
@@ -834,14 +787,10 @@ export function UploadWizard({
               </div>
             </dl>
 
-            <Alert tone="warning" title="What a commit does" icon={<RefreshCw className="size-4" />}>
-              <p>
-                Inserts {preview.counts.new} rows into <span className="font-mono">degree_register</span>, records the
-                import with your name and the full rejection list, and writes one{' '}
-                <span className="font-mono">audit_log</span> entry with the before and after row counts. It does not
-                touch a single member account — verification stays a separate, human decision.
-              </p>
-            </Alert>
+            <p className="text-sm text-secondary">
+              Committing adds {preview.counts.new} rows to the degree register and records the import in the audit log
+              with your name and the refused rows. No member account changes; verification stays a separate decision.
+            </p>
           </CardBody>
           <CardFooter>
             <Button variant="ghost" onClick={() => setStep(3)} disabled={running !== null}>
@@ -874,9 +823,8 @@ export function UploadWizard({
               {preview?.counts.duplicate ?? 0} already present.
             </p>
             <p>
-              The register is what every alumni verification is decided against, so a wrong file is felt for years
-              rather than minutes. Type the phrase to confirm you have read the dry run — the server checks it against
-              its own count, so a preview that went stale while you read it is refused rather than committed.
+              Every verification is decided against the register, so a wrong file is felt for years. Type the phrase to
+              confirm you have read the dry run.
             </p>
           </div>
         }

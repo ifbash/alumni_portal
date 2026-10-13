@@ -4,7 +4,6 @@ import {
   CalendarDays,
   CalendarOff,
   History,
-  Info,
   LogIn,
   MapPin,
   Ticket,
@@ -12,7 +11,8 @@ import {
   Video,
 } from 'lucide-react';
 import { getTenantBrand } from '@/lib/tenant';
-import { getEvents } from '@/lib/data/repo';
+import { getPublicEvents, isOnlineVenue, type PublicEvent } from '@/lib/data/public-events';
+import { inSentence } from '@/lib/branding/copy';
 import {
   Alert,
   Badge,
@@ -24,7 +24,6 @@ import {
   Separator,
 } from '@/components/ui';
 import { formatCurrency, formatDateRange, formatRelative } from '@/lib/format';
-import type { EventItem } from '@/lib/data/types';
 
 /**
  * The public events list.
@@ -59,42 +58,11 @@ import type { EventItem } from '@/lib/data/types';
  *    people will be at that hotel.
  *  - **A registration form.** The gate list has to be a list of real,
  *    verified members, so registering starts at sign-in.
+ *
+ * Nor does it describe event-day procedure, payment methods or catering
+ * the college has not confirmed: the event page a member reaches after
+ * signing in says what applies to that event.
  */
-
-/**
- * Everything about an event that a signed-out visitor may see, and
- * nothing else. Notably absent: `registeredCount`, `capacity`,
- * `published`, `alumniOnly` and `viewerRegistration`.
- */
-interface PublicEvent {
-  id: string;
-  slug: string;
-  title: string;
-  description: string | null;
-  venue: string | null;
-  startsAt: string;
-  endsAt: string | null;
-  departmentCode: string | null;
-  studentEligible: boolean;
-  ticketPrice: number;
-}
-
-const isPublic = (e: EventItem): boolean => !e.alumniOnly;
-
-function toPublic(e: EventItem): PublicEvent {
-  return {
-    id: e.id,
-    slug: e.slug,
-    title: e.title,
-    description: e.description,
-    venue: e.venue,
-    startsAt: e.startsAt,
-    endsAt: e.endsAt,
-    departmentCode: e.departmentCode,
-    studentEligible: e.studentEligible,
-    ticketPrice: e.ticketPrice,
-  };
-}
 
 export async function generateMetadata(): Promise<Metadata> {
   const resolved = await getTenantBrand();
@@ -115,6 +83,8 @@ export default async function PublicEventsPage() {
   if (!resolved) notFound();
 
   const { copy, features, locale } = resolved.brand.pack;
+  const office = copy.officeName;
+  const rollMid = inSentence(copy.rollNumberLabel);
 
   // Two gates, both hard. A college that has not bought the events module
   // has nothing to list; a college with no public marketing surface
@@ -124,50 +94,47 @@ export default async function PublicEventsPage() {
 
   const fmt = { locale: locale.locale, currency: locale.currency, timeZone: locale.timeZone };
 
-  // `null` session: published events only, no drafts, no viewer
-  // registration. The alumni-only filter is ours — see the note above.
-  //
-  // `toPublic` then narrows each row to the fields this page draws, and
-  // that projection is not cosmetic. Passing whole `EventItem`s down to
-  // the card put the complete objects — `registeredCount` and `capacity`
-  // among them — into the RSC payload embedded in this page's HTML, where
+  // The alumni-only filter and the projection live in `getPublicEvents`,
+  // and neither is cosmetic. Passing whole `EventItem`s down to the card
+  // put the complete objects — `registeredCount` and `capacity` among
+  // them — into the RSC payload embedded in this page's HTML, where
   // view-source on a public page found them. React carries
   // server-component props as debug info in a development build; rather
   // than rely on a production build stripping it, the fields are not
   // carried at all. It is also the house rule: build a response by
   // selecting *into* a projection, never by fetching a full record and
   // declining to render half of it.
-  const upcoming = getEvents(null, { when: 'upcoming' }).filter(isPublic).map(toPublic);
-  const past = getEvents(null, { when: 'past' }).filter(isPublic).slice(0, 4).map(toPublic);
+  const upcoming = getPublicEvents('upcoming');
+  const past = getPublicEvents('past').slice(0, 4);
 
   return (
     <>
-      <section className="border-b border-line bg-surface-sunken py-16">
-        <div className="page-shell max-w-prose space-y-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-brand-fg">
-            {copy.institutionName}
-          </p>
-          <h1 className="font-display text-display-md font-bold">Events on campus</h1>
-          <p className="text-md text-secondary">
-            Reunions, department sessions and online panels, run by the alumni cell. Dates, venues
-            and what each session is for are public — you do not need an account to plan around
-            them. Registration does need one, because the list at the gate has to be a list of
-            people the college can actually place.
-          </p>
+      <section aria-labelledby="events-title" className="band-surface">
+        <div className="page-shell py-12 lg:py-16">
+          <div className="max-w-prose space-y-3">
+            <p className="text-sm font-semibold text-band-accent">{copy.institutionName}</p>
+            <h1 id="events-title" className="font-display text-display-md font-bold text-band-fg">
+              Events on campus
+            </h1>
+            <p className="text-md text-band-muted">
+              Reunions, department sessions and online panels. Dates and venues are public;
+              registering needs an account, because the college needs to know who is coming.
+            </p>
+          </div>
         </div>
       </section>
 
-      <div className="page-shell space-y-16 py-section">
+      <div className="page-shell space-y-12 py-12 md:space-y-16 md:py-section">
         {/* --------------------------------------------------------- Upcoming */}
         <Section
           title="Coming up"
           description={
-            upcoming.length === 1
-              ? 'One session on the calendar at the moment.'
-              : `${upcoming.length} sessions on the calendar at the moment.`
+            upcoming.length
+              ? `${upcoming.length === 1 ? 'One session' : `${upcoming.length} sessions`} on the calendar. Sign in to see seats and register.`
+              : undefined
           }
           actions={
-            <ButtonLink href="/login" variant="secondary" size="sm">
+            <ButtonLink href="/login" variant="secondary" className="min-h-11">
               <LogIn className="size-4" aria-hidden="true" />
               Sign in
             </ButtonLink>
@@ -177,14 +144,14 @@ export default async function PublicEventsPage() {
             <EmptyState
               icon={<CalendarDays className="size-5" />}
               title="Nothing published for the public calendar yet"
-              description="The alumni cell puts the annual meet, department panels and workshops here once the dates are fixed with the campus. Members are emailed the moment one goes up, which is the argument for claiming your profile now rather than checking back."
+              description={`The ${office} adds reunions, department sessions and workshops here once their dates are fixed.`}
               action={
                 <div className="flex flex-wrap justify-center gap-2">
-                  <ButtonLink href="/claim" size="sm">
-                    Claim your profile
+                  <ButtonLink href="/claim" className="min-h-11">
+                    Register
                   </ButtonLink>
-                  <ButtonLink href="/contact" variant="secondary" size="sm">
-                    Ask the alumni cell
+                  <ButtonLink href="/contact" variant="secondary" className="min-h-11">
+                    Ask the {office}
                   </ButtonLink>
                 </div>
               }
@@ -205,10 +172,9 @@ export default async function PublicEventsPage() {
             icon={<CalendarOff className="size-4" />}
           >
             <p>
-              Batch reunions and anything else marked alumni-only are not listed publicly — the
-              venue and date of a private dinner for one batch is not something to publish on the
-              open internet. Sign in and they appear on your own events list. Sessions still being
-              planned are not here either; they go up when the date is confirmed, not before.
+              Batch reunions and anything else for alumni only are not listed publicly. Sign in and
+              they appear on your own events list. Sessions still being planned go up once their date
+              is confirmed.
             </p>
           </Alert>
         </Section>
@@ -216,33 +182,23 @@ export default async function PublicEventsPage() {
         <Separator />
 
         {/* --------------------------------------------------- How registering works */}
-        <Section
-          title="How registering works"
-          description="Three steps, and the first one is the only one that ever causes trouble."
-        >
+        <Section title="How registering works" description="From your first sign-in to the day itself.">
           <div className="grid gap-4 md:grid-cols-3">
-            <Step n={1} title="Sign in, or claim your profile">
-              If the college already holds your email address, a six-digit code arrives in a few
-              seconds. If it does not — and for most batches before 2018 it does not — claim your
-              profile with your roll number and the alumni cell matches you against the degree
-              register.
+            <Step n={1} title="Sign in, or register">
+              If the college already holds your email address, sign in with a six-digit code. If it
+              does not, register with your {rollMid} first.
             </Step>
             <Step n={2} title="Open the event and register">
-              Seats, the waiting list, the ticket amount and how many guests you may bring are all
-              shown on the event page once you are signed in. Paid events are settled by UPI or
-              card at that point.
+              The ticket amount and how to pay, the seats and how many guests you may bring are shown
+              on the event page once you are signed in.
             </Step>
-            <Step n={3} title="Come to the desk with your name">
-              The alumni cell works from the registration list at the gate. There is no printed
-              pass to lose — your name and batch are on the desk&apos;s list, and check-in is a
-              tick against it.
+            <Step n={3} title="Come on the day">
+              Your name is on the registration list the {office} checks people in against.
             </Step>
           </div>
 
           <p className="text-sm text-secondary">
-            Final-year students are registered through the placement cell and can attend anything
-            marked open to students. Family and guests are counted at registration, not at the
-            gate, so the caterers get an honest number.
+            Final-year students can register for anything marked open to them.
           </p>
         </Section>
 
@@ -251,10 +207,7 @@ export default async function PublicEventsPage() {
             <Separator />
 
             {/* ----------------------------------------------------- Already held */}
-            <Section
-              title="Recently held"
-              description="Kept public so you can see the cell actually runs these, not just announces them."
-            >
+            <Section title="Recently held" description="Sessions from the last few months.">
               <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface-raised">
                 {past.map((event) => (
                   <li key={event.id} className="flex flex-wrap items-baseline gap-x-4 gap-y-1 p-card">
@@ -268,16 +221,10 @@ export default async function PublicEventsPage() {
                         {event.venue ? ` · ${event.venue}` : ''}
                       </p>
                     </div>
-                    <span className="text-xs text-muted">{formatRelative(event.startsAt, fmt)}</span>
+                    <span className="text-xs text-secondary">{formatRelative(event.startsAt, fmt)}</span>
                   </li>
                 ))}
               </ul>
-
-              <p className="text-sm text-secondary">
-                Photographs from past events sit inside the portal rather than out here — they are
-                pictures of identifiable students and alumni, and those are not published without
-                an account behind them.
-              </p>
             </Section>
           </>
         ) : null}
@@ -288,17 +235,17 @@ export default async function PublicEventsPage() {
         <Card>
           <CardBody className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 space-y-1">
-              <h2 className="font-display text-lg font-semibold">
-                Want to speak at one of these?
-              </h2>
+              <h2 className="font-display text-lg font-semibold">Want to speak at one of these?</h2>
               <p className="max-w-prose text-sm text-secondary">
-                Department sessions are run by alumni, not by the cell. If you have something the
-                final-year batch should hear — how interviews actually run at your company, what
-                the first two years out are like — say so and the branch will find you a slot.
+                If you have something the final-year batch should hear — how interviews run at your
+                company, what the first two years out are like — tell the {office}. Sessions can be on
+                campus or online.
               </p>
             </div>
             <div className="flex shrink-0 flex-wrap gap-2">
-              <ButtonLink href="/contact">Offer a session</ButtonLink>
+              <ButtonLink href="/contact#help" className="min-h-11">
+                Offer a session
+              </ButtonLink>
             </div>
           </CardBody>
         </Card>
@@ -323,20 +270,27 @@ function PublicEventCard({
   const month = new Intl.DateTimeFormat(fmt.locale, { month: 'short', timeZone: fmt.timeZone }).format(start);
   const weekday = new Intl.DateTimeFormat(fmt.locale, { weekday: 'short', timeZone: fmt.timeZone }).format(start);
 
-  const online = Boolean(event.venue && /online|zoom|meet|webinar|link/i.test(event.venue));
+  const online = isOnlineVenue(event.venue);
 
   // Straight to sign-in, with the member-side event page as the landing
   // spot afterwards. `next` is re-sanitised by the login screen before it
   // is used, which is why encoding it here is enough.
   const registerHref = `/login?next=${encodeURIComponent(`/events/${event.slug}`)}`;
 
+  // `#event-{slug}` is the landing page's deep link to this card; the
+  // scroll margin keeps its title clear of the sticky header.
   return (
-    <Card as="article">
+    <Card as="article" id={`event-${event.slug}`} className="scroll-mt-20">
       <CardBody className="flex flex-col gap-4 sm:flex-row">
-        <div className="flex w-full shrink-0 flex-row items-center gap-3 rounded border border-line bg-surface-sunken px-3 py-2 sm:w-20 sm:flex-col sm:gap-0 sm:py-3">
+        {/* `self-start`: as a flex child the tile stretched to the card's
+            full height, a tall grey slab with the date stuck at its top. */}
+        <div
+          aria-hidden="true"
+          className="flex w-full shrink-0 flex-row items-center gap-3 rounded border border-line bg-surface-sunken px-3 py-2 sm:w-20 sm:flex-col sm:gap-1 sm:self-start sm:py-3"
+        >
           <span className="text-xs font-semibold uppercase tracking-wider text-brand-fg">{month}</span>
           <span className="font-display text-xl font-bold leading-none tabular">{day}</span>
-          <span className="text-xs text-muted">{weekday}</span>
+          <span className="text-xs text-secondary">{weekday}</span>
         </div>
 
         <div className="min-w-0 flex-1 space-y-2.5">
@@ -384,26 +338,21 @@ function PublicEventCard({
                 <span className="truncate">{event.venue}</span>
               </span>
             ) : (
-              <span className="text-muted">Venue to be announced</span>
+              <span>Venue to be announced</span>
             )}
           </p>
 
           {event.description ? (
-            <p className="text-sm text-secondary">{event.description}</p>
+            <p className="max-w-prose text-sm text-secondary">{event.description}</p>
           ) : null}
-        </div>
 
-        <div className="w-full shrink-0 space-y-2 border-t border-line pt-3 sm:w-52 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
-          <ButtonLink href={registerHref} size="sm">
-            <LogIn className="size-4" aria-hidden="true" />
-            Sign in to register
-          </ButtonLink>
-          <p className="flex items-start gap-1.5 text-xs text-muted">
-            <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span>
-              Seats left, the waiting list and guest numbers are shown once you are signed in.
-            </span>
-          </p>
+          <div className="pt-1">
+            <ButtonLink href={registerHref} variant="secondary" className="min-h-11">
+              <LogIn className="size-4" aria-hidden="true" />
+              Sign in to register
+              <span className="sr-only"> for {event.title}</span>
+            </ButtonLink>
+          </div>
         </div>
       </CardBody>
     </Card>

@@ -1,25 +1,19 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { CalendarX2, FileUp, History, Landmark, ScrollText, Search, UserCheck, UserX } from 'lucide-react';
+import { AlertTriangle, ChevronRight, FileUp, ScrollText, Search } from 'lucide-react';
 
 import {
-  Alert,
-  Badge,
+  Breadcrumbs,
   Button,
   ButtonLink,
   Card,
   CardBody,
-  CardDescription,
-  CardHeader,
-  CardTitle,
   DefinitionCard,
   EmptyState,
-  Field,
   Input,
   PageHeader,
   Pagination,
-  Section,
   Select,
-  Stat,
   Table,
   TableWrap,
   TBody,
@@ -28,16 +22,23 @@ import {
   THead,
   TR,
 } from '@/components/ui';
-import { ColumnChart, ProportionBar } from '@/components/charts';
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap } from '@/lib/auth/guard';
+import { getTenantBrand } from '@/lib/tenant';
+import { canOpen } from '@/lib/navigation';
 import { getDegreeRegisterStats, getDepartments, getMembersForAdmin, searchDegreeRegister } from '@/lib/data/repo';
-import { formatNumber, formatPercent } from '@/lib/format';
+import { displayNow, formatNumber, memberLine, yearIn } from '@/lib/format';
+import {
+  CoverageChips,
+  CoverageLegend,
+  WeakestBatches,
+  batchCommsHref,
+  weakestBatches,
+} from '../_shared/RegisterFilesGrid';
 
-export const metadata = { title: 'Degree register' };
+export const metadata = { title: 'Degree register · Staff console' };
 
 const PER_PAGE = 25;
-const CURRENT_YEAR = 2026;
 
 export default async function DegreeRegisterPage({
   searchParams,
@@ -57,6 +58,11 @@ export default async function DegreeRegisterPage({
   const year = /^\d{4}$/.test(yearRaw) ? Number(yearRaw) : undefined;
   const page = Math.max(1, Number(first(params.page) ?? 1) || 1);
 
+  const resolved = await getTenantBrand();
+  if (!resolved) redirect('/login');
+  const pack = resolved.brand.pack;
+  const thisYear = yearIn(pack.locale.timeZone, displayNow());
+
   const departments = getDepartments();
   const stats = getDegreeRegisterStats();
   const results = searchDegreeRegister(q, {
@@ -68,332 +74,235 @@ export default async function DegreeRegisterPage({
 
   // Which register rows have actually been claimed. Built from the member
   // table by roll number, so the answer is "does an account exist", not a
-  // flag someone has to remember to set.
-  const accounts = new Map<string, { fullName: string; isStudent: boolean }>();
+  // flag someone has to remember to set. Only the id and name leave here.
+  const accounts = new Map<string, { id: string; fullName: string }>();
   for (const m of getMembersForAdmin({ perPage: 5000 }).items) {
-    if (m.rollNumber) accounts.set(m.rollNumber.toUpperCase(), { fullName: m.fullName, isStudent: m.isStudent });
+    const key = m.rollNumber?.toUpperCase();
+    if (key && !accounts.has(key)) accounts.set(key, { id: m.id, fullName: m.fullName });
   }
 
+  const firstYear = stats.byYear[0]?.year ?? thisYear;
+  const lastYear = stats.byYear[stats.byYear.length - 1]?.year ?? thisYear;
   const yearsPresent = new Set(stats.byYear.map((y) => y.year));
-  const earliest = stats.byYear[0]?.year ?? CURRENT_YEAR;
   const missingYears: number[] = [];
-  for (let y = earliest; y <= CURRENT_YEAR; y++) if (!yearsPresent.has(y)) missingYears.push(y);
+  for (let y = firstYear; y <= thisYear; y++) if (!yearsPresent.has(y)) missingYears.push(y);
 
-  const thinnest = [...stats.byYear]
-    .filter((y) => y.total >= 5)
-    .sort((a, b) => a.claimed / a.total - b.claimed / b.total)
-    .slice(0, 3);
+  const openMembers = canOpen(session, pack, '/admin/members');
+  const openComms = canOpen(session, pack, '/admin/comms');
+  const weakest = openComms ? weakestBatches(stats.byYear) : [];
 
-  const buildHref = (nextPage: number) => {
+  const buildHref = (next: { page?: number; year?: number | null }) => {
     const sp = new URLSearchParams();
     if (q) sp.set('q', q);
     if (department) sp.set('department', department);
-    if (yearRaw) sp.set('year', yearRaw);
-    if (nextPage > 1) sp.set('page', String(nextPage));
+    const y = next.year === undefined ? yearRaw : next.year === null ? '' : String(next.year);
+    if (y) sp.set('year', y);
+    if (next.page && next.page > 1) sp.set('page', String(next.page));
     const qs = sp.toString();
     return qs ? `/admin/degree-register?${qs}` : '/admin/degree-register';
   };
 
   const filtered = Boolean(q || department || year);
 
+  const claimState = (roll: string, linkable: boolean) => {
+    const account = accounts.get(roll.toUpperCase());
+    if (!account) return <span className="text-secondary">Not joined yet</span>;
+    return (
+      <span>
+        Joined —{' '}
+        {linkable && openMembers ? (
+          <Link href={`/admin/members/${account.id}`} className="relative z-10 link-quiet font-medium">
+            {account.fullName}
+          </Link>
+        ) : (
+          <span className="font-medium">{account.fullName}</span>
+        )}
+      </span>
+    );
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <PageHeader
-        eyebrow="Identity"
+        breadcrumbs={
+          <Breadcrumbs items={[{ label: 'Staff console', href: '/admin' }, { label: 'Degree register' }]} />
+        }
+        eyebrow="People and records"
         title="Degree register"
-        description="The college's authoritative list of everyone who has graduated. Every alumni account in the portal is verified against a row in here — nothing else counts as evidence."
+        description={`${formatNumber(stats.total)} graduates, ${firstYear}–${lastYear}, supplied by the examinations branch.`}
         actions={
-          <>
-            <ButtonLink href="/admin/degree-register/upload">
-              <FileUp className="size-4" aria-hidden="true" />
-              Load a register file
-            </ButtonLink>
-            <ButtonLink href="/admin/imports" variant="secondary">
-              <History className="size-4" aria-hidden="true" />
-              Import history
-            </ButtonLink>
-          </>
+          <ButtonLink href="/admin/degree-register/upload">
+            <FileUp className="size-4" aria-hidden="true" />
+            Load a register file
+          </ButtonLink>
         }
       />
 
-      <Alert tone="info" title="Where this comes from, and what an unclaimed row means" icon={<Landmark className="size-4" />}>
-        <p>
-          The register is loaded from files supplied by the examinations branch — roll number, name, branch, programme
-          and year of passing, one file per batch and branch. It exists for every graduate whether or not they have ever
-          opened the portal.
-        </p>
-        <p className="mt-2">
-          <span className="font-semibold">
-            {formatNumber(stats.unclaimed)} rows have no account against them. Those are not errors and not missing
-            data.
-          </span>{' '}
-          They are graduates who have not signed up yet — the number the alumni cell exists to move. Nothing here should
-          be deleted to make the figure look better.
-        </p>
-      </Alert>
-
-      <div className="grid gap-gutter sm:grid-cols-2 xl:grid-cols-4">
-        <Stat
-          label="Rows in the register"
-          value={formatNumber(stats.total)}
-          hint={`${stats.byYear.length} years of passing loaded`}
-          icon={<ScrollText className="size-4" />}
-        />
-        <Stat
-          label="Claimed by a member"
-          value={formatNumber(stats.claimed)}
-          hint="Matched to a portal account"
-          icon={<UserCheck className="size-4" />}
-        />
-        <Stat
-          label="Not signed up"
-          value={formatNumber(stats.unclaimed)}
-          hint="Reachable if the college has an address for them"
-          icon={<UserX className="size-4" />}
-        />
-        <Stat
-          label="Coverage"
-          value={formatPercent(stats.coverage, 1)}
-          hint="Share of graduates on the portal"
-          icon={<Landmark className="size-4" />}
-        />
-      </div>
-
-      <div className="grid gap-gutter lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <Card>
-          <CardHeader>
-            <div className="space-y-1">
-              <CardTitle as="h2">Coverage by year of passing</CardTitle>
-              <CardDescription>
-                Share of each batch that has claimed its row. Recent batches are always ahead — they were still on
-                campus when the portal launched.
-              </CardDescription>
-            </div>
-          </CardHeader>
-          <CardBody className="space-y-4">
-            <ColumnChart
-              label="Coverage by year of passing, per cent of register rows with a portal account"
-              data={stats.byYear.map((y) => ({
-                label: String(y.year),
-                value: y.total ? Math.round((y.claimed / y.total) * 100) : 0,
-              }))}
-              highlight={String(stats.byYear[stats.byYear.length - 1]?.year ?? '')}
-              height={180}
-            />
-
-            {thinnest.length > 0 ? (
-              <p className="text-sm text-secondary">
-                Thinnest batches:{' '}
-                {thinnest.map((y, i) => (
-                  <span key={y.year}>
-                    {i > 0 ? ', ' : ''}
-                    <span className="font-semibold text-primary tabular">{y.year}</span> ({y.claimed} of {y.total})
-                  </span>
-                ))}
-                . These are where a WhatsApp campaign earns the most, and where the college is most likely to be holding
-                a dead email address.
-              </p>
-            ) : null}
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <div className="space-y-1">
-              <CardTitle as="h2">What is loaded</CardTitle>
-              <CardDescription>Files the examinations branch has actually sent.</CardDescription>
-            </div>
-          </CardHeader>
-          <CardBody className="space-y-4">
-            <ProportionBar
-              label="Register rows by claim state"
-              segments={[
-                { label: 'Claimed', value: stats.claimed, tone: 'brand' },
-                { label: 'Not signed up', value: stats.unclaimed, tone: 'neutral' },
-              ]}
-            />
-
-            <dl className="space-y-3 text-sm">
-              <div>
-                <dt className="text-secondary">Years present</dt>
-                <dd className="font-medium tabular">
-                  {stats.byYear[0]?.year} – {stats.byYear[stats.byYear.length - 1]?.year}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-secondary">Branches</dt>
-                <dd className="font-medium">{departments.map((d) => d.code).join(' · ')}</dd>
-              </div>
-            </dl>
-
-            {missingYears.length > 0 ? (
-              <Alert tone="warning" title="Missing years" icon={<CalendarX2 className="size-4" />}>
-                <p>
-                  No rows for {missingYears.join(', ')}. Results for a batch reach the examinations branch months after
-                  the ceremony, so a recent gap is normal — anything older is a file nobody chased. A graduate from a
-                  missing year cannot be verified at all, and their claim will sit in the queue with no evidence behind
-                  it.
-                </p>
-              </Alert>
-            ) : null}
-          </CardBody>
-        </Card>
-      </div>
-
-      <Section
-        title="Search the register"
-        description="Roll number or name. Matching is a plain substring here — the fuzzy matching is what the verification queue does."
-      >
-        <form action="/admin/degree-register">
-          <Card className="p-card">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_12rem_9rem_auto] lg:items-end">
-              <Field htmlFor="q" label="Roll number or name" hint="Try a surname, or the first digits of a roll">
-                <Input
-                  id="q"
-                  name="q"
-                  defaultValue={q}
-                  placeholder="e.g. 16JN1A05 or Vemulapalli"
-                  leading={<Search className="size-4" />}
-                  autoComplete="off"
-                />
-              </Field>
-
-              <Field htmlFor="department" label="Branch">
-                <Select id="department" name="department" defaultValue={department}>
-                  <option value="">All branches</option>
-                  {departments.map((d) => (
-                    <option key={d.code} value={d.code}>
-                      {d.code} — {d.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-
-              <Field htmlFor="year" label="Year of passing">
-                <Select id="year" name="year" defaultValue={yearRaw}>
-                  <option value="">Any year</option>
-                  {[...stats.byYear].reverse().map((y) => (
-                    <option key={y.year} value={y.year}>
-                      {y.year} ({y.total})
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-
-              <div className="flex gap-2">
-                <Button type="submit" variant="secondary">
-                  Search
-                </Button>
-                {filtered ? (
-                  <ButtonLink href="/admin/degree-register" variant="ghost">
-                    Clear
-                  </ButtonLink>
-                ) : null}
-              </div>
-            </div>
-          </Card>
-        </form>
-
-        {results.items.length === 0 ? (
-          <EmptyState
-            icon={<ScrollText className="size-5" />}
-            title="No register row matches that"
-            description={
-              q
-                ? `Nothing in the register contains "${q}"${department ? ` within ${department}` : ''}${year ? ` for ${year}` : ''}. Register spellings follow the marks memo — surname first, initials expanded — so search a single distinctive part of the name rather than the whole thing. If the whole batch is absent, the file has not been loaded.`
-                : 'No rows for that combination of branch and year. That usually means the file for that batch has not been supplied yet.'
-            }
-            action={
-              <div className="flex flex-wrap justify-center gap-2">
-                <ButtonLink href="/admin/degree-register" variant="secondary">
-                  Clear the filters
-                </ButtonLink>
-                <ButtonLink href="/admin/degree-register/upload">Load a register file</ButtonLink>
-              </div>
-            }
+      <form action="/admin/degree-register" role="search" className="flex flex-wrap items-center gap-2">
+        <label htmlFor="q" className="sr-only">
+          Roll number or name
+        </label>
+        <div className="min-w-0 flex-1 basis-56 sm:max-w-md">
+          <Input
+            id="q"
+            name="q"
+            type="search"
+            defaultValue={q}
+            placeholder="Roll number or name"
+            leading={<Search className="size-4" />}
+            autoComplete="off"
           />
-        ) : (
-          <>
-            <TableWrap className="hidden sm:block" caption="Degree register rows">
-              <Table>
-                <THead>
-                  <TR>
-                    <TH>Roll number</TH>
-                    <TH>Name as printed</TH>
-                    <TH>Branch</TH>
-                    <TH align="right">Admitted</TH>
-                    <TH align="right">Passed</TH>
-                    <TH>Source file</TH>
-                    <TH>Portal account</TH>
-                  </TR>
-                </THead>
-                <TBody>
-                  {results.items.map((r) => {
-                    const account = accounts.get(r.rollNumber.toUpperCase());
-                    return (
-                      <TR key={r.id} interactive>
-                        <TD>
-                          <span className="font-mono font-medium">{r.rollNumber}</span>
-                        </TD>
-                        <TD>{r.name}</TD>
-                        <TD>
-                          <span className="font-medium">{r.departmentCode ?? '—'}</span>
-                          <span className="block text-xs text-muted">{r.programme ?? 'Programme not recorded'}</span>
-                        </TD>
-                        <TD numeric>{r.admissionYear ?? '—'}</TD>
-                        <TD numeric>{r.yearOfPassing ?? '—'}</TD>
-                        <TD>
-                          <span className="font-mono text-xs text-secondary">{r.sourceFile ?? 'unknown'}</span>
-                        </TD>
-                        <TD>
-                          {account ? (
-                            <>
-                              <Badge tone="success">Signed up</Badge>
-                              <span className="mt-1 block text-xs text-secondary">{account.fullName}</span>
-                            </>
-                          ) : (
-                            <Badge tone="neutral">Not signed up</Badge>
-                          )}
-                        </TD>
-                      </TR>
-                    );
-                  })}
-                </TBody>
-              </Table>
-            </TableWrap>
+        </div>
+        <div className="w-36">
+          <label htmlFor="department" className="sr-only">
+            Branch
+          </label>
+          <Select id="department" name="department" defaultValue={department}>
+            <option value="">All branches</option>
+            {departments.map((d) => (
+              <option key={d.code} value={d.code}>
+                {d.code}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div className="w-32">
+          <label htmlFor="year" className="sr-only">
+            Year of passing
+          </label>
+          <Select id="year" name="year" defaultValue={yearRaw}>
+            <option value="">Any year</option>
+            {[...stats.byYear].reverse().map((y) => (
+              <option key={y.year} value={y.year}>
+                {y.year}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <Button type="submit" variant="secondary">
+          Search
+        </Button>
+        {filtered ? (
+          <ButtonLink href="/admin/degree-register" variant="ghost">
+            Clear
+          </ButtonLink>
+        ) : null}
+      </form>
 
-            <ul className="space-y-3 sm:hidden">
-              {results.items.map((r) => {
-                const account = accounts.get(r.rollNumber.toUpperCase());
-                return (
-                  <li key={r.id}>
-                    <DefinitionCard
-                      title={<span className="font-mono">{r.rollNumber}</span>}
-                      subtitle={r.name}
-                      rows={[
-                        { label: 'Branch', value: r.departmentCode ?? '—' },
-                        { label: 'Passed', value: r.yearOfPassing ?? '—' },
-                        { label: 'Admitted', value: r.admissionYear ?? '—' },
-                        { label: 'Source', value: <span className="font-mono text-xs">{r.sourceFile ?? 'unknown'}</span> },
-                        {
-                          label: 'Account',
-                          value: account ? (
-                            <Badge tone="success">{account.fullName}</Badge>
-                          ) : (
-                            <Badge tone="neutral">Not signed up</Badge>
-                          ),
-                        },
-                      ]}
-                    />
+      <Card>
+        <CardBody className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
+          <div className="min-w-0 space-y-3">
+            <h2 className="text-sm font-semibold text-secondary">Share of each batch that has joined</h2>
+            <CoverageChips
+              ariaLabel="Share of each batch that has joined, by year of passing"
+              batches={stats.byYear}
+              activeYear={year}
+              hrefFor={(y) => (y === year ? buildHref({ year: null }) : buildHref({ year: y }))}
+            />
+            {missingYears.length > 0 ? (
+              <ul className="flex flex-wrap gap-2" aria-label="Years with no register file">
+                {missingYears.map((y) => (
+                  <li key={y}>
+                    <Link
+                      href="/admin/imports"
+                      className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,currentColor_26%,transparent)] bg-warning-soft px-3 text-sm text-warning-fg sm:min-h-8"
+                    >
+                      <AlertTriangle className="size-3.5" aria-hidden="true" />
+                      <span className="font-mono font-semibold tabular">{y}</span> · no file yet
+                    </Link>
                   </li>
-                );
-              })}
-            </ul>
+                ))}
+              </ul>
+            ) : null}
+            <CoverageLegend />
+          </div>
+          {weakest.length > 0 ? (
+            <div className="min-w-0 space-y-1 border-t border-line pt-4 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+              <h2 className="text-sm font-semibold text-secondary">Furthest behind</h2>
+              <WeakestBatches batches={weakest} commsHref={batchCommsHref} />
+            </div>
+          ) : null}
+        </CardBody>
+      </Card>
 
-            <Pagination page={results.page} pageCount={results.pageCount} total={results.total} buildHref={buildHref} />
-          </>
-        )}
-      </Section>
+      {results.items.length === 0 ? (
+        <EmptyState
+          icon={<ScrollText className="size-5" />}
+          title="No register row matches that"
+          description={
+            q
+              ? 'Register spellings follow the marks memo, surname first in some files. Search one distinctive part of the name.'
+              : 'No rows for that branch and year. The file for that batch has probably not been loaded yet.'
+          }
+          action={
+            <ButtonLink href="/admin/degree-register" variant="secondary">
+              Clear the search
+            </ButtonLink>
+          }
+        />
+      ) : (
+        <>
+          <TableWrap className="hidden sm:block" caption="Degree register rows">
+            <Table>
+              <THead>
+                <TR>
+                  <TH>Roll number</TH>
+                  <TH>Name as printed</TH>
+                  <TH>Batch</TH>
+                  <TH>On the portal</TH>
+                  <TH className="w-8">
+                    <span className="sr-only">Open</span>
+                  </TH>
+                </TR>
+              </THead>
+              <TBody>
+                {results.items.map((r) => (
+                  <TR key={r.id} interactive className="relative">
+                    <TD className="whitespace-nowrap">
+                      <Link
+                        href={`/admin/degree-register/${r.id}`}
+                        className="font-mono font-medium text-primary after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:rounded focus-visible:after:ring-2 focus-visible:after:ring-[var(--focus-ring)]"
+                      >
+                        {r.rollNumber}
+                      </Link>
+                    </TD>
+                    <TD>{r.name}</TD>
+                    <TD className="whitespace-nowrap">{memberLine([r.departmentCode, r.yearOfPassing]) || '—'}</TD>
+                    <TD>{claimState(r.rollNumber, true)}</TD>
+                    <TD align="right">
+                      <ChevronRight className="size-4 text-muted" aria-hidden="true" />
+                    </TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          </TableWrap>
+
+          <ul className="space-y-2 sm:hidden">
+            {results.items.map((r) => (
+              <li key={r.id}>
+                <Link href={`/admin/degree-register/${r.id}`} className="block rounded-lg transition-colors duration-fast ease-brand hover:bg-surface-sunken">
+                  <DefinitionCard
+                    title={<span className="font-mono">{r.rollNumber}</span>}
+                    subtitle={r.name}
+                    rows={[
+                      { label: 'Batch', value: memberLine([r.departmentCode, r.yearOfPassing]) || '—' },
+                      { label: 'Account', value: claimState(r.rollNumber, false) },
+                    ]}
+                  />
+                </Link>
+              </li>
+            ))}
+          </ul>
+
+          <Pagination
+            page={results.page}
+            pageCount={results.pageCount}
+            total={results.total}
+            buildHref={(p) => buildHref({ page: p })}
+          />
+        </>
+      )}
     </div>
   );
 }

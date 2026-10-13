@@ -1,27 +1,54 @@
 'use client';
 
 import * as React from 'react';
-import { Search } from 'lucide-react';
-import { cn } from '@/lib/cn';
-import { Kbd } from '@/components/ui';
+import { usePathname } from 'next/navigation';
 import type { NavGroup } from '@/lib/navigation';
 import {
   CommandPalette,
   type PaletteBatch,
   type PaletteBranch,
   type PaletteDestination,
+  type PaletteEvent,
+  type PaletteViewer,
 } from './CommandPalette';
+
+/** Dispatched by the top bar's search trigger; opens the palette. */
+export const OPEN_PALETTE_EVENT = 'alumni:open-palette';
+
+/** Recently visited palette destinations, newest first. Per browser. */
+const RECENT_KEY = 'alumni:palette-recent';
+/** One more than the palette shows, so the page you are on can drop out. */
+const RECENT_STORED = 6;
+
+function readRecent(): string[] {
+  try {
+    const raw = window.localStorage.getItem(RECENT_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((h): h is string => typeof h === 'string') : [];
+  } catch {
+    // Private windows, blocked storage, a hand-edited value: start empty.
+    return [];
+  }
+}
+
+function writeRecent(list: string[]): void {
+  try {
+    window.localStorage.setItem(RECENT_KEY, JSON.stringify(list));
+  } catch {
+    // Storage refused. The palette still works; it just forgets.
+  }
+}
 
 /**
  * The client boundary for the command palette.
  *
  * It owns three things and nothing else: whether the palette is open, the
- * global Ctrl/⌘-K listener, and a visible way in for the majority of users
- * who will never guess a keyboard shortcut. Everything it offers was
- * computed on the server and handed down as props — this file imports no
- * session, no repository and no capability check, because a client
- * component that could ask "what may this person see" is a second
- * authorisation layer, and the second one is always the wrong one.
+ * ways in (Ctrl/⌘-K and the top bar's search trigger), and the short list
+ * of recently visited places. Everything it offers was computed on the
+ * server and handed down as props — this file imports no session, no
+ * repository and no capability check, because a client component that
+ * could ask "what may this person see" is a second authorisation layer,
+ * and the second one is always the wrong one.
  *
  * `groups` arrives already filtered through the capability matrix by
  * `memberNav`/`adminNav`, so the presence of a destination in this list is
@@ -32,6 +59,8 @@ export function PaletteMount({
   groups,
   departments,
   batches,
+  viewer,
+  nextEvent = null,
 }: {
   /** Navigation the server has already filtered for this viewer. */
   groups: NavGroup[];
@@ -39,15 +68,14 @@ export function PaletteMount({
   departments: PaletteBranch[];
   /** Members per graduating year, oldest first — `batchDistribution`. */
   batches: PaletteBatch[];
+  /** "Your batch" and "Your branch": `viewerBatchYear()` and `viewerBranch()`. */
+  viewer: PaletteViewer;
+  /** The next event this viewer may register for, formatted on the server. */
+  nextEvent?: PaletteEvent | null;
 }) {
+  const pathname = usePathname();
   const [open, setOpen] = React.useState(false);
-  // Rendered as "Ctrl" until the client says otherwise, so the server
-  // markup and the first client render agree.
-  const [mac, setMac] = React.useState(false);
-
-  React.useEffect(() => {
-    setMac(/Mac|iPhone|iPad|iPod/.test(navigator.userAgent));
-  }, []);
+  const [recent, setRecent] = React.useState<string[]>([]);
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -59,9 +87,14 @@ export function PaletteMount({
       e.preventDefault();
       setOpen((v) => !v);
     };
+    const onOpen = () => setOpen(true);
 
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    window.addEventListener(OPEN_PALETTE_EVENT, onOpen);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener(OPEN_PALETTE_EVENT, onOpen);
+    };
   }, []);
 
   const destinations = React.useMemo<PaletteDestination[]>(
@@ -80,7 +113,7 @@ export function PaletteMount({
 
   // The directory nav item exists only for a viewer who holds
   // `directory.search.alumni` on a tenant with the feature switched on —
-  // so its presence is the gate for jump-to-batch and jump-to-branch.
+  // so its presence is the gate for people, batches and branches.
   const directoryEnabled = destinations.some((d) => d.href === '/directory');
 
   // Newest batches first: "my batch" is nearly always a recent one, and
@@ -90,42 +123,41 @@ export function PaletteMount({
     [batches],
   );
 
+  // Every address the palette itself could offer. Only these are
+  // remembered, and only these are shown back: a stored href that is not
+  // in today's props (a role removed, a feature switched off) is dropped.
+  const known = React.useMemo(() => {
+    const set = new Set(destinations.map((d) => d.href));
+    if (directoryEnabled) {
+      for (const b of batches) set.add(`/directory/batch/${b.label}`);
+      for (const d of departments) set.add(`/directory/branch/${d.code}`);
+    }
+    return set;
+  }, [destinations, directoryEnabled, batches, departments]);
+
+  // Remember the page when it is one the palette knows. Runs after
+  // hydration only, so the server and first client render agree.
+  React.useEffect(() => {
+    const stored = readRecent().filter((h) => known.has(h));
+    const next = known.has(pathname) ? [pathname, ...stored.filter((h) => h !== pathname)] : stored;
+    const trimmed = next.slice(0, RECENT_STORED);
+    if (known.has(pathname)) writeRecent(trimmed);
+    setRecent(trimmed);
+  }, [pathname, known]);
+
   if (destinations.length === 0) return null;
 
   return (
-    <>
-      {/* The keyboard shortcut needs somewhere to be discovered, and a
-          phone has no Ctrl key at all — so the hint is also the button.
-          The dialog renders in the browser's top layer, which covers this
-          without any z-index arithmetic. */}
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        aria-keyshortcuts="Control+K Meta+K"
-        aria-haspopup="dialog"
-        className={cn(
-          'fixed bottom-4 right-4 z-30 inline-flex h-control items-center gap-2 rounded-full',
-          'border border-line bg-surface-raised px-4 text-sm font-medium text-secondary shadow-lg',
-          'transition-colors duration-fast ease-brand hover:border-line-strong hover:text-primary',
-          'focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]',
-        )}
-      >
-        <Search className="size-4" aria-hidden="true" />
-        <span>Jump to</span>
-        <span className="hidden items-center gap-1 sm:inline-flex" aria-hidden="true">
-          <Kbd>{mac ? '⌘' : 'Ctrl'}</Kbd>
-          <Kbd>K</Kbd>
-        </span>
-      </button>
-
-      <CommandPalette
-        open={open}
-        onClose={() => setOpen(false)}
-        destinations={destinations}
-        branches={departments}
-        batches={recentBatches}
-        directoryEnabled={directoryEnabled}
-      />
-    </>
+    <CommandPalette
+      open={open}
+      onClose={() => setOpen(false)}
+      destinations={destinations}
+      branches={departments}
+      batches={recentBatches}
+      directoryEnabled={directoryEnabled}
+      viewer={viewer}
+      nextEvent={nextEvent}
+      recent={recent.filter((h) => h !== pathname)}
+    />
   );
 }

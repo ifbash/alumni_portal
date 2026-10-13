@@ -160,22 +160,44 @@ a list view cannot leak one through a careless spread.
 ### Row-level security as the second layer
 
 Postgres enforces tenant isolation independently of the application. Every
-tenant-scoped table has a `tenant_isolation` policy reading `app.tenant_id`,
-set per transaction by `withTenant()` with `SET LOCAL`.
+tenant-scoped table has a `tenant_isolation` policy comparing `tenant_id` to
+`app_tenant_id()`, which reads `app.tenant_id`, set per transaction by
+`withTenant()` with `set_config(..., true)` (that is, `SET LOCAL`, with the
+value bound as a parameter rather than interpolated).
 
 The application already filters by tenant. That is one layer, and one layer of
 tenant isolation is not a layer of tenant isolation — the failure being
 defended against is a single missing `WHERE` clause in code written eighteen
 months from now by somebody who has not read this document.
 
-`SET LOCAL` inside an interactive transaction rather than a plain `SET` is
-required: with a connection pool, a plain `SET` persists on the connection and
-leaks the tenant context into whichever request picks it up next, which is the
-worst version of this bug because it is intermittent and load-dependent.
+What makes the policies hold rather than merely exist, each pinned by
+`tests/rls.test.ts` (which applies every migration to an in-memory Postgres and
+acts as the application role):
 
-`withTenant()` rejects any tenant id that is not a 36-character UUID before
-building the statement, because `SET LOCAL` takes no bind parameter and the
-value is interpolated.
+- **It fails closed.** `app_tenant_id()` is `NULLIF(current_setting('app.tenant_id', true), '')::uuid`.
+  With no tenant context it returns NULL, no row matches, and an INSERT is
+  refused. The two simpler forms both fail badly: `current_setting('app.tenant_id')`
+  raises when the setting was never set, and `current_setting(..., true)` alone
+  returns `''` on a pooled connection that has run any earlier `SET LOCAL`
+  transaction — and `''::uuid` is an error. The test reproduces both.
+- **Policies carry an explicit `WITH CHECK`**, so writes are constrained by the
+  same rule as reads and a row cannot be moved to another tenant.
+- **`FORCE ROW LEVEL SECURITY`** on every policied table, because a table's owner
+  is otherwise exempt.
+- **The application connects as a non-owner role.** The migration creates
+  `alumni_app` (`NOLOGIN`, no `BYPASSRLS`, owns nothing). `DATABASE_URL` must name
+  a login role that is a member of it — not the role that runs migrations.
+  `audit_log` and `consent_records` are `SELECT, INSERT` only for that role, so
+  "append-only" is enforced by the database rather than by convention.
+- **`SET LOCAL` inside an interactive transaction**, never a plain `SET`: with a
+  connection pool a plain `SET` persists on the connection and leaks the tenant
+  context into whichever request picks it up next — the worst version of this
+  bug, because it is intermittent and load-dependent.
+
+`tenants` is the one table without a policy, deliberately: a tenant has to be
+resolved from the Host header before there is a tenant context to set.
+
+`withTenant()` rejects any id that is not a canonical UUID before it reaches SQL.
 
 ### The deliberate absences
 
@@ -216,28 +238,47 @@ before (jsonb) · after (jsonb) · reason · ip · created_at
 **Snapshots are whole, not diffs.** Reconstructing state from a diff chain
 during an incident is exactly when you cannot afford the extra step.
 
-**The writer never throws.** A failed audit write must not roll back the
-operation it describes — but it logs loudly to `console.error`, because silence
-here is how an audit trail turns out to have been empty for six months.
+**By default the writer does not throw.** A failed audit write must not roll
+back the operation it describes — but it logs loudly to `console.error`, because
+silence here is how an audit trail turns out to have been empty for six months.
+**The exception is an action that releases data.** The bulk member export and the
+applicant export pass `{ strict: true }`: if the entry cannot be written, the
+file is not produced. "Who exported the alumni list" has to have an answer before
+the list leaves.
+
+**Writes go through `withTenant()`.** `audit_log` is under row-level security, and
+an INSERT with no tenant context is refused — which, swallowed, would be an audit
+trail that is silently empty.
+
+**The vendor sees the event, not the person.** `platform_admin` holds
+`audit.read` to see who did what, but snapshots, reasons and message previews
+carry member data. `redactAuditEntry()` strips `before`, `after` and `reason` for a
+vendor-only session, and the search runs only over what that session can see.
 
 **`reason` is required by convention for anything touching bulk contact data.**
 "Who exported the alumni list and why" is the first question after a leak, and
 an empty column is not an answer. It is a convention rather than a constraint,
 which is a gap — see §7.
 
-The `X-Forwarded-For` header is a list; only the first entry is the client
-address and everything after it is a proxy we control, so the writer takes the
-first element rather than storing the whole chain.
+The `ip` is the address counted from the right of `X-Forwarded-For` (see §5) and
+is checked to be a real IP before it is written, because the column is `inet`.
 
-Only one call site exists today: the branding publish endpoint. Every mutation
-added from here is expected to call it, and a code review that lets one through
-without it has missed the point of the file.
+Every administrative mutation route calls it. A code review that lets a new one
+through without it has missed the point of the file.
 
 ---
 
 ## 4. Session handling
 
-`src/lib/auth/session.ts`.
+`src/lib/auth/session.ts`, with the cookie format and the signing secret in
+`src/lib/auth/session-token.ts` — one module shared with the middleware gate, so
+there is no second copy to drift.
+
+**The signing secret.** `SESSION_SECRET` must be at least 32 characters in
+production; the process refuses to start otherwise, so `changeme` is not a
+configuration. Fixture mode with no secret falls back to a value published in
+this repository, and a production build doing so logs a warning on first use —
+acceptable for a throwaway demo on invented data, never for anything else.
 
 **The credential is an email OTP.** Six digits from `randomBytes` — not
 `Math.random()`, which is predictable enough that a login code drawn from it is
@@ -283,6 +324,19 @@ are necessary:
 Neither key alone produces an acceptable failure mode, so both are applied and
 either can refuse.
 
+**Which address is "the client".** `X-Forwarded-For` is a list that each proxy
+appends to, so the *left* is whatever the client chose to send and the *right*
+is what our own proxies added. `src/lib/client-ip.ts` counts from the right by
+`TRUSTED_PROXY_HOPS` (default 1). Taking the leftmost entry — as this code once
+did, in the rate limiter and the audit log both — lets any caller pick their
+own bucket by sending a header. The audit `ip` is also validated as a real
+address before it reaches the `inet` column, because a sentinel or forged value
+rejects the whole row.
+
+Both stores are in-process maps, swept for expired entries once a minute and
+capped at 50,000 entries so a flood of fresh addresses cannot grow memory
+without bound. They are still wrong for more than one instance (see §7).
+
 A second, product-level limiter sits on connection requests
 (`CONNECTION_LIMITS` in `src/lib/config.ts`): students get 5 open requests and
 10 per month, alumni 25 and 60. This is the valve the whole network depends on.
@@ -300,6 +354,32 @@ Set in `next.config.ts` for all paths: `X-Content-Type-Options: nosniff`,
 and a `Permissions-Policy` disabling camera, microphone, geolocation and
 interest-cohort. `poweredByHeader` is off.
 
+Set per request in `src/middleware.ts`:
+
+- **Content-Security-Policy** with a per-request nonce for scripts (plus a hash
+  for the fixed theme-boot script), `object-src 'none'`, `frame-src 'none'`,
+  `frame-ancestors 'none'`, `form-action 'self'`. `style-src` keeps
+  `'unsafe-inline'`, for the reasons written next to it.
+- **HSTS** (two years, `includeSubDomains`, `preload`) on requests that arrived
+  over TLS only.
+- **Cross-site request refusal** for state-changing requests. `SameSite=Lax` is a
+  browser default, not a control this application owns, and it does not separate
+  colleges: tenants are sibling subdomains, so a page on one college's host is
+  *same-site* with another's and its credentialed POSTs carry the session
+  cookie. `src/lib/auth/origin.ts` refuses any non-GET/HEAD/OPTIONS request whose
+  `Sec-Fetch-Site` is not `same-origin`/`none`, or whose `Origin` does not match
+  the `Host`. A caller that sends neither header is not a browser and has no
+  ambient cookie to abuse.
+
+Brand packs are customer-supplied and end up inside a `<style>` element, so the
+schema is the trust boundary: colour overrides must match a colour grammar (no
+`;`, braces, quotes, backslashes or angle brackets), font family names are
+letters/digits/space/dot/underscore/hyphen, and every asset or link URL is an
+https address or a site-relative path with no characters that can close a quote
+or parenthesis. `safeForStyleElement()` is a second lock on the sink. `tenant_branding`
+carries matching `CHECK` constraints. "No free-form CSS" is therefore enforced
+on values, not only on the names of the tokens that may be overridden.
+
 `robots: { index: false, follow: false }` is emitted for every page. Nothing is
 indexed until a college explicitly opts in to a public marketing surface. The
 directory sits behind authentication; a crawler that reaches it means something
@@ -310,200 +390,138 @@ brand imagery deliberately bypasses the optimiser via plain `<img>`, because an
 allowlist wide enough to cover every college's own web host is an allowlist
 that means nothing.
 
+The sign-in `next` parameter is accepted only through `safeNextParam()`
+(`route-policy.ts`), which refuses `//host` and `/\host` — the second is read
+by browsers as the first, and a bare "starts with one slash" test lets it
+through.
+
 ---
 
 ## 7. Known gaps
 
-What a security reviewer would raise today. Ordered by how much it would cost
-to be wrong about.
+What a security reviewer would raise today, most consequential first. Items
+fixed in the hardening pass that produced `tests/hardening.test.ts` and
+`tests/rls.test.ts` are described in the sections above rather than listed here.
 
-### Row-level security has never been proven to work
+### The database read path does not exist yet
 
-Three separate reasons it cannot be assumed:
+`src/lib/data/repo.ts` reads the in-memory seed unconditionally; there is no
+Prisma implementation, and `withTenant()` has no call sites outside `logAudit`,
+the branding route and the branding resolver. Row-level security is now proven
+(`tests/rls.test.ts`) but nothing yet depends on it for member data. Porting the
+repository is where the next class of bugs lives:
 
-1. **`FORCE ROW LEVEL SECURITY` is not set, and there is no dedicated
-   application role.** Postgres exempts a table's owner from RLS policies.
-   Prisma connects with a single `DATABASE_URL`, which in a default setup is
-   the owner — in which case every policy in the migration is inert and tenant
-   isolation is provided entirely by application code. Fix: create a non-owner
-   role for the application, `GRANT` it the necessary privileges, and
-   `ALTER TABLE … FORCE ROW LEVEL SECURITY` on every policied table.
-2. **The policies use `current_setting('app.tenant_id')` in its one-argument
-   form.** With the setting absent, that raises `unrecognized configuration
-   parameter` rather than returning NULL, so the documented failure mode
-   ("policies evaluate false and queries return nothing") is not what actually
-   happens — the query errors. That is arguably a *safer* failure, but it is
-   not the documented one, and code that catches broadly could turn it into a
-   silent empty result. `current_setting('app.tenant_id', true)` is the form
-   that matches the comment.
-3. **There is no integration test.** The test that matters — two tenants, one
-   table, confirm `withTenant(A)` cannot read B's rows and that a missing
-   context yields nothing rather than everything — has not been written. It is
-   the single most important test in this codebase and it does not exist.
-
-Additionally, `withTenant()` has **no call sites**. The isolation mechanism is
-written and unused.
-
-### The initial migration does not apply to a live Postgres
-
-Two statements fail:
-
-- `member_contacts.email`, `member_contacts.alt_email` and
-  `tenant_branding.support_email` are declared `citext`, but only `pgcrypto`
-  and `pg_trgm` are created. `CREATE EXTENSION IF NOT EXISTS citext` is missing.
-- `chk_reconciler_not_creator` on `donations` is a `CHECK` containing a
-  subquery, which PostgreSQL does not permit under any circumstances, `NOT
-  VALID` included. The separation-of-duties rule it expresses is correct and
-  needs to move to a trigger or to application logic.
-
-Both are one-line fixes. Their existence is proof that the schema has not been
-run end to end, which is the honest thing to say about the whole database path.
-
-### `tenants` has no RLS policy
-
-Eighteen of nineteen tables are policied. `tenants` is not, and the omission is
-deliberate — you must resolve a tenant before you can have a tenant context.
-But `CLAUDE.md` claims "RLS on all", and that is one table optimistic. Anything
-holding a raw connection can enumerate the customer list.
+- **The repository is tenant-blind.** Seed members carry no tenant, so any
+  fixture tenant serves the same dataset, and `/api/auth/verify` mints a session
+  for `(member, host tenant)` without checking the member belongs to that tenant.
+  In fixture mode that is how the demo tenants work; against a real database it
+  would let a member of one college sign in on another's host. Look members up by
+  `(tenant, email)` and compare tenants at sign-in as part of the port.
+- **The schema cannot back the DTOs.** `members` has no `slug`; there are no tables
+  for verification claims, notifications, sessions/OTP, comms, news or gallery;
+  `job_postings` lacks skills, salary, experience and moderation-note fields;
+  `data_requests` has no `due_at`. Reconcile before porting.
+- **`displayNow()` is the fixture clock.** Every "overdue" and "due in N days" is
+  measured against it. It cannot simply read the real clock — client components
+  would hydrate against a different instant — so it needs a server-provided value.
+- **Unscoped administrative reads.** `getMembersForAdmin()` (documented as
+  unscoped; screens that *show* records use `getMembersForAdminView()`),
+  `searchDegreeRegister()`, `getDonations()`, `getAuditLog()`,
+  `getDataRequests()`, `getEventRegistrations()`, `getJobApplications()` and
+  `getTenants()` take no session and trust the calling page to have guarded.
+  `getNotifications(session)` ignores its session.
+- **Cross-tenant foreign keys are not composite**, so a row's `tenant_id` can
+  differ from its parent's and FK checks ignore RLS. Add `(id, tenant_id)`
+  uniqueness and composite FKs.
+- **Erasure vs the audit trail.** `consent_records.member_id` cascades on delete,
+  and `audit_log.actor_id` has no `ON DELETE` rule. The application role cannot
+  delete consent history, so erasure must anonymise the member row rather than
+  delete it; decide that before building the erasure workflow.
 
 ### The OTP store and the rate limiter are in-process maps
 
-Both are `Map`s in module scope. On more than one instance:
+Bounded now, but still per-instance. On more than one instance the single-use
+guarantee on an OTP does not hold (instance B has never heard of the code
+instance A consumed), the rate-limit budget multiplies by the instance count, and
+an attacker who reconnects gets a fresh allowance. Both belong in Redis behind the
+same interfaces. `issueOtp` also overwrites an unexpired code, so anyone can
+invalidate the code a member has just been emailed by requesting another.
 
-- the single-use guarantee on an OTP does not hold, because instance B has
-  never heard of the code instance A just consumed;
-- the rate limiter's budget multiplies by the instance count, and an attacker
-  who reconnects gets a fresh allowance.
-
-Both are documented in the source as deliberately wrong for production and both
-belong in Redis behind the same interface. Neither has a call site yet, so
-today the exposure is zero — but the moment the auth routes land, this becomes
-the first thing to fix.
-
-### Nothing enforces authentication on the auth primitives
-
-`issueOtp`, `verifyOtp`, `rateLimit` and `withTenant` have **no callers**.
-There are no auth route handlers. The session, OTP and isolation code is
-written, reviewed and unexercised. Do not read §4 and §5 as a description of a
-running system.
-
-### Two configuration hazards that fail open
-
-- **`SESSION_SECRET` falls back to the literal string
-  `fixture-mode-development-secret`** when `IS_FIXTURE` is true. The guard
-  (`if (!SECRET && !IS_FIXTURE) throw`) protects the normal path, but a
-  deployment that sets `DATA_MODE=fixture` — or simply forgets `DATABASE_URL` —
-  signs real sessions with a value published in this repository.
-- **`OTP_ECHO` returns the login code in the API response** when
-  `IS_FIXTURE && NODE_ENV !== 'production'`. Two conditions both have to be
-  wrong, but "forgot `DATABASE_URL`" and "did not set `NODE_ENV`" are the two
-  most common deployment mistakes there are.
-
-Both would be better as an explicit, loud `ALLOW_INSECURE_FIXTURE_MODE` opt-in
-than as an inference from the absence of a database.
-
-### Any `*.vercel.app` host collapses to the default tenant
-
-`subdomainFrom()` in `src/lib/tenant.ts` treats `.vercel.app` as a development
-host alongside `localhost`, and development hosts fall back to
-`DEFAULT_TENANT`. A deployment reached on its `.vercel.app` URL therefore
-serves the default tenant regardless of the subdomain in the address — every
-college resolves to the same one. Fine for previews, actively dangerous if a
-production deployment is ever reachable that way. It needs a custom domain, or
-that branch needs to be gated on `NODE_ENV`.
-
-### The repository's authorisation property has holes
-
-Every function returning *member* data takes a `Session` and applies projection
-internally. Several administrative reads do not:
-`searchDegreeRegister()`, `getDegreeRegisterStats()`, `getEventRegistrations()`,
-`getJobApplications()`, `getDonations()`, `getAuditLog()`, `getDataRequests()`,
-`getTenants()` and `getMembersForAdmin()` take no session and trust the calling
-page to have guarded. `getMembersForAdmin()` returns full contact records for
-every member.
-
-That is a defensible split — the page guards, and the design contract says so —
-but it is the one place where "a page cannot ask for more than its viewer is
-entitled to" is not literally true, and it is where a mistake would be worst.
-The Playwright role matrix is what would catch a page that forgot.
-
-`getNotifications(session)` ignores its session argument entirely and returns
-the same list to everyone. Fixture-only today, and a hole to close before it
-reads real rows.
-
-### `directory.view.cgpa` is granted but unreachable
-
-`tierFor()` promotes a viewer to the `privileged` tier on
-`directory.view.contact`, and `cgpa`, `placementStatus` and `rollNumber` are
-only in the `privileged` field list. The placement officer holds
-`directory.view.cgpa` and **not** `directory.view.contact`, so they resolve to
-the `member` tier and the projection never emits the fields their capability
-names:
-
-```
-placement_officer (+faculty)   tier=member      view.cgpa=true
-college_admin                  tier=privileged  view.cgpa=true
-```
-
-This fails safe — nothing leaks — but it means the capability matrix and the
-projection disagree, and the role whose entire job is student academic data
-cannot see it. The projection needs a `cgpa`-specific field set keyed off
-`directory.view.cgpa` rather than one privileged tier keyed off contact access.
-Whichever way it is fixed, it must not widen the tier: alumni post jobs here.
-
-### `/admin/data-requests` is gated on `tenant.configure`
-
-`platform_admin` holds `tenant.configure`, so the vendor account can open the
-DPDP request queue — which lists member names. That contradicts the stated
-position that the platform admin cannot read member data. The queue needs its
-own capability.
-
-### No CSRF defence beyond `SameSite=Lax`
-
-`SameSite=Lax` blocks cookies on cross-site POST, which covers the common case.
-There is no `Origin` or `Sec-Fetch-Site` check, and no token. Before the
-mutation endpoints land, add an origin check — it is cheap, and `Lax` is a
-browser default, not a control the application owns.
-
-### No Content-Security-Policy, no HSTS
-
-Neither header is set. CSP is not free here: the root layout uses two
-`dangerouslySetInnerHTML` blocks — the tenant's brand CSS and the pre-paint
-theme script — and both would need a nonce or a hash under a strict policy. It
-is worth doing, and it is worth knowing it is not a one-line change.
-
-### The audit trail is not tamper-evident
-
-Rows are appended and never verified. There is no hash chain, no append-only
-enforcement at the database level, and if the application role holds `DELETE`
-on `audit_log` then anyone who can reach the connection can rewrite history.
-For a system whose compliance argument rests on the audit trail, that is worth
-closing: revoke `DELETE` and `UPDATE` from the application role at minimum.
-
-### `reason` on a bulk export is a convention, not a constraint
-
-`AuditArgs.reason` is optional in the type and nullable in the table. The rule
-that a bulk contact export must carry a reason is enforced by nobody. When the
-export endpoint is written, the reason should be a required parameter on that
-endpoint and non-null in a partial index or check on the relevant actions.
-
-### Session tokens cannot be revoked
+### Sessions cannot be revoked
 
 The cookie is stateless and valid for fourteen days. Signing out deletes it in
-that browser; a copied token remains valid until it expires. The mitigations
-are real — roles and status are re-read on every request, so deactivating a
-member cuts access immediately — but there is no way to invalidate a specific
-token. A `sessions` table, or a per-member token epoch that the signature
-covers, would close it.
+that browser; a copied token remains valid until it expires. The mitigations are
+real — roles and status are re-read on every request, closed accounts cannot
+sign in, and `getSession()` binds the cookie to the tenant resolved from the
+host — but there is no way to invalidate one specific token. A `sessions` table
+or a per-member token epoch covered by the signature would close it. `/logout`
+is a `GET`, so a cross-site navigation can sign someone out; it carries no data.
 
-`getSession()` also takes `tenantId` from the cookie payload without checking
-it against the tenant resolved from the request host. Cookies are host-scoped
-so the practical exposure is low, but a two-line assertion would remove the
-class entirely.
+### Any `*.vercel.app` or `localhost` host collapses to the default tenant
 
-### No dependency, secret or backup policy is documented
+`subdomainFrom()` (`src/lib/host.ts`) treats those as development hosts, and that
+holds in production builds too (the e2e suite and Vercel previews are both
+production builds). A production deployment also reachable on its `.vercel.app`
+URL serves the default college there. Put real traffic on a custom domain.
+`subdomainFrom()` also does not check the platform's base domain, so
+`diet.anything.example` resolves to `diet`.
 
-No SBOM, no dependency audit in CI, no documented key rotation for
-`SESSION_SECRET`, no backup and restore procedure, and no incident response
-runbook. For a system holding the personal data of every graduate of a college
-since 2013, these are not optional documents — they are just not written yet.
+### Configuration that fails open
+
+- Fixture mode with no `SESSION_SECRET` signs with a published value (warned
+  about in production, not refused, because the permission suite runs against a
+  production build in fixture mode). `OTP_ECHO` returns the login code in the API
+  response when `IS_FIXTURE && NODE_ENV !== 'production'`. Both would be better as
+  an explicit `ALLOW_INSECURE_FIXTURE_MODE` opt-in than as an inference from the
+  absence of a database.
+
+### Authorisation decisions that are choices, not bugs — confirm them
+
+- **`on_accept` releases the full contact block to a student**, mobile included,
+  once an alumnus accepts a request. `all_members` withholds mobile and
+  excludes students. The two disagree about whether a phone number is ever
+  released to a student.
+- **`alumni_only` releases the whole contact block, mobile included, to every
+  alumnus and faculty member**, against the "a phone number is never
+  bulk-visible" rule stated for `all_members`.
+- **`profile.read.any` is department-scoped.** An HOD reads their own branch's
+  member records and no other. Previously unscoped by a documented decision;
+  reverse it by removing the capability from `DEPARTMENT_SCOPED`.
+- **Reports are readable by the vendor.** `audit.read` opens the aggregate
+  NAAC/NIRF reports and their CSV export to `platform_admin` and `finance`.
+  Documented as aggregate-only; it is still the college's own position on its own
+  numbers.
+- **`directory.search.students`** gives HODs, placement officers and faculty the
+  alumni cohort of the directory as well as students (via `visibleStatusesFor`),
+  and is not department-scoped in `searchDirectory`. The student tier also
+  filters and facets on fields it does not display (city, industry, country).
+- **Segment sends.** `comms.send.segment` is satisfied by any filter at all
+  (`batchFrom: 1990, batchTo: 2100` is one), and news publishing with
+  notifications bypasses the cap. The audience should have to be narrower than
+  the whole list.
+- **The FCRA flag is derived from a self-declared country.** Classify from the
+  payment instrument and billing country before the donations module ships.
+- **The claim route reveals whether an address is registered** (409
+  `already_registered`) and whether a roll number has a claim pending. Documented
+  and rate limited; still an enumeration oracle.
+- **`GET /api/jobs/[id]/applicants?format=csv`** performs an audited export from
+  a `GET`, so a link can trigger it with an attacker-chosen reason.
+
+### Smaller items
+
+- `fixtureWrite()` runs after `logAudit()`, so in database mode a mutation writes a
+  real audit row and then answers 501 for an action that did not happen.
+- Forms that call `fetch` directly toast success on `persisted: false`; they
+  should go through `lib/client/api.ts`.
+- `degree-register/search` pages the whole register without auditing each query.
+- No request-body size limit on the public auth routes.
+- Matcher: the examinations register names are matched as ASCII only (a
+  non-Latin or accented name yields no tokens), and `name_normalised` in SQL keeps
+  honorifics that the TypeScript normaliser strips.
+- No SBOM, no dependency audit in CI, no documented `SESSION_SECRET` rotation, no
+  backup/restore procedure, no incident-response runbook. `npm audit` was run
+  during the hardening pass: the critical Next.js advisories are cleared at
+  15.5.27; the remaining findings are Next's bundled PostCSS (fixed only by
+  Next 16, a major upgrade) and Prisma's CLI-side `deepmerge-ts`.
+- `noUncheckedIndexedAccess` is off; turning it on is a large, mechanical change
+  that would find real unchecked array reads.

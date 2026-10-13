@@ -116,8 +116,7 @@ test.describe('a second college on the same deployment', () => {
         '',
         '  This is the isolation claim the whole product rests on. Do not weaken this test.',
         '',
-      ].join('
-'),
+      ].join('\n'),
     ).toBe(401);
   });
 
@@ -126,7 +125,7 @@ test.describe('a second college on the same deployment', () => {
     // everything: binding the cookie to a tenant must not lock a member
     // out of their own college.
     const res = await request.get('/api/auth/me', {
-      headers: { cookie: cookieFor('admin') },
+      headers: cookieFor('admin'),
       maxRedirects: 0,
     });
 

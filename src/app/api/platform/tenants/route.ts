@@ -13,7 +13,7 @@ import { clientIp, fail, fixtureWrite, HttpError, json, limit, readJson } from '
 /**
  * Provisioning a college.
  *
- * Four properties carry the whole endpoint:
+ * Five properties carry the whole endpoint:
  *
  *  1. **`dryRun` is stated, never defaulted.** There is no body shape that
  *     creates a tenant by omission. The step-three summary is a dry run;
@@ -35,6 +35,11 @@ import { clientIp, fail, fixtureWrite, HttpError, json, limit, readJson } from '
  *     capability that reads a member row. Provisioning a college does not
  *     make anyone at ifBash a member of it, and this handler is where that
  *     claim is either true or marketing.
+ *  5. **It writes nothing into another college.** The audit entry is
+ *     filed in the new college's scope, never in `session.tenantId` —
+ *     which is only whichever college the vendor is signed in to, and
+ *     whose audit readers have no business seeing another customer's
+ *     onboarding. Pinned by `tests/vendor-boundary.routes.test.ts`.
  *
  * Isolation itself is not created here. The row-level security policies
  * already exist on all nineteen tables; provisioning adds a tenant id for
@@ -257,7 +262,7 @@ function buildPlan(
       key: 'audit',
       title: 'An entry in audit_log',
       detail:
-        'Append-only: no capability in the matrix edits or deletes this table. It is written in the audit scope of the account doing the provisioning rather than the new college’s, because that account is not — and never becomes — a member of the college it created, so an entry filed inside the new tenant would be readable by nobody.',
+        'Append-only: no capability in the matrix edits or deletes this table. It is written inside the new college’s own scope, under the same tenant id as the rows above, so its administrators can see who created their portal and when. It is never written in the scope of the college the provisioning account happens to be signed in to — that college’s audit readers would be reading another customer’s onboarding, admin address included.',
       fields: [
         { label: 'action', value: 'tenant.provision' },
         { label: 'resource', value: `tenants/${ids.tenantId}` },
@@ -417,7 +422,9 @@ export async function POST(request: Request) {
       tenantId,
       host: hostFor(request, body.subdomain),
       actorMemberId: session.memberId,
-      auditScope: session.tenantId,
+      // The college being created, never `session.tenantId`. See the audit
+      // write below; the preview names the scope the write will use.
+      auditScope: tenantId,
     });
 
     if (body.dryRun) {
@@ -447,11 +454,21 @@ export async function POST(request: Request) {
     };
 
     await logAudit({
-      // The actor's own scope, not the new college's. The account that
-      // provisions a tenant holds no role inside it, so an entry filed
-      // there would be readable by nobody — least of all by the people who
-      // have to answer "who created this college, and when".
-      tenantId: session.tenantId,
+      // The new college's scope — never the actor's.
+      //
+      // A session is bound to the host it was minted on, so
+      // `session.tenantId` is not "the vendor's scope": it is whichever
+      // college the vendor happened to be signed in to. Filing the entry
+      // there put another customer's name, plan, FCRA status and admin
+      // email into that college's audit log, readable by its `audit.read`
+      // holders under row-level security. The schema has no platform-level
+      // audit scope (`audit_log.tenant_id` is NOT NULL and references
+      // `tenants`), so the one scope that is not somebody else's is the
+      // college this entry is about. It also agrees with the plan's own
+      // `SET LOCAL app.tenant_id` for the new college: the audit_log policy
+      // has no separate WITH CHECK, so an insert is held to the same
+      // tenant comparison as a read.
+      tenantId,
       session,
       action: 'tenant.provision',
       resource: 'tenants',

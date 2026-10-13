@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { AuthzError, toResponse } from '@/lib/auth/guard';
 import { rateLimit } from '@/lib/auth/session';
+import { clientIpFrom } from '@/lib/client-ip';
 import { IS_FIXTURE } from '@/lib/config';
 
 /**
@@ -160,15 +161,11 @@ export const flagParam = z
   .transform((v) => v === '1' || v === 'true' || v === 'yes' || v === 'on');
 
 /**
- * X-Forwarded-For is a list; the client address is the first entry and
- * everything after it is a proxy we control. Local development has no
- * header at all, which shares one bucket — deliberate, and the reason
- * per-IP limits here are generous while per-identity limits are tight.
+ * The caller's network address, for rate limiting. See `lib/client-ip.ts`
+ * for why this is counted from the right of `X-Forwarded-For`, not the left.
  */
 export function clientIp(request: Request): string {
-  const forwarded = request.headers.get('x-forwarded-for');
-  if (forwarded) return forwarded.split(',')[0]?.trim() || 'unknown';
-  return request.headers.get('x-real-ip')?.trim() || 'local';
+  return clientIpFrom(request.headers);
 }
 
 export function limit(key: string, max: number, windowSeconds: number, message: string): void {

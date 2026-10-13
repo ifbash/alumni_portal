@@ -1,19 +1,15 @@
+import type { ReactNode } from 'react';
+import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import {
-  ArrowRight,
-  Database,
-  History,
-  Info,
-  ScrollText,
-  ShieldAlert,
-  TriangleAlert,
-} from 'lucide-react';
+import { ArrowRight, History, ScrollText, ShieldAlert, ShieldCheck, TriangleAlert } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
-import { require as requireCap } from '@/lib/auth/guard';
+import { can, isVendorOnlySession, require as requireCap } from '@/lib/auth/guard';
+import { redactAuditEntry } from '@/lib/audit/redact';
 import { getAuditLog } from '@/lib/data/repo';
-import { ROLE_LABELS } from '@/lib/navigation';
+import { getTenantBrand } from '@/lib/tenant';
 import { formatDateTime, formatRelative } from '@/lib/format';
+import { inSentence, joinList } from '@/lib/branding/copy';
 import {
   Alert,
   Badge,
@@ -21,19 +17,25 @@ import {
   ButtonLink,
   Card,
   CardBody,
-  CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
-  DetailRow,
   Disclosure,
   PageHeader,
-  Separator,
 } from '@/components/ui';
 
-import { FLAGGED, actionLabel, capabilityMismatch, isFlagged } from '../audit-taxonomy';
+import {
+  FLAGGED,
+  actionLabel,
+  actionSentence,
+  capabilityMismatch,
+  isFlagged,
+  resourceLabel,
+  roleLabel as labelForRole,
+  rolesAllowed,
+  valueLabel,
+} from '../audit-taxonomy';
 
-export const metadata = { title: 'Audit entry' };
+export const metadata = { title: 'Audit entry · Staff console' };
 
 // ---------------------------------------------------------------
 // Snapshot diffing
@@ -41,8 +43,9 @@ export const metadata = { title: 'Audit entry' };
 
 /**
  * The diff is computed here, at read time, from two complete snapshots.
- * The database stores whole `before` and `after` documents — see the note
- * rendered at the bottom of this page for why that is the right trade.
+ * The database stores whole `before` and `after` documents — see "About
+ * the audit log" at the bottom of this page for why that is the right
+ * trade.
  */
 
 type Bag = Record<string, unknown>;
@@ -102,13 +105,14 @@ function fieldLabel(path: string): string {
     .replace(/^./, (c) => c.toUpperCase());
 }
 
+/** A stored value as a reader says it: enums as words ("Alumni", not the enum). */
 function renderValue(value: unknown): string {
   if (value === null || value === undefined) return 'not set';
   if (typeof value === 'boolean') return value ? 'yes' : 'no';
-  if (Array.isArray(value)) return value.length ? value.map(String).join(', ') : 'empty list';
+  if (Array.isArray(value)) return value.length ? value.map((v) => valueLabel(String(v))).join(', ') : 'empty list';
   if (typeof value === 'object') return JSON.stringify(value);
   const text = String(value);
-  return text.length ? text : 'empty';
+  return text.length ? valueLabel(text) : 'empty';
 }
 
 const CHANGE_BADGE: Record<Exclude<ChangeKind, 'same'>, { label: string; tone: 'warning' | 'success' | 'danger' }> = {
@@ -127,12 +131,18 @@ export default async function AuditEntryPage({ params }: { params: Promise<{ id:
   requireCap(session, 'audit.read');
 
   const { id } = await params;
-  const entry = getAuditLog({ limit: 10000 }).find((e) => e.id === id);
-  if (!entry) notFound();
+  const found = getAuditLog({ limit: 10000 }).find((e) => e.id === id);
+  if (!found) notFound();
+  // The vendor reads the event, not the member data inside it.
+  const entry = isVendorOnlySession(session) ? redactAuditEntry(found) : found;
+
+  const pack = (await getTenantBrand())?.brand.pack;
+  const fmt = { locale: pack?.locale.locale, timeZone: pack?.locale.timeZone };
 
   const flagged = isFlagged(entry.action);
   const flag = FLAGGED[entry.action];
   const mismatch = capabilityMismatch(entry.action, entry.actorRole);
+  const canManageRoles = can(session, 'role.manage');
 
   const before = asBag(entry.before);
   const after = asBag(entry.after);
@@ -142,7 +152,54 @@ export default async function AuditEntryPage({ params }: { params: Promise<{ id:
   const changed = changes.filter((c) => c.kind !== 'same');
   const unchanged = changes.filter((c) => c.kind === 'same');
 
-  const roleLabel = entry.actorRole ? (ROLE_LABELS[entry.actorRole] ?? entry.actorRole) : null;
+  const roleLabel = labelForRole(entry.actorRole);
+  const actor = entry.actorName ?? 'An unattributed account';
+  const when = formatDateTime(entry.createdAt, fmt);
+  const allowed = rolesAllowed(entry.action);
+
+  const sentence = [
+    `${actor}${roleLabel ? ` (${roleLabel})` : ''} ${actionSentence(entry.action)}`,
+    when,
+    entry.ip ? `from ${entry.ip}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  const facts: Array<{ label: string; value: ReactNode }> = [
+    { label: 'Actor', value: entry.actorName ?? 'Unattributed' },
+    {
+      label: 'Role recorded',
+      value: roleLabel ? (
+        <span className="flex flex-wrap items-center gap-2">
+          {roleLabel}
+          {mismatch ? <Badge tone="danger">Role mismatch</Badge> : null}
+        </span>
+      ) : (
+        'None'
+      ),
+    },
+    {
+      label: 'When',
+      value: (
+        <>
+          <span className="tabular">{when}</span>
+          <span className="block text-xs font-normal text-secondary">{formatRelative(entry.createdAt, fmt)}</span>
+        </>
+      ),
+    },
+    {
+      label: 'Resource',
+      value: (
+        <>
+          {resourceLabel(entry.resource)}
+          <span className="block font-mono text-xs font-normal text-secondary">{entry.resourceId ?? 'no id recorded'}</span>
+        </>
+      ),
+    },
+    { label: 'From', value: <span className="font-mono text-xs">{entry.ip ?? '—'}</span> },
+    { label: 'Action', value: <span className="font-mono text-xs">{entry.action}</span> },
+    { label: 'Entry ID', value: <span className="font-mono text-xs">{entry.id}</span> },
+  ];
 
   return (
     <div className="space-y-6">
@@ -150,90 +207,90 @@ export default async function AuditEntryPage({ params }: { params: Promise<{ id:
         breadcrumbs={
           <Breadcrumbs
             items={[
-              { label: 'Governance' },
+              { label: 'Staff console', href: '/admin' },
               { label: 'Audit log', href: '/admin/audit' },
-              { label: entry.id },
+              { label: actionLabel(entry.action) },
             ]}
           />
         }
-        eyebrow="Audit entry"
+        eyebrow="Governance"
         title={actionLabel(entry.action)}
-        description={
-          entry.reason ??
-          'No reason was recorded against this entry. Actions that carry consequence for a member are required to state one; the rest are recorded without.'
-        }
-        actions={
-          <ButtonLink variant="secondary" href="/admin/audit">
-            Back to the log
-          </ButtonLink>
-        }
+        description={sentence}
       />
 
+      {entry.reason ? (
+        <blockquote className="border-l-4 border-line-strong pl-4 text-md text-primary">
+          <p>&ldquo;{entry.reason}&rdquo;</p>
+          <footer className="mt-1 text-xs text-secondary">The reason given at the time</footer>
+        </blockquote>
+      ) : (
+        <p className="text-sm text-secondary">No reason was recorded against this entry.</p>
+      )}
+
+      {mismatch && flag ? (
+        <Alert tone="danger" title="The recorded role cannot do this" icon={<TriangleAlert className="size-4" />}>
+          <p>
+            This entry is stamped <strong>{roleLabel}</strong>, and that role cannot {flag.toDo}
+            {allowed.length
+              ? ` (it needs the ${joinList(allowed.map(inSentence))} role)`
+              : ''}
+            . The log records one role per entry and a person can hold several, so{' '}
+            {entry.actorName ?? 'the actor'} may also have held a role that can. Confirm it against the role grants
+            before ruling it out.
+          </p>
+          {canManageRoles ? (
+            <p className="mt-2">
+              <Link href="/admin/roles" className="inline-flex min-h-11 items-center gap-1 font-semibold sm:min-h-0">
+                Check {entry.actorName ?? 'the actor'}&rsquo;s roles
+                <ArrowRight className="size-3.5" aria-hidden="true" />
+              </Link>
+            </p>
+          ) : null}
+        </Alert>
+      ) : null}
+
       {flagged && flag ? (
-        <Alert tone="warning" title="Flagged for incident review" icon={<ShieldAlert className="size-4" />}>
+        <Alert tone="warning" title="Flagged for review" icon={<ShieldAlert className="size-4" />}>
           <p>{flag.why}</p>
         </Alert>
       ) : null}
 
-      {mismatch && flag ? (
-        <Alert tone="danger" title="The recorded role does not carry this action" icon={<TriangleAlert className="size-4" />}>
-          <p>
-            This entry is stamped <strong>{roleLabel}</strong>, and the capability matrix does not
-            grant <code className="font-mono">{flag.capability}</code> to that role. The log records
-            one role per entry while a person may hold several, so the innocent reading is that{' '}
-            {entry.actorName ?? 'the actor'} also held a role that did. Confirm it against the role
-            grants before you rule it out.
-          </p>
-        </Alert>
-      ) : null}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_16rem]">
+        <div className="min-w-0 space-y-6">
+          <Card>
+            <CardBody>
+              <dl className="grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2">
+                {facts.map((f) => (
+                  <div key={f.label} className="min-w-0">
+                    <dt className="text-xs font-semibold uppercase tracking-wide text-secondary">{f.label}</dt>
+                    <dd className="mt-1 break-words text-sm font-medium">{f.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </CardBody>
+          </Card>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
           <Card>
             <CardHeader>
-              <div className="min-w-0 space-y-1">
-                <CardTitle as="h2">What changed</CardTitle>
-                <CardDescription>
-                  {hasSnapshot
-                    ? `${changed.length} field${changed.length === 1 ? '' : 's'} differ between the snapshot taken before this action and the one taken after.`
-                    : 'This entry carries no before-and-after snapshot.'}
-                </CardDescription>
-              </div>
+              <CardTitle as="h2">What changed</CardTitle>
               {hasSnapshot ? (
-                <Badge tone={changed.length ? 'warning' : 'neutral'}>
-                  {changed.length ? `${changed.length} changed` : 'No field differences'}
+                <Badge tone={changed.length ? 'warning' : 'neutral'} className="shrink-0 whitespace-nowrap">
+                  {changed.length
+                    ? `${changed.length} ${changed.length === 1 ? 'field differs' : 'fields differ'}`
+                    : 'No field differences'}
                 </Badge>
               ) : null}
             </CardHeader>
 
             <CardBody className="space-y-5">
               {!hasSnapshot ? (
-                <div className="space-y-3 rounded-lg border border-dashed border-line bg-surface p-4">
-                  <p className="flex items-center gap-2 text-sm font-semibold">
-                    <Info className="size-4 text-muted" aria-hidden="true" />
-                    Nothing was mutated, so nothing was snapshotted
-                  </p>
-                  <p className="text-sm text-secondary">
-                    Snapshots are written by actions that change a row. An export reads and produces
-                    a file; a campaign send, a moderation decision and a settings publish record
-                    their outcome in the resource itself. For those, the reason, the actor and the
-                    scope above <em>are</em> the record.
-                  </p>
-                  <p className="text-sm text-secondary">
-                    Where an action plainly did change a member row and no snapshot appears here,
-                    that is itself the finding: the write path skipped the snapshot columns, and the
-                    entry cannot be used to reconstruct anything.
-                  </p>
-                </div>
+                <p className="text-sm text-secondary">
+                  Exports and sends change no record. The reason and scope above are the record.
+                </p>
               ) : changed.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-line bg-surface p-4">
-                  <p className="text-sm font-semibold">Both snapshots are identical</p>
-                  <p className="mt-1 text-sm text-secondary">
-                    The action ran and wrote a pair of snapshots, but no field ended up different —
-                    usually a re-save of an unchanged form. Worth knowing, and worth not mistaking
-                    for a change.
-                  </p>
-                </div>
+                <p className="text-sm text-secondary">
+                  Both snapshots are identical: the action ran, but no field ended up different.
+                </p>
               ) : (
                 <ul className="divide-y divide-line">
                   {changed.map((change) => {
@@ -251,7 +308,7 @@ export default async function AuditEntryPage({ params }: { params: Promise<{ id:
 
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                           {change.kind !== 'added' ? (
-                            <span className="font-mono text-sm text-muted line-through decoration-1">
+                            <span className="text-sm text-secondary line-through decoration-1">
                               {renderValue(change.before)}
                             </span>
                           ) : null}
@@ -261,7 +318,7 @@ export default async function AuditEntryPage({ params }: { params: Promise<{ id:
                           ) : null}
 
                           {change.kind !== 'removed' ? (
-                            <span className="rounded-sm bg-success-soft px-2 py-0.5 font-mono text-sm font-semibold text-success-fg">
+                            <span className="rounded-sm bg-success-soft px-2 py-0.5 text-sm font-semibold text-success-fg">
                               {renderValue(change.after)}
                             </span>
                           ) : null}
@@ -274,13 +331,13 @@ export default async function AuditEntryPage({ params }: { params: Promise<{ id:
 
               {unchanged.length ? (
                 <Disclosure
-                  summary={`${unchanged.length} field${unchanged.length === 1 ? '' : 's'} carried through unchanged`}
+                  summary={`${unchanged.length} ${unchanged.length === 1 ? 'field' : 'fields'} carried through unchanged`}
                 >
                   <dl className="space-y-1.5">
                     {unchanged.map((change) => (
                       <div key={change.path} className="flex flex-wrap justify-between gap-x-4">
                         <dt className="text-secondary">{fieldLabel(change.path)}</dt>
-                        <dd className="font-mono text-xs text-muted">{renderValue(change.after)}</dd>
+                        <dd className="text-xs text-secondary">{renderValue(change.after)}</dd>
                       </div>
                     ))}
                   </dl>
@@ -291,13 +348,13 @@ export default async function AuditEntryPage({ params }: { params: Promise<{ id:
                 <Disclosure summary="Raw snapshots">
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-muted">Before</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-secondary">Before</p>
                       <pre className="overflow-x-auto rounded border border-line bg-surface-sunken p-3 font-mono text-xs text-secondary">
                         {JSON.stringify(entry.before ?? null, null, 2)}
                       </pre>
                     </div>
                     <div className="space-y-2">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-muted">After</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-secondary">After</p>
                       <pre className="overflow-x-auto rounded border border-line bg-surface-sunken p-3 font-mono text-xs text-secondary">
                         {JSON.stringify(entry.after ?? null, null, 2)}
                       </pre>
@@ -308,119 +365,79 @@ export default async function AuditEntryPage({ params }: { params: Promise<{ id:
             </CardBody>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <div className="min-w-0 space-y-1">
-                <CardTitle as="h2">Why the log stores whole snapshots, not diffs</CardTitle>
-                <CardDescription>
-                  A design decision that only ever pays out on the worst day of the year.
-                </CardDescription>
-              </div>
-            </CardHeader>
-            <CardBody className="max-w-prose space-y-4 text-sm text-secondary">
+          <Disclosure
+            summary={
+              <span className="flex items-center gap-2">
+                <ShieldCheck className="size-4 shrink-0 text-brand-fg" aria-hidden="true" />
+                About the audit log
+              </span>
+            }
+          >
+            <div className="max-w-prose space-y-2">
               <p>
-                A chain of diffs is smaller, and on an ordinary day it holds the same information.
-                The day you open this screen is not an ordinary day. Answering “what did this record
-                look like on 3 March” from a diff chain means replaying every entry since the row was
-                created, in order, and trusting that none of them was written by a build that
-                serialised a field differently. That is an extra step at exactly the moment you
-                cannot afford one — and it fails whenever a single entry in the middle is malformed,
-                which is the same class of bug that caused the incident.
+                No one can edit or delete an entry, at any role. An entry records that an action touched a record; it
+                never holds a private message, marks or a contact detail the reader could not otherwise see.
               </p>
               <p>
-                Storing <code className="font-mono text-primary">before</code> and{' '}
-                <code className="font-mono text-primary">after</code> in full makes every entry
-                independently readable. One row is one complete answer. The comparison you are
-                looking at is computed at read time, so it can be presented differently later — a
-                field renamed, a value formatted for humans — without anyone rewriting history to
-                make the display work.
+                Actions that change a record store the whole record before and after, not just the difference, so each
+                entry can be read on its own. The comparison above is worked out when you open the page.
               </p>
-              <p>
-                The cost is storage, which is the cheap part, and duplication, which is the point.
-              </p>
-            </CardBody>
-          </Card>
+            </div>
+          </Disclosure>
         </div>
 
-        <aside className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle as="h2">Entry</CardTitle>
-            </CardHeader>
-            <CardBody>
-              <dl className="divide-y divide-line">
-                <DetailRow label="Actor">{entry.actorName ?? 'Unattributed'}</DetailRow>
-                <DetailRow label="Role recorded">
-                  {roleLabel ? (
-                    <span className="flex flex-wrap items-center gap-2">
-                      {roleLabel}
-                      {mismatch ? <Badge tone="danger">Capability mismatch</Badge> : null}
-                    </span>
-                  ) : (
-                    <span className="text-muted">None</span>
-                  )}
-                </DetailRow>
-                <DetailRow label="Action">
-                  <span className="font-mono text-xs">{entry.action}</span>
-                </DetailRow>
-                <DetailRow label="When">
-                  <span className="tabular">{formatDateTime(entry.createdAt)}</span>
-                  <span className="block text-xs font-normal text-muted">
-                    {formatRelative(entry.createdAt)}
-                  </span>
-                </DetailRow>
-                <DetailRow label="Resource">
-                  <span className="capitalize">{entry.resource.replace(/_/g, ' ')}</span>
-                  <span className="block font-mono text-xs font-normal text-muted">
-                    {entry.resourceId ?? 'no id recorded'}
-                  </span>
-                </DetailRow>
-                <DetailRow label="Reason">
-                  {entry.reason ?? <span className="text-muted">None recorded</span>}
-                </DetailRow>
-                <DetailRow label="From">
-                  <span className="font-mono text-xs">{entry.ip ?? '—'}</span>
-                </DetailRow>
-                <DetailRow label="Entry id">
-                  <span className="font-mono text-xs">{entry.id}</span>
-                </DetailRow>
-              </dl>
-            </CardBody>
-            <CardFooter className="flex-col items-stretch gap-2">
-              <ButtonLink
-                variant="secondary"
-                size="sm"
-                href={`/admin/audit?q=${encodeURIComponent(entry.actorName ?? '')}`}
-              >
-                <History className="size-3.5" aria-hidden="true" />
-                Everything this actor did
-              </ButtonLink>
+        <aside aria-label="Related entries" className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-secondary">Related</p>
+          <ul className="space-y-1">
+            {entry.actorName ? (
+              <li>
+                <ButtonLink
+                  variant="ghost"
+                  size="sm"
+                  className="min-h-11 w-full justify-start lg:min-h-9"
+                  href={`/admin/audit?q=${encodeURIComponent(entry.actorName)}`}
+                >
+                  <History className="size-3.5" aria-hidden="true" />
+                  Everything this actor did
+                </ButtonLink>
+              </li>
+            ) : null}
+            <li>
               <ButtonLink
                 variant="ghost"
                 size="sm"
+                className="min-h-11 w-full justify-start whitespace-normal text-left lg:min-h-9"
                 href={`/admin/audit?action=${encodeURIComponent(entry.action)}`}
               >
-                <ScrollText className="size-3.5" aria-hidden="true" />
-                Every {actionLabel(entry.action).toLowerCase()}
+                <ScrollText className="size-3.5 shrink-0" aria-hidden="true" />
+                Every entry of this kind
               </ButtonLink>
-            </CardFooter>
-          </Card>
-
-          <Card>
-            <CardBody className="space-y-3">
-              <p className="flex items-center gap-2 text-sm font-semibold">
-                <Database className="size-4 text-brand-fg" aria-hidden="true" />
-                What this row cannot be
-              </p>
-              <Separator />
-              <p className="text-sm text-secondary">
-                This entry cannot be edited or deleted by anyone, at any role. It also cannot be
-                widened: an audit row records that an action touched a resource, never the contents
-                of a private message, a CGPA, or a contact detail the viewer was not entitled to.
-                An audit log that quietly becomes a second copy of the data is a second breach.
-              </p>
-            </CardBody>
-          </Card>
+            </li>
+            {mismatch && canManageRoles ? (
+              <li>
+                <ButtonLink
+                  variant="ghost"
+                  size="sm"
+                  className="min-h-11 w-full justify-start lg:min-h-9"
+                  href="/admin/roles"
+                >
+                  <ShieldAlert className="size-3.5" aria-hidden="true" />
+                  Role grants
+                </ButtonLink>
+              </li>
+            ) : null}
+            <li>
+              <ButtonLink
+                variant="ghost"
+                size="sm"
+                className="min-h-11 w-full justify-start lg:min-h-9"
+                href="/admin/audit"
+              >
+                <ArrowRight className="size-3.5 rotate-180" aria-hidden="true" />
+                Back to the log
+              </ButtonLink>
+            </li>
+          </ul>
         </aside>
       </div>
     </div>

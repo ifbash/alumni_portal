@@ -186,7 +186,7 @@ export const NEWS: NewsItem[] = [
     summary: 'Sixty-eight offers this season came through a referral from a graduate. That is up from nine two years ago.',
     body:
       'The placement cell has closed the 2026 season. Of 388 students in the graduating batch, 341 received at least one offer.\n\n' +
-      'Sixty-eight of those offers came through a referral from a DIET graduate — either a direct referral into a company, or a posting an alumnus put on this portal. Two years ago the equivalent number was nine, and it was tracked on a spreadsheet.\n\n' +
+      'Sixty-eight of those offers came through a referral from a graduate — either a direct referral into a company, or a posting an alumnus put on this portal. Two years ago the equivalent number was nine, and it was tracked on a spreadsheet.\n\n' +
       'We are stating this number plainly because it is the only honest measure of whether an alumni network is working. A directory nobody uses is a mailing list. Sixty-eight people started a career because a graduate answered a message.\n\n' +
       'If you are willing to be asked, turn on "open to referrals" in your profile. Two hundred and forty-one graduates have. The students can see exactly who, which is the point.',
     aboutMemberId: null, departmentCode: null,
@@ -208,7 +208,7 @@ export const NEWS: NewsItem[] = [
   {
     id: 'news-4', slug: 'annual-meet-2026-registration-open', kind: 'announcement',
     title: 'Annual Alumni Meet 2026 — registration is open',
-    summary: 'Saturday 24 September, on campus. ₹500 including lunch. Batch tables are being organised by year of passing.',
+    summary: 'Thursday 24 September, on campus. ₹500 including lunch. Batch tables are being organised by year of passing.',
     body:
       'Registration for the Annual Alumni Meet is open on the events page.\n\n' +
       'The day runs from 9:30am. Department sessions in the morning, the general body meeting after lunch, and the cultural evening in the open-air auditorium from 6pm.\n\n' +

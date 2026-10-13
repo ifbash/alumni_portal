@@ -55,10 +55,18 @@ export {
   Breadcrumbs,
   Tabs,
   SegmentedNav,
+  ChipNav,
   Pagination,
   Section,
   type TabItem,
 } from './nav';
+
+// Signed-in patterns: media, tasks, actions and explanation.
+export { MediaFrame, CoverArt, DateTile, type MediaAspect } from './media';
+export { NeedsYou, SummaryLine, type TaskItem } from './tasks';
+export { StickyActionBar } from './actions';
+export { ShareActions, CopyButton, DropZone } from './actions-client';
+export { HowThisWorks, TrustChip } from './explain';
 
 export {
   TableWrap,

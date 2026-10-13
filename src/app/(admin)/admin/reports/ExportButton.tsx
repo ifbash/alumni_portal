@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Download, FileSpreadsheet, Lock, ShieldCheck, TriangleAlert } from 'lucide-react';
+import { Download, FileSpreadsheet, Lock, Printer, ShieldCheck, TriangleAlert } from 'lucide-react';
 import {
   Alert,
   Badge,
@@ -118,7 +118,7 @@ export function ExportButton({
       setOpen(false);
       toast.success(
         'Report downloaded',
-        `${chosen?.metrics ?? 0} figures, each with its denominator and definition. Recorded in the audit log as report.export.`,
+        `${chosen?.metrics ?? 0} figures, each with its denominator and definition. Recorded in the audit log.`,
       );
     } catch {
       setError(
@@ -186,9 +186,8 @@ export function ExportButton({
               ))}
             </ul>
             <p className="mt-3 text-xs text-secondary">
-              <span className="font-semibold text-primary">Denominator and Definition travel with every figure.</span>{' '}
-              That is what makes next cycle&apos;s submission reproducible: whoever rebuilds this in three years can
-              check the count against the sentence that produced it, rather than guessing what the last person meant.
+              Denominator and Definition travel with every figure, so next cycle&apos;s submission can be rebuilt the
+              same way.
             </p>
           </div>
 
@@ -198,10 +197,7 @@ export function ExportButton({
               title={`${chosen.caveats} figure${chosen.caveats === 1 ? '' : 's'} in this file carry a caveat`}
               icon={<TriangleAlert className="size-4" aria-hidden="true" />}
             >
-              <p>
-                The caveats are in their own column, not footnotes. Do not paste the value column into a submission
-                template on its own — a figure separated from its caveat is the one that gets challenged.
-              </p>
+              <p>The caveats are in their own column. Do not paste the values into a submission without them.</p>
             </Alert>
           ) : null}
 
@@ -212,9 +208,8 @@ export function ExportButton({
           ) : null}
 
           <p className="text-xs text-secondary">
-            Recorded in the audit log as <span className="font-mono">report.export</span> with your name and the
-            framework you asked for. Aggregate figures, so no reason is demanded here — the perception-survey list is a
-            different control with different rules.
+            Recorded in the audit log with your name and the framework you asked for. Aggregate figures only, so no
+            reason is asked for.
           </p>
         </div>
       </Dialog>
@@ -298,7 +293,7 @@ export function PerceptionSurveyDialog({
       setRecorded(reason.trim());
       toast.success(
         'Export recorded',
-        `member.export written against ${actorName}. ${rowCount.toLocaleString('en-IN')} rows, ${scopeLabel}.`,
+        `Recorded in the audit log against ${actorName}. ${rowCount.toLocaleString('en-IN')} rows, ${scopeLabel}.`,
       );
     } catch {
       setError('The export did not complete. If an audit entry was written it stays on the record, even though no file arrived.');
@@ -349,9 +344,7 @@ export function PerceptionSurveyDialog({
             </Alert>
 
             <dl className="divide-y divide-line">
-              <DetailRow label="Action">
-                <span className="font-mono text-sm">member.export</span>
-              </DetailRow>
+              <DetailRow label="Action">Bulk contact export</DetailRow>
               <DetailRow label="Actor">{actorName}</DetailRow>
               <DetailRow label="Scope">{scopeLabel}</DetailRow>
               <DetailRow label="Rows">
@@ -440,5 +433,30 @@ export function PerceptionSurveyDialog({
         )}
       </Dialog>
     </>
+  );
+}
+
+// ---------------------------------------------------------------
+// Print
+// ---------------------------------------------------------------
+
+/**
+ * "Print / Save as PDF". The browser's own print dialog does both; the
+ * page's print stylesheet hides the console chrome and shows the
+ * letterhead (`Letterhead.tsx`), so what comes out is an annexure the
+ * principal can sign.
+ */
+export function PrintButton({
+  label = 'Print / Save as PDF',
+  className,
+}: {
+  label?: string;
+  className?: string;
+}) {
+  return (
+    <Button variant="secondary" onClick={() => window.print()} className={className}>
+      <Printer className="size-4" aria-hidden="true" />
+      {label}
+    </Button>
   );
 }

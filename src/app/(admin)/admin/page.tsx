@@ -1,57 +1,44 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import {
-  ArrowRight,
-  Briefcase,
-  CalendarDays,
-  FileCheck2,
-  Handshake,
-  ScrollText,
-  Users,
-} from 'lucide-react';
-import { getSession } from '@/lib/auth/session';
+import { ArrowRight, DoorOpen } from 'lucide-react';
+import { getSession, getSessionMember } from '@/lib/auth/session';
 import { can } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
-import { hasAdminAccess } from '@/lib/navigation';
-import { getDegreeRegisterStats, getStats } from '@/lib/data/repo';
+import { canOpen, hasAdminAccess } from '@/lib/navigation';
+import { getDegreeRegisterStats, getEvents, getStats } from '@/lib/data/repo';
+import { staffTasks } from '@/lib/staff-tasks';
+import { greetingFor } from '@/lib/branding/copy';
+import { firstNameOf, primaryRoleLabel } from '@/lib/identity';
+import { daysUntil, formatNumber, formatPercent } from '@/lib/format';
+import { cn } from '@/lib/cn';
+import { Card, CardBody, CardHeader, CardTitle, DateTile, NeedsYou, Section } from '@/components/ui';
+import { BarList, Sparkline } from '@/components/charts';
+import { PageBand } from '@/components/brand/PageBand';
 import {
-  Alert,
-  Badge,
-  ButtonLink,
-  Card,
-  CardBody,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  PageHeader,
-  Progress,
-  Section,
-  Stat,
-  Table,
-  TableWrap,
-  TBody,
-  TD,
-  TH,
-  THead,
-  TR,
-} from '@/components/ui';
-import { BarList, ColumnChart, DonutChart, ProportionBar } from '@/components/charts';
-import { MarginNote } from '@/components/brand/Marks';
-import { formatNumber, formatPercent } from '@/lib/format';
+  CoverageChips,
+  CoverageLegend,
+  WeakestBatches,
+  batchCommsHref,
+  weakestBatches,
+} from './_shared/RegisterFilesGrid';
 
-export const metadata = { title: 'Console' };
+export const metadata = { title: 'Today · Staff console' };
+
+const MONTHS_LONG: Record<string, string> = {
+  Jan: 'January', Feb: 'February', Mar: 'March', Apr: 'April', May: 'May', Jun: 'June',
+  Jul: 'July', Aug: 'August', Sep: 'September', Sept: 'September', Oct: 'October', Nov: 'November', Dec: 'December',
+};
 
 /**
- * The staff console overview.
+ * Today: the staff console's front page.
  *
- * Ordered by what the alumni cell is actually measured on, not by what is
- * easiest to count. Register coverage comes first and takes the whole
- * width, because "how many of our graduates have we reached" is the only
- * number the dean asks for by name — everything else on this page is a
- * lever that moves it.
- *
- * Every tile is a link to the screen that acts on it, and the link is
- * dropped rather than 403'd when the viewer lacks the capability.
+ * The queue comes first, because it is the only part of this page that is
+ * somebody's job this morning. Every count in it comes from
+ * `staffTasks()`, the same source as the sidebar badges, and every read
+ * behind it sits behind its own capability there. Reach comes second, as
+ * a sentence and a batch strip rather than a chart. Everything is a link
+ * to the screen that acts on it, and plain text when the viewer cannot
+ * open that screen.
  */
 export default async function AdminOverviewPage() {
   const session = await getSession();
@@ -65,350 +52,259 @@ export default async function AdminOverviewPage() {
   // staff surface at all has no business rendering the console.
   if (!hasAdminAccess(session, brand.pack)) redirect('/dashboard');
 
+  const pack = brand.pack;
+  const tz = pack.locale.timeZone;
+  const { member } = await getSessionMember();
+
   const stats = getStats(session);
   const register = getDegreeRegisterStats();
+  const tasks = staffTasks(session, pack);
 
-  const canReview = can(session, 'verification.review.department');
-  const canSeeRegister = can(session, 'verification.review.any');
-  const canRunEvents = can(session, 'event.create.department');
-  const canModerateJobs = can(session, 'job.moderate');
-  const canSendComms = can(session, 'comms.send.department') || can(session, 'comms.send.segment');
-  const canReadMembers = can(session, 'profile.read.any');
+  const openRegister = canOpen(session, pack, '/admin/degree-register');
+  const openComms = canOpen(session, pack, '/admin/comms');
+  const openMembers = canOpen(session, pack, '/admin/members');
 
-  const worstBatches = [...register.byYear]
-    .filter((y) => y.total >= 5)
-    .sort((a, b) => a.claimed / a.total - b.claimed / b.total)
-    .slice(0, 3)
-    .map((y) => y.year);
+  // ---- Up next: the door desk, for whoever runs check-in -------------
+  const upNext =
+    canOpen(session, pack, '/admin/events') && can(session, 'event.checkin')
+      ? (getEvents(session, { when: 'upcoming' })
+          .map((e) => ({ event: e, days: daysUntil(e.startsAt, tz) }))
+          .find((x) => x.days >= 0 && x.days <= 14) ?? null)
+      : null;
+
+  // ---- Reach -------------------------------------------------------
+  const pct = register.total ? register.claimed / register.total : 0;
+  const weakest = openComms ? weakestBatches(register.byYear) : [];
+
+  // ---- Registrations ------------------------------------------------
+  // The last column is the month in progress: counted, never compared.
+  const trend = stats.signupTrend;
+  const current = trend[trend.length - 1];
+  const full = trend.slice(0, -1);
+  const lastThree = full.slice(-3);
+  const priorThree = full.slice(-6, -3);
+  const sum = (xs: typeof trend) => xs.reduce((n, p) => n + p.value, 0);
+  const yearTotal = sum(trend);
+  const recent = sum(lastThree);
+  const before = sum(priorThree);
+  const direction = recent > before ? 'up from' : recent < before ? 'down from' : 'level with';
+
+  // The queue and "Up next" share one row of cards when they fit in it:
+  // NeedsYou takes as many of the three columns as it has tasks, and its
+  // own grid is narrowed to match, so the next event sits beside the work
+  // rather than across an empty gap.
+  const n = tasks.length;
+  const queueSpan = cn(
+    'min-w-0',
+    !upNext || n >= 3
+      ? 'sm:col-span-2 lg:col-span-3'
+      : n === 2
+        ? 'sm:col-span-2 lg:col-span-2 lg:[&>ul]:grid-cols-2'
+        : n === 1
+          ? 'sm:[&>ul]:grid-cols-1 lg:[&>ul]:grid-cols-1'
+          : 'lg:col-span-2',
+  );
+
+  const greeting = greetingFor(pack.copy);
+  const first = member ? firstNameOf(member.fullName, member.preferredName) : null;
+  const lead = [first ? `${greeting}, ${first}` : greeting, primaryRoleLabel(session.roles)].join(' · ');
 
   return (
     <div className="space-y-8">
-      <PageHeader
-        eyebrow={tenant.shortName}
-        title="Alumni cell console"
-        description={`${formatNumber(stats.totalMembers)} people on the portal against ${formatNumber(register.total)} rows in the degree register. The gap between those two numbers is the job.`}
-        actions={
-          canReview ? (
-            <ButtonLink href="/admin/verification">
-              Verification queue
-              {stats.pendingVerification > 0 ? (
-                <Badge tone="warning" className="ml-1">
-                  {stats.pendingVerification}
-                </Badge>
-              ) : null}
-            </ButtonLink>
-          ) : null
-        }
+      <PageBand
+        pack={pack}
+        size="compact"
+        eyebrow={`Staff console · ${tenant.shortName}`}
+        title="Today"
+        lead={lead}
       />
 
-      {stats.pendingVerification > 0 && canReview ? (
-        <Alert
-          tone="warning"
-          title={`${stats.pendingVerification} registrations are waiting for a decision`}
-          icon={<FileCheck2 className="size-4" />}
-        >
-          <p>
-            Each one is a person who has already typed their roll number and is waiting to be let in.
-            The matcher has attached the candidate register rows to every claim, so none of them needs
-            a judgement made against no evidence.{' '}
-            <Link href="/admin/verification" className="link">
-              Open the queue
+      {/* ---------------------------------------------------------------
+          Your queue
+         --------------------------------------------------------------- */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <NeedsYou items={tasks} heading="Your queue" className={queueSpan} />
+
+        {upNext ? (
+          <section aria-labelledby="up-next" className="min-w-0 space-y-3">
+            <h2 id="up-next" className="text-sm font-semibold text-secondary">
+              Up next
+            </h2>
+            <Link
+              href={`/admin/events/${upNext.event.id}?mode=door`}
+              className="group flex min-h-11 items-start gap-4 rounded-lg border border-line bg-surface-raised p-4 shadow-sm transition-colors duration-fast ease-brand hover:border-line-strong"
+            >
+              <DateTile iso={upNext.event.startsAt} locale={pack.locale.locale} timeZone={tz} size="sm" />
+              <span className="min-w-0 flex-1 space-y-1">
+                <span className="block text-sm font-medium text-primary">
+                  {upNext.event.title}{' '}
+                  {upNext.days === 0 ? 'today' : upNext.days === 1 ? 'tomorrow' : `in ${upNext.days} days`}
+                </span>
+                <span className="inline-flex items-center gap-1 pt-1 text-sm font-semibold text-brand-fg">
+                  <DoorOpen className="size-4" aria-hidden="true" />
+                  Open the door desk
+                  <ArrowRight
+                    className="size-4 transition-transform duration-fast ease-brand group-hover:translate-x-0.5"
+                    aria-hidden="true"
+                  />
+                </span>
+              </span>
             </Link>
-            .
-          </p>
-        </Alert>
-      ) : null}
+          </section>
+        ) : null}
+      </div>
 
       {/* ---------------------------------------------------------------
-          Register coverage — the headline
+          Reach
          --------------------------------------------------------------- */}
-      <Section
-        title="Degree register coverage"
-        description="The examinations branch file is the source of truth. A row with no account against it is a graduate the college cannot reach."
-        actions={
-          canSeeRegister ? (
-            <ButtonLink href="/admin/degree-register" variant="secondary" size="sm">
-              <ScrollText className="size-4" />
-              Open register
-            </ButtonLink>
-          ) : null
-        }
-      >
-        <div className="grid gap-gutter lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
-          <Card>
-            <CardBody className="space-y-5">
-              <DonutChart
-                value={register.claimed}
-                max={register.total}
-                label="Degree register coverage"
-                caption={`${formatNumber(register.claimed)} of ${formatNumber(register.total)} register rows claimed`}
-                size={148}
-              />
-
-              <ProportionBar
-                label="Degree register rows by claim state"
-                segments={[
-                  { label: 'Claimed', value: register.claimed, tone: 'brand' },
-                  { label: 'No account yet', value: register.unclaimed, tone: 'neutral' },
-                ]}
-              />
-
-              <MarginNote>
-                Coverage is the number to move. Everything else on this page —
-                events, jobs, mentors — is a reason for the other{' '}
-                {formatNumber(register.unclaimed)} to sign up.
-              </MarginNote>
-
-              {canSendComms ? (
-                <ButtonLink href="/admin/comms" variant="secondary" size="sm" className="w-full">
-                  Draft an outreach message
-                  <ArrowRight className="size-4" />
-                </ButtonLink>
-              ) : null}
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex-col items-start gap-1">
-              <CardTitle as="h3">Coverage by year of passing</CardTitle>
-              <CardDescription>
-                {worstBatches.length > 0
-                  ? `The batches of ${worstBatches.join(', ')} are furthest behind. Those are the WhatsApp groups worth finding first.`
-                  : 'Every batch in the register has at least one account against it.'}
-              </CardDescription>
-            </CardHeader>
-            <CardBody className="pt-4">
-              <TableWrap caption="Degree register coverage by year of passing">
-                <Table>
-                  <THead>
-                    <TR>
-                      <TH>Year</TH>
-                      <TH align="right">In register</TH>
-                      <TH align="right">Claimed</TH>
-                      <TH className="w-40">Coverage</TH>
-                    </TR>
-                  </THead>
-                  <TBody>
-                    {register.byYear.map((row) => {
-                      const pct = row.total ? row.claimed / row.total : 0;
-                      return (
-                        <TR key={row.year} interactive>
-                          <TD className="font-mono tabular">{row.year}</TD>
-                          <TD numeric>{formatNumber(row.total)}</TD>
-                          <TD numeric>{formatNumber(row.claimed)}</TD>
-                          <TD>
-                            <div className="flex items-center gap-2.5">
-                              <Progress
-                                value={row.claimed}
-                                max={row.total}
-                                label={`${row.year} coverage`}
-                                tone={pct < 0.2 ? 'warning' : 'brand'}
-                                className="w-20 shrink-0"
-                              />
-                              <span className="tabular text-xs text-secondary">
-                                {formatPercent(pct)}
-                              </span>
-                              {pct < 0.2 ? (
-                                <Badge tone="warning" className="ml-auto">
-                                  Chase
-                                </Badge>
-                              ) : null}
-                            </div>
-                          </TD>
-                        </TR>
-                      );
-                    })}
-                  </TBody>
-                </Table>
-              </TableWrap>
-            </CardBody>
-          </Card>
-        </div>
-      </Section>
-
-      {/* ---------------------------------------------------------------
-          Tiles
-         --------------------------------------------------------------- */}
-      <Section title="Waiting on someone">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <TileLink href={canReview ? '/admin/verification' : null}>
-            <Stat
-              label="Registrations to review"
-              value={formatNumber(stats.pendingVerification)}
-              hint={canReview ? 'Decide against the register' : 'Handled by the alumni cell'}
-              icon={<FileCheck2 className="size-4" />}
-            />
-          </TileLink>
-
-          <TileLink href={canReadMembers ? '/admin/members' : null}>
-            <Stat
-              label="People on the portal"
-              value={formatNumber(stats.totalMembers)}
-              hint={`${formatNumber(stats.alumni)} alumni · ${formatNumber(stats.students)} final-years`}
-              icon={<Users className="size-4" />}
-            />
-          </TileLink>
-
-          <TileLink href={canRunEvents ? '/admin/events' : '/events'}>
-            <Stat
-              label="Events upcoming"
-              value={formatNumber(stats.eventsUpcoming)}
-              hint="Published and open for registration"
-              icon={<CalendarDays className="size-4" />}
-            />
-          </TileLink>
-
-          <TileLink href={canModerateJobs ? '/admin/jobs' : '/jobs'}>
-            <Stat
-              label="Job posts live"
-              value={formatNumber(stats.jobsLive)}
-              hint={canModerateJobs ? 'Plus anything held for moderation' : 'Posted by alumni'}
-              icon={<Briefcase className="size-4" />}
-            />
-          </TileLink>
-        </div>
-      </Section>
-
-      {/* ---------------------------------------------------------------
-          Signups
-         --------------------------------------------------------------- */}
-      <div className="grid gap-gutter lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+      <section aria-labelledby="reach-title">
         <Card>
-          <CardHeader className="flex-col items-start gap-1">
-            <CardTitle as="h2">Registrations, last 12 months</CardTitle>
-            <CardDescription>
-              New accounts per month. The spikes are reunion invitations and convocation week — the
-              flat months are what outreach has to fix.
-            </CardDescription>
+          <CardBody className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+            <div className="min-w-0 space-y-4">
+              <div className="space-y-1">
+                <h2 id="reach-title" className="text-sm font-semibold text-secondary">
+                  Reach
+                </h2>
+                <p className="font-display text-xl font-semibold">
+                  {formatNumber(register.claimed)} of {formatNumber(register.total)} graduates have joined ·{' '}
+                  <span className="tabular">{formatPercent(pct)}</span>
+                </p>
+              </div>
+              <CoverageChips
+                ariaLabel="Share of each batch that has joined, by year of passing"
+                batches={register.byYear}
+                hrefFor={openRegister ? (year) => `/admin/degree-register?year=${year}` : undefined}
+              />
+              <CoverageLegend />
+            </div>
+
+            {weakest.length > 0 ? (
+              <div className="min-w-0 space-y-1 border-t border-line pt-4 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+                <h3 className="text-sm font-semibold text-secondary">Furthest behind</h3>
+                <WeakestBatches batches={weakest} commsHref={batchCommsHref} />
+              </div>
+            ) : null}
+          </CardBody>
+        </Card>
+      </section>
+
+      {/* ---------------------------------------------------------------
+          Registrations and network health
+         --------------------------------------------------------------- */}
+      <div className="grid grid-cols-1 items-start gap-gutter lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+        <Card className="min-w-0">
+          <CardHeader variant="stack">
+            <CardTitle as="h2" className="text-md">
+              Registrations, last 12 months
+            </CardTitle>
           </CardHeader>
-          <CardBody>
-            <ColumnChart
-              data={stats.signupTrend}
+          <CardBody className="space-y-3">
+            <p className="flex flex-wrap items-baseline gap-x-2">
+              <span className="font-display text-display-xs font-bold tabular">{formatNumber(yearTotal)}</span>
+              <span className="text-sm text-secondary">
+                new accounts{current ? ` · ${formatNumber(current.value)} so far in ${MONTHS_LONG[current.label] ?? current.label}` : ''}
+              </span>
+            </p>
+            <Sparkline
+              data={trend}
               label="New registrations per month over the last twelve months"
-              highlight={stats.signupTrend[stats.signupTrend.length - 1]?.label}
-              height={180}
+              height={56}
             />
+            <div className="flex justify-between text-xs text-secondary" aria-hidden="true">
+              <span>{MONTHS_LONG[trend[0]?.label ?? ''] ?? trend[0]?.label}</span>
+              <span>{MONTHS_LONG[current?.label ?? ''] ?? current?.label}</span>
+            </div>
+            {lastThree.length === 3 && priorThree.length === 3 ? (
+              <p className="text-sm text-secondary">
+                {formatNumber(recent)} in the last three full months, {direction} {formatNumber(before)} in the three
+                before.
+              </p>
+            ) : null}
           </CardBody>
         </Card>
 
-        <Card>
-          <CardHeader className="flex-col items-start gap-1">
-            <CardTitle as="h2">Network health</CardTitle>
-            <CardDescription>Whether a request sent through the portal gets answered.</CardDescription>
+        <Card className="min-w-0">
+          <CardHeader variant="stack">
+            <CardTitle as="h2" className="text-md">
+              Network health
+            </CardTitle>
           </CardHeader>
-          <CardBody className="space-y-5">
-            <div className="space-y-2">
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="text-sm text-secondary">Connection accept rate</span>
-                <span className="font-display text-xl font-bold tabular">
-                  {formatPercent(stats.acceptRate)}
-                </span>
+          <CardBody>
+            <dl className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <dt className="text-sm text-secondary">Answered requests accepted</dt>
+                <dd className="font-display text-display-xs font-bold tabular">{formatPercent(stats.acceptRate)}</dd>
               </div>
-              <Progress
-                value={stats.acceptRate * 100}
-                label="Connection accept rate"
-                tone={stats.acceptRate >= 0.5 ? 'success' : 'warning'}
-              />
-              <p className="text-xs text-secondary">
-                {formatNumber(stats.connectionsThisMonth)} requests sent this month. Requests that go
-                unanswered expire rather than sitting open, so this figure is honest.
-              </p>
-            </div>
-
-            <ProportionBar
-              label="Alumni who have opted in to mentoring"
-              segments={[
-                { label: 'Open to mentoring', value: stats.openToMentoring, tone: 'success' },
-                {
-                  label: 'Not offering',
-                  value: Math.max(0, stats.alumni - stats.openToMentoring),
-                  tone: 'neutral',
-                },
-              ]}
-            />
-
-            <p className="flex items-start gap-2 border-t border-line pt-4 text-xs text-secondary">
-              <Handshake className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-              <span>
-                Students are rate-limited to five open requests. That valve is the reason alumni keep
-                answering at all — it is not a licence quota.
-              </span>
-            </p>
+              <div className="space-y-1">
+                <dt className="text-sm text-secondary">Alumni open to mentoring</dt>
+                <dd className="font-display text-display-xs font-bold tabular">
+                  {formatNumber(stats.openToMentoring)}
+                </dd>
+              </div>
+            </dl>
           </CardBody>
         </Card>
       </div>
 
       {/* ---------------------------------------------------------------
-          Distribution
+          Where the network is
          --------------------------------------------------------------- */}
-      <Section
-        title="Where the network is"
-        description="Counted across every member record, alumni and final-years together."
-      >
-        <div className="grid gap-gutter md:grid-cols-2 xl:grid-cols-3">
-          <Card>
-            <CardHeader className="flex-col items-start gap-1">
-              <CardTitle as="h3">Top employers</CardTitle>
-              <CardDescription>Useful when the placement cell asks who to approach.</CardDescription>
+      <Section title="Where the network is" description="Alumni and final-year students together.">
+        <div className="grid grid-cols-1 gap-gutter md:grid-cols-2 xl:grid-cols-3">
+          <Card className="min-w-0">
+            <CardHeader variant="stack">
+              <CardTitle as="h3" className="text-md">
+                Top employers
+              </CardTitle>
             </CardHeader>
             <CardBody>
-              <BarList data={stats.topCompanies} label="Members by current employer" />
+              <BarList
+                label="Members by current employer"
+                data={stats.topCompanies.map((c) => ({
+                  ...c,
+                  href: openMembers ? `/admin/members?q=${encodeURIComponent(c.label)}` : undefined,
+                }))}
+              />
             </CardBody>
           </Card>
 
-          <Card>
-            <CardHeader className="flex-col items-start gap-1">
-              <CardTitle as="h3">Top cities</CardTitle>
-              <CardDescription>Where a city chapter meet would actually fill a room.</CardDescription>
+          <Card className="min-w-0">
+            <CardHeader variant="stack">
+              <CardTitle as="h3" className="text-md">
+                Top cities
+              </CardTitle>
             </CardHeader>
             <CardBody>
-              <BarList data={stats.topCities} label="Members by city" tone="accent" />
+              <BarList
+                label="Members by city"
+                tone="accent"
+                data={stats.topCities.map((c) => ({
+                  ...c,
+                  href: openComms ? `/admin/comms/new?city=${encodeURIComponent(c.label)}` : undefined,
+                }))}
+              />
             </CardBody>
           </Card>
 
-          <Card>
-            <CardHeader className="flex-col items-start gap-1">
-              <CardTitle as="h3">By branch</CardTitle>
-              <CardDescription>
-                CSE dominates because the sanctioned intake does.
-              </CardDescription>
+          <Card className="min-w-0">
+            <CardHeader variant="stack">
+              <CardTitle as="h3" className="text-md">
+                By branch
+              </CardTitle>
             </CardHeader>
             <CardBody>
-              <BarList data={stats.departmentDistribution} label="Members by branch" tone="neutral" />
+              <BarList
+                label="Members by branch"
+                tone="neutral"
+                data={stats.departmentDistribution.map((d) => ({
+                  ...d,
+                  href: openMembers ? `/admin/members?department=${encodeURIComponent(d.label)}` : undefined,
+                }))}
+              />
             </CardBody>
           </Card>
         </div>
-
-        <Card>
-          <CardHeader className="flex-col items-start gap-1">
-            <CardTitle as="h3">Alumni by batch</CardTitle>
-            <CardDescription>
-              Registered alumni accounts per year of passing. Compare against the coverage table above:
-              a tall bar here with low coverage means the batch is easy to reach and has not been asked.
-            </CardDescription>
-          </CardHeader>
-          <CardBody>
-            <ColumnChart
-              data={stats.batchDistribution}
-              label="Registered alumni by year of passing"
-              height={150}
-            />
-          </CardBody>
-        </Card>
       </Section>
     </div>
-  );
-}
-
-/** A stat tile that is a link when the viewer can act on it, plain text when not. */
-function TileLink({ href, children }: { href: string | null; children: React.ReactNode }) {
-  if (!href) return <>{children}</>;
-  return (
-    <Link
-      href={href}
-      className="block rounded-lg transition-shadow duration-fast ease-brand hover:shadow-md"
-    >
-      {children}
-    </Link>
   );
 }

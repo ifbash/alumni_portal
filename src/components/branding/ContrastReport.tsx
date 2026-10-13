@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { AlertTriangle, Check, Info } from 'lucide-react';
-import { Alert, Badge, Card, CardBody, CardDescription, CardHeader, CardTitle } from '@/components/ui';
+import { Badge } from '@/components/ui';
 import type { ContrastIssue } from '@/lib/branding/color';
 import { cn } from '@/lib/cn';
 
@@ -38,6 +38,12 @@ const PURPOSE: Record<string, string> = {
   '--border-strong': 'Emphasised edges: input borders, table outlines, the rule under a heading.',
   '--danger-fg': 'Error text: failed payments, validation messages, deletion warnings.',
   '--text-on-inverse': 'Text on your dark band — the footer, and buttons on an inverse background.',
+  '--band-fg': 'Text on the college band: the headings on the landing page, sign-in panel and hubs.',
+  '--band-muted': 'Quieter text on the college band.',
+  '--band-accent': 'The highlighted phrase and eyebrows on the college band.',
+  '--scrim (band text over a white photo)': 'Text set over a photograph, on the tinted scrim, at its worst — over a white patch.',
+  '--chart-bar': 'The bars in charts on the staff screens.',
+  '--chart-bar-highlight': 'The highlighted bar in a chart.',
 };
 
 /** What to change. Named after the seed, not after the derived token. */
@@ -62,6 +68,9 @@ const REMEDY: Record<string, string> = {
     'The error colour is too close to the page colour. Darken it in the pack file, or lighten the page surface.',
   '--text-on-inverse':
     'Your ink is the dark band, and the text on it does not separate. Pick a darker ink.',
+  '--band-fg': 'The band is your primary colour. Push it darker or lighter so white or your page colour reads on it.',
+  '--scrim (band text over a white photo)':
+    'The band colour is too light to make text readable over a photograph. Darken the primary.',
 };
 
 interface ParsedIssue extends ContrastIssue {
@@ -78,6 +87,11 @@ function parse(issue: ContrastIssue): ParsedIssue {
   };
 }
 
+/**
+ * The full report. The studio shows it inside a disclosure whose summary
+ * carries the verdict, and a chip in the sticky bar says the same thing in
+ * two words, so this is the body alone.
+ */
 export function ContrastReport({
   report,
   pending = false,
@@ -93,90 +107,60 @@ export function ContrastReport({
   const clean = errors.length === 0 && warnings.length === 0;
 
   return (
-    <Card className={className}>
-      <CardHeader>
-        <div className="min-w-0 space-y-1">
-          <CardTitle as="h2" className="flex flex-wrap items-center gap-2">
-            Accessibility check
-            {pending ? (
-              <Badge tone="neutral">rechecking</Badge>
-            ) : report.passes ? (
-              <Badge tone="success" dot>
-                Publishable
-              </Badge>
-            ) : (
-              <Badge tone="danger" dot>
-                Blocked
-              </Badge>
-            )}
-          </CardTitle>
-          <CardDescription>
-            Run against the tokens the portal really renders, including anything pinned by hand — a
-            pinned colour is exactly where an unreadable value gets in.
-          </CardDescription>
-        </div>
-      </CardHeader>
+    <div className={cn('space-y-4', className)} aria-busy={pending}>
+      {clean ? (
+        <p className="flex items-start gap-2 text-sm text-success-fg">
+          <Check className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          <span>
+            Body text, brand text, button labels, error text, the focus ring and text over photos all clear their
+            targets in light and dark mode.
+          </span>
+        </p>
+      ) : null}
 
-      <CardBody className="space-y-4">
-        {clean ? (
-          <Alert tone="success" title={report.summary} icon={<Check className="size-4" />}>
-            <p>
-              Body text, brand text, button labels, error text and the focus ring all clear WCAG AA
-              in both light and dark mode.
-            </p>
-          </Alert>
-        ) : null}
+      {errors.length ? (
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <h3 className="font-display text-md font-semibold text-danger-fg">
+              {errors.length} {errors.length === 1 ? 'failure' : 'failures'} — Publish is blocked
+            </h3>
+            <p className="text-xs text-secondary">Change the colour you supplied; everything else follows from it.</p>
+          </div>
+          <ul className="space-y-2.5">
+            {errors.map((issue) => (
+              <li key={`${issue.token}-${issue.against}`}>
+                <IssueRow issue={issue} severity="error" />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
-        {errors.length ? (
-          <section className="space-y-3">
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <h3 className="font-display text-md font-semibold text-danger-fg">
-                {errors.length} failure{errors.length === 1 ? '' : 's'} — publishing is blocked
-              </h3>
-              <p className="text-xs text-secondary">
-                Fix the seed colour, not the token. Every one of these is derived.
-              </p>
-            </div>
-            <ul className="space-y-2.5">
-              {errors.map((issue) => (
-                <li key={`${issue.token}-${issue.against}`}>
-                  <IssueRow issue={issue} severity="error" />
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
+      {warnings.length ? (
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <h3 className="font-display text-md font-semibold">
+              {warnings.length} {warnings.length === 1 ? 'warning' : 'warnings'}
+            </h3>
+            <p className="text-xs text-secondary">Worth reviewing. These do not stop you publishing.</p>
+          </div>
+          <ul className="space-y-2.5">
+            {warnings.map((issue) => (
+              <li key={`${issue.token}-${issue.against}`}>
+                <IssueRow issue={issue} severity="warning" />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
-        {warnings.length ? (
-          <section className="space-y-3">
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <h3 className="font-display text-md font-semibold">
-                {warnings.length} advisory warning{warnings.length === 1 ? '' : 's'}
-              </h3>
-              <p className="text-xs text-secondary">
-                Worth reviewing. These do not stop you publishing.
-              </p>
-            </div>
-            <ul className="space-y-2.5">
-              {warnings.map((issue) => (
-                <li key={`${issue.token}-${issue.against}`}>
-                  <IssueRow issue={issue} severity="warning" />
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
-
-        {!clean ? (
-          <p className="text-xs text-muted">
-            Ratios are WCAG 2.1 contrast, measured between the two colours shown. 4.5:1 is the AA
-            threshold for normal text; 3:1 applies to focus rings and other non-text controls that
-            carry meaning; 7:1 is AAA and is required of body copy here because the portal is read on
-            cheap phone screens in daylight.
-          </p>
-        ) : null}
-      </CardBody>
-    </Card>
+      {!clean ? (
+        <p className="text-xs text-secondary">
+          Ratios are WCAG 2.1 contrast between the two colours shown: 4.5:1 for normal text, 3:1 for focus rings and
+          chart marks, and 7:1 for body copy, because the portal is read on phone screens in daylight.
+        </p>
+      ) : null}
+    </div>
   );
 }
 

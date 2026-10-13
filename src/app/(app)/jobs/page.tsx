@@ -1,22 +1,12 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import {
-  Briefcase,
-  Building2,
-  ClipboardList,
-  Clock,
-  GraduationCap,
-  MapPin,
-  Search,
-  ShieldCheck,
-  Users,
-} from 'lucide-react';
+import { Briefcase, ClipboardList, Search, ShieldCheck } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
-import { can } from '@/lib/auth/guard';
+import { can, isActive } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
-import { getJobs, getMyApplications } from '@/lib/data/repo';
+import { getJobs, getMyApplications, getOwnProfile } from '@/lib/data/repo';
 import type { JobApplication, JobPosting } from '@/lib/data/types';
 import {
   Alert,
@@ -24,35 +14,34 @@ import {
   Button,
   ButtonLink,
   Card,
-  CardBody,
+  ChipNav,
   EmptyState,
-  Field,
   Input,
-  PageHeader,
-  SegmentedNav,
   Section,
   Tabs,
 } from '@/components/ui';
-import { formatDate, formatRelative, memberLine } from '@/lib/format';
+import { BandChip, PageBand } from '@/components/brand/PageBand';
+import { jobReviewLine } from '@/lib/branding/copy';
+import { isFresherFriendly } from '@/lib/event-status';
+import { daysUntil, formatDate, formatRelative } from '@/lib/format';
+import { FooterLink, JobList, JobStateBadge, applicantsLabel, type JobListItem } from './JobCard';
 
 export const metadata: Metadata = {
   title: 'Jobs & internships',
-  description: 'Roles and internships posted by alumni and faculty, reviewed by the placement cell.',
+  description: 'Roles and internships posted by alumni and faculty, checked by the placement cell.',
 };
 
-type Tone = 'neutral' | 'brand' | 'accent' | 'success' | 'warning' | 'danger' | 'info' | 'outline';
 type Tab = 'open' | 'mine' | 'applied' | 'review';
+type Show = 'freshers' | 'closing';
 
-const STATE_META: Record<JobPosting['state'], { label: string; tone: Tone }> = {
-  draft: { label: 'Draft', tone: 'neutral' },
-  pending_moderation: { label: 'With the placement cell', tone: 'warning' },
-  live: { label: 'Live', tone: 'success' },
-  rejected: { label: 'Not published', tone: 'danger' },
-  closed: { label: 'Closed', tone: 'neutral' },
-};
+/** "Closing soon" on this board: a deadline within this many calendar days. */
+const CLOSING_WINDOW_DAYS = 14;
 
 const one = (v: string | string[] | undefined): string | undefined =>
   Array.isArray(v) ? v[0] : v;
+
+const plural = (n: number, word: string, many = `${word}s`) =>
+  `${n.toLocaleString('en-IN')} ${n === 1 ? word : many}`;
 
 export default async function JobsPage({
   searchParams,
@@ -61,6 +50,7 @@ export default async function JobsPage({
 }) {
   const session = await getSession();
   if (!session) redirect('/login');
+  if (!isActive(session)) redirect('/pending');
 
   const { brand } = (await getTenantBrand())!;
   // The jobs board is a bought feature, not a given. A college that has
@@ -70,6 +60,11 @@ export default async function JobsPage({
   const params = await searchParams;
   const q = one(params.q)?.trim() ?? '';
   const internshipsOnly = one(params.internships) === '1';
+  // A second filter on what was fetched, never on what is fetched: it
+  // narrows the list below and changes nothing about who may see what.
+  const requestedShow = one(params.show);
+  const show: Show | null =
+    !internshipsOnly && (requestedShow === 'freshers' || requestedShow === 'closing') ? requestedShow : null;
 
   const canPost = can(session, 'job.post');
   const canApply = can(session, 'job.apply');
@@ -103,10 +98,34 @@ export default async function JobsPage({
   const reachable = new Map<string, JobPosting>();
   for (const j of [...getJobs(session, {}), ...minePosts, ...reviewQueue]) reachable.set(j.id, j);
 
+  const pack = brand.pack;
+  const { shortName } = pack.copy;
+  const timing = { locale: pack.locale.locale, timeZone: pack.locale.timeZone };
+  const isStudent = session.roles.some((r) => r.role === 'student');
+
+  const closingSoon = (j: JobPosting): boolean => {
+    if (!j.closesOn) return false;
+    const n = daysUntil(j.closesOn, timing.timeZone);
+    return n >= 0 && n <= CLOSING_WINDOW_DAYS;
+  };
+  // Soonest deadline first; open-until-filled roles after every dated one.
+  const byDeadline = (a: JobPosting, b: JobPosting): number => {
+    if (a.closesOn && b.closesOn) return a.closesOn.localeCompare(b.closesOn);
+    if (a.closesOn) return -1;
+    if (b.closesOn) return 1;
+    return b.createdAt.localeCompare(a.createdAt);
+  };
+
+  // The live board, for the band's figures. Each is shown only above 0.
+  const board = getJobs(session, {});
+  const internshipCount = board.filter((j) => j.isInternship).length;
+  const closingCount = board.filter(closingSoon).length;
+
   const href = (patch: Record<string, string | null>) => {
     const sp = new URLSearchParams();
     if (q) sp.set('q', q);
     if (internshipsOnly) sp.set('internships', '1');
+    if (show) sp.set('show', show);
     if (tab !== 'open') sp.set('tab', tab);
     for (const [k, v] of Object.entries(patch)) {
       if (v === null) sp.delete(k);
@@ -115,20 +134,39 @@ export default async function JobsPage({
     const s = sp.toString();
     return s ? `/jobs?${s}` : '/jobs';
   };
+  // Switching tabs drops the board's own filters: an internship filter
+  // carried into "My postings" would narrow a list with no chip to say so.
+  const tabHref = (t: Tab) => href({ tab: t === 'open' ? null : t, internships: null, show: null });
+
+  const shown =
+    show === 'freshers'
+      ? results.filter(isFresherFriendly)
+      : show === 'closing'
+        ? results.filter(closingSoon)
+        : results;
+  const ordered =
+    tab === 'review'
+      ? [...shown].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      : tab === 'open'
+        ? [...shown].sort(byDeadline)
+        : shown;
+
+  const filtering = Boolean(q || internshipsOnly || show);
 
   const withPlacementCell = minePosts.filter(
     (j) => j.state === 'pending_moderation' || j.state === 'rejected',
   );
+  const sentBack = withPlacementCell.filter((j) => j.state === 'rejected').length;
 
   const tabs = [
-    { label: 'Open roles', href: href({ tab: null }), count: liveTotal, active: tab === 'open' },
+    { label: 'Open roles', href: tabHref('open'), count: liveTotal, active: tab === 'open' },
     canPost
-      ? { label: 'My postings', href: href({ tab: 'mine' }), count: minePosts.length, active: tab === 'mine' }
+      ? { label: 'My postings', href: tabHref('mine'), count: minePosts.length, active: tab === 'mine' }
       : null,
     canApply
       ? {
           label: 'My applications',
-          href: href({ tab: 'applied' }),
+          href: tabHref('applied'),
           count: myApplications.length,
           active: tab === 'applied',
         }
@@ -136,22 +174,149 @@ export default async function JobsPage({
     isModerator
       ? {
           label: 'Awaiting review',
-          href: href({ tab: 'review' }),
+          href: tabHref('review'),
           count: reviewQueue.length,
           active: tab === 'review',
         }
       : null,
   ].filter((t): t is NonNullable<typeof t> => t !== null);
 
+  const title = isStudent
+    ? `Roles ${shortName} graduates are hiring for`
+    : isModerator
+      ? 'Board and review queue'
+      : canPost
+        ? `Hiring? Put it in front of ${shortName} final-years`
+        : `Roles ${shortName} graduates are hiring for`;
+
+  // The search sits over a list. With nothing posted yet there is nothing
+  // to search, and the empty "My postings" tab gets the way to post instead.
+  const showSearch = tab !== 'applied' && !(tab === 'mine' && minePosts.length === 0);
+
+  // ---- What goes under each posting ------------------------------
+  const reviewLine = jobReviewLine(pack.copy);
+  const canOpenApplicantLists = can(session, 'job.applicants.export');
+
+  const footerFor = (job: JobPosting): React.ReactNode => {
+    if (tab === 'review') {
+      return (
+        <FooterLink href={`/admin/jobs/${job.id}`}>
+          Submitted {formatRelative(job.createdAt, timing)} — review now
+        </FooterLink>
+      );
+    }
+
+    // The same rule as before: the poster and a moderator see the count.
+    const showApplicants = isModerator || job.postedBy.id === session.memberId;
+    const isOwn = job.postedBy.id === session.memberId;
+
+    if (tab === 'mine') {
+      const applicantsLink =
+        showApplicants && (job.state === 'live' || (job.state === 'closed' && job.applicationCount > 0)) ? (
+          <FooterLink href={`/jobs/${job.id}/applicants`}>{applicantsLabel(job.applicationCount)}</FooterLink>
+        ) : null;
+      return (
+        <div className="space-y-1">
+          <div className="flex min-h-9 flex-wrap items-center gap-x-3">
+            <JobStateBadge state={job.state} />
+            {applicantsLink}
+          </div>
+          {job.state === 'pending_moderation' ? (
+            <p className="text-sm text-secondary">
+              Students cannot see it yet. The placement cell reads it first
+              {reviewLine ? `, ${reviewLine}` : ''}.
+            </p>
+          ) : null}
+          {job.state === 'rejected' ? (
+            <p className="text-sm text-secondary">
+              {job.moderationNote ?? 'No reason was recorded. Write to the placement cell before posting it again.'}
+            </p>
+          ) : null}
+          {job.state === 'closed' && job.closesOn ? (
+            <p className="text-sm text-secondary">Closed {formatDate(job.closesOn, timing)}.</p>
+          ) : null}
+        </div>
+      );
+    }
+
+    if (showApplicants && job.state === 'live') {
+      // The count follows the rule above; the link only goes where the
+      // applicant page's own guard will let this viewer in.
+      const opensList = isOwn || canOpenApplicantLists;
+      return (
+        <div className="flex min-h-9 flex-wrap items-center gap-x-3">
+          {isOwn ? <Badge tone="brand">Your posting</Badge> : null}
+          {opensList ? (
+            <FooterLink href={`/jobs/${job.id}/applicants`}>{applicantsLabel(job.applicationCount)}</FooterLink>
+          ) : (
+            <span className="text-sm text-secondary">
+              {job.applicationCount.toLocaleString('en-IN')} {job.applicationCount === 1 ? 'applicant' : 'applicants'}
+            </span>
+          )}
+        </div>
+      );
+    }
+    return undefined;
+  };
+
+  const items = (jobs: JobPosting[]): JobListItem[] => jobs.map((job) => ({ job, footer: footerFor(job) }));
+
+  // A student sees the board in the order that serves them: what closes
+  // soon, then what a fresher can apply to, then everything else. The
+  // same roles, re-sorted; nothing is added or dropped.
+  const grouped =
+    tab === 'open' && isStudent && !filtering
+      ? (() => {
+          const soon = ordered.filter(closingSoon);
+          const rest = ordered.filter((j) => !closingSoon(j));
+          return [
+            { key: 'soon', label: `Closing in the next ${CLOSING_WINDOW_DAYS} days`, jobs: soon },
+            { key: 'freshers', label: 'Open to freshers', jobs: rest.filter(isFresherFriendly) },
+            { key: 'rest', label: 'More roles', jobs: rest.filter((j) => !isFresherFriendly(j)) },
+          ].filter((g) => g.jobs.length > 0);
+        })()
+      : null;
+
+  const heading =
+    tab === 'mine'
+      ? `${plural(ordered.length, 'posting')} · newest first`
+      : tab === 'review'
+        ? `${plural(ordered.length, 'posting')} waiting · oldest first`
+        : q
+          ? `${plural(ordered.length, 'role')} matching “${q}”`
+          : `${plural(ordered.length, 'role')} · soonest deadline first`;
+
+  const own = tab === 'mine' && minePosts.length === 0 ? getOwnProfile(session) : null;
+
   return (
     <div className="space-y-6">
-      <PageHeader
-        eyebrow="Placement & careers"
-        title="Jobs and internships"
-        description={`Openings shared by ${brand.pack.copy.shortName} alumni and faculty. Every posting is read by the placement cell before a student can see it, because the college is accountable for what its students are pointed at.`}
+      <PageBand
+        pack={pack}
+        size="compact"
+        eyebrow="Jobs and internships"
+        title={title}
+        meta={
+          <>
+            {board.length > 0 ? (
+              <BandChip href={tabHref('open')}>{plural(board.length, 'open role')}</BandChip>
+            ) : null}
+            {internshipCount > 0 ? (
+              <BandChip href="/jobs?internships=1">{plural(internshipCount, 'internship')}</BandChip>
+            ) : null}
+            {closingCount > 0 ? (
+              <BandChip href="/jobs?show=closing">
+                {closingCount.toLocaleString('en-IN')} closing in {CLOSING_WINDOW_DAYS} days
+              </BandChip>
+            ) : null}
+            {isModerator && reviewQueue.length > 0 ? (
+              <BandChip href={tabHref('review')}>{reviewQueue.length.toLocaleString('en-IN')} waiting for review</BandChip>
+            ) : null}
+            <BandChip icon={<ShieldCheck />}>Checked by the placement cell</BandChip>
+          </>
+        }
         actions={
           canPost ? (
-            <ButtonLink href="/jobs/new">
+            <ButtonLink href="/jobs/new" variant="band" className="min-h-11">
               <Briefcase className="size-4" aria-hidden="true" />
               Post a role
             </ButtonLink>
@@ -160,338 +325,182 @@ export default async function JobsPage({
       />
 
       {tab === 'open' && withPlacementCell.length > 0 ? (
-        <Alert
-          tone="warning"
-          title={`${withPlacementCell.length} of your postings ${withPlacementCell.length === 1 ? 'is' : 'are'} not on the board yet`}
-          icon={<Clock className="size-4" />}
-        >
+        <Alert tone={sentBack > 0 ? 'warning' : 'neutral'}>
           <p>
-            Nothing has been lost. They are with the placement cell for review, or came back with a
-            note.{' '}
-            <Link href={href({ tab: 'mine' })} className="link">
+            {sentBack > 0
+              ? `${plural(sentBack, 'posting')} came back from the placement cell with a note.`
+              : `${plural(withPlacementCell.length, 'of your postings', 'of your postings')} ${withPlacementCell.length === 1 ? 'is' : 'are'} with the placement cell. Students see ${withPlacementCell.length === 1 ? 'it' : 'them'} once approved.`}{' '}
+            <Link href={tabHref('mine')} className="link font-medium">
               Open my postings
             </Link>
-            .
           </p>
         </Alert>
       ) : null}
 
-      {/* The search and the internship filter act on postings. On the
-          applications tab they would filter a list they are not looking at,
-          so they are not rendered there at all. */}
-      {tab !== 'applied' ? (
-        <Card>
-          <CardBody className="space-y-4">
-            <form method="get" className="flex flex-wrap items-end gap-3">
-              {tab !== 'open' ? <input type="hidden" name="tab" value={tab} /> : null}
-              {internshipsOnly ? <input type="hidden" name="internships" value="1" /> : null}
-
-              <Field
-                htmlFor="job-q"
-                label="Search postings"
-                className="min-w-0 flex-1 basis-64"
-                hint="Title, company, location or skill — Razorpay, Verilog, Vijayawada."
-              >
-                <Input
-                  id="job-q"
-                  name="q"
-                  type="search"
-                  defaultValue={q}
-                  placeholder="Backend engineer, Hyderabad, Python…"
-                  leading={<Search className="size-4" />}
-                  aria-describedby="job-q-hint"
-                />
-              </Field>
-
-              <div className="flex items-center gap-2">
-                <Button type="submit" variant="secondary">
-                  Search
-                </Button>
-                {q ? (
-                  <ButtonLink href={href({ q: null })} variant="ghost">
-                    Clear
-                  </ButtonLink>
-                ) : null}
-              </div>
-            </form>
-
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <SegmentedNav
-                items={[
-                  { label: 'All roles', href: href({ internships: null }), active: !internshipsOnly },
-                  {
-                    label: 'Internships only',
-                    href: href({ internships: '1' }),
-                    active: internshipsOnly,
-                  },
-                ]}
-              />
-              <p className="text-xs text-muted">
-                {results.length.toLocaleString('en-IN')} posting{results.length === 1 ? '' : 's'}
-                {q ? ` matching “${q}”` : ''}
-                {internshipsOnly ? ' · internships only' : ''}
-              </p>
-            </div>
-          </CardBody>
-        </Card>
-      ) : null}
-
       <Tabs items={tabs} ariaLabel="Job board sections" />
 
+      {showSearch ? (
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <form method="get" role="search" aria-label="Search postings" className="w-full lg:max-w-md">
+            {tab !== 'open' ? <input type="hidden" name="tab" value={tab} /> : null}
+            {internshipsOnly ? <input type="hidden" name="internships" value="1" /> : null}
+            {show ? <input type="hidden" name="show" value={show} /> : null}
+            <label htmlFor="job-q" className="sr-only">
+              Search postings by title, company, city or skill
+            </label>
+            <div className="relative">
+              <Input
+                id="job-q"
+                name="q"
+                type="search"
+                sizeVariant="lg"
+                defaultValue={q}
+                placeholder="Role, company or skill"
+                leading={<Search className="size-4" />}
+                className="pr-24"
+              />
+              <Button type="submit" variant="secondary" className="absolute right-1 top-1">
+                Search
+              </Button>
+            </div>
+          </form>
+
+          {tab === 'open' ? (
+            <ChipNav
+              ariaLabel="Filter roles"
+              items={[
+                { label: 'All', href: href({ internships: null, show: null }), active: !internshipsOnly && !show },
+                { label: 'Internships', href: href({ internships: '1', show: null }), active: internshipsOnly },
+                { label: 'Open to freshers', href: href({ internships: null, show: 'freshers' }), active: show === 'freshers' },
+                { label: 'Closing soon', href: href({ internships: null, show: 'closing' }), active: show === 'closing' },
+              ]}
+            />
+          ) : null}
+        </div>
+      ) : null}
+
       {tab === 'applied' ? (
-        <AppliedList applications={myApplications} reachable={reachable} />
-      ) : (
-        <PostingList
+        <AppliedList applications={myApplications} reachable={reachable} timing={timing} />
+      ) : ordered.length === 0 ? (
+        <PostingsEmpty
           tab={tab}
-          jobs={results}
           q={q}
           internshipsOnly={internshipsOnly}
+          show={show}
+          filtering={filtering}
           canPost={canPost}
-          isModerator={isModerator}
-          viewerId={session.memberId}
-          clearHref={href({ q: null, internships: null })}
+          company={own?.currentCompany ?? null}
+          clearHref={href({ q: null, internships: null, show: null })}
         />
+      ) : (
+        <Section
+          title={heading}
+          actions={
+            filtering ? (
+              <ButtonLink href={href({ q: null, internships: null, show: null })} variant="ghost" size="sm" className="min-h-11 sm:min-h-0">
+                Clear filters
+              </ButtonLink>
+            ) : null
+          }
+        >
+          {grouped ? (
+            <div className="space-y-8">
+              {grouped.map((g) => (
+                <section key={g.key} aria-labelledby={`jobs-${g.key}`} className="space-y-3">
+                  <h3 id={`jobs-${g.key}`} className="font-sans text-sm font-semibold text-secondary">
+                    {g.label} <span className="font-normal tabular">· {g.jobs.length}</span>
+                  </h3>
+                  <JobList items={items(g.jobs)} locale={pack.locale} />
+                </section>
+              ))}
+            </div>
+          ) : (
+            <JobList items={items(ordered)} locale={pack.locale} />
+          )}
+        </Section>
       )}
     </div>
   );
 }
 
 // ---------------------------------------------------------------
-// Postings
+// Empty lists
 // ---------------------------------------------------------------
 
-function PostingList({
+function PostingsEmpty({
   tab,
-  jobs,
   q,
   internshipsOnly,
+  show,
+  filtering,
   canPost,
-  isModerator,
-  viewerId,
+  company,
   clearHref,
 }: {
   tab: Tab;
-  jobs: JobPosting[];
   q: string;
   internshipsOnly: boolean;
+  show: Show | null;
+  filtering: boolean;
   canPost: boolean;
-  isModerator: boolean;
-  viewerId: string;
+  company: string | null;
   clearHref: string;
 }) {
-  if (jobs.length === 0) {
-    if (q || internshipsOnly) {
-      return (
-        <EmptyState
-          icon={<Search className="size-5" />}
-          title="Nothing matches that search"
-          description={
-            internshipsOnly && q
-              ? `No internship matches “${q}”. Internships are seasonal here — most are posted between December and March.`
-              : internshipsOnly
-                ? 'No internships are open at the moment. They are seasonal — most land between December and March.'
-                : `No posting mentions “${q}”. Try the company name on its own, or a single skill.`
-          }
-          action={
-            <ButtonLink href={clearHref} variant="secondary">
-              Clear the filters
-            </ButtonLink>
-          }
-        />
-      );
-    }
+  if (filtering) {
+    const description = q
+      ? `No posting mentions “${q}”. Try the company name on its own, or one skill.`
+      : internshipsOnly
+        ? 'No internship is open right now.'
+        : show === 'freshers'
+          ? 'No open role says a fresher can apply right now.'
+          : `Nothing closes in the next ${CLOSING_WINDOW_DAYS} days.`;
+    return (
+      <EmptyState
+        icon={<Search className="size-5" />}
+        title="Nothing matches"
+        description={description}
+        action={
+          <ButtonLink href={clearHref} variant="secondary">
+            Clear the filters
+          </ButtonLink>
+        }
+      />
+    );
+  }
 
-    if (tab === 'mine') {
-      return (
-        <EmptyState
-          icon={<Briefcase className="size-5" />}
-          title="You have not posted a role yet"
-          description="If your team is hiring, post it here. Final-year students see it once the placement cell has read it, and applications come to you rather than disappearing into a careers portal."
-          action={<ButtonLink href="/jobs/new">Post a role</ButtonLink>}
-        />
-      );
-    }
-
-    if (tab === 'review') {
-      return (
-        <EmptyState
-          icon={<ShieldCheck className="size-5" />}
-          title="Nothing is waiting for review"
-          description="Every posting alumni and faculty have submitted has been decided. New submissions appear here and in the placement console."
-          action={
-            <ButtonLink href="/admin/jobs" variant="secondary">
-              Open the placement console
-            </ButtonLink>
-          }
-        />
-      );
-    }
-
+  if (tab === 'mine') {
     return (
       <EmptyState
         icon={<Briefcase className="size-5" />}
-        title="No roles are live right now"
-        description="The board fills up when alumni post openings from their own companies. Postings stay listed until they are closed or the closing date passes."
-        action={canPost ? <ButtonLink href="/jobs/new">Post the first one</ButtonLink> : undefined}
+        title={company ? `Hiring at ${company}? Post it` : 'Know of an opening? Post it'}
+        description="Final-year students see it once the placement cell has checked it, and you see everyone who applies."
+        action={<ButtonLink href="/jobs/new">Post a role</ButtonLink>}
+      />
+    );
+  }
+
+  if (tab === 'review') {
+    return (
+      <EmptyState
+        icon={<ShieldCheck className="size-5" />}
+        title="Nothing is waiting for review"
+        description="New postings from alumni and faculty land here before any student can see them."
+        action={
+          <ButtonLink href="/admin/jobs" variant="secondary">
+            Open the placement console
+          </ButtonLink>
+        }
       />
     );
   }
 
   return (
-    <Section
-      title={
-        tab === 'mine'
-          ? 'Your postings'
-          : tab === 'review'
-            ? 'Submitted, not yet published'
-            : 'Open roles'
-      }
-      description={
-        tab === 'mine'
-          ? 'Every state, including the ones students cannot see yet.'
-          : tab === 'review'
-            ? 'Students cannot see any of these. Approve or reject each one in the placement console.'
-            : undefined
-      }
-    >
-      <ul className="grid gap-gutter lg:grid-cols-2">
-        {jobs.map((job) => (
-          <li key={job.id} className="flex">
-            <JobCard
-              job={job}
-              showApplicants={isModerator || job.postedBy.id === viewerId}
-              showState={tab !== 'open' || job.state !== 'live'}
-            />
-          </li>
-        ))}
-      </ul>
-    </Section>
-  );
-}
-
-function JobCard({
-  job,
-  showApplicants,
-  showState,
-}: {
-  job: JobPosting;
-  showApplicants: boolean;
-  showState: boolean;
-}) {
-  const state = STATE_META[job.state];
-  const meta = memberLine([job.experienceYears, job.salaryRange]);
-
-  return (
-    <Card interactive as="article" className="relative flex w-full flex-col p-card">
-      <div className="flex flex-wrap items-center gap-2">
-        {job.isInternship ? (
-          <Badge tone="accent">
-            <GraduationCap className="size-3" aria-hidden="true" />
-            Internship
-          </Badge>
-        ) : null}
-        {showState ? (
-          <Badge tone={state.tone} dot>
-            {state.label}
-          </Badge>
-        ) : null}
-        {job.viewerHasApplied ? <Badge tone="info">You applied</Badge> : null}
-      </div>
-
-      <h3 className="mt-2 font-display text-md font-semibold leading-snug">
-        <Link href={`/jobs/${job.id}`} className="link-quiet after:absolute after:inset-0">
-          {job.title}
-        </Link>
-      </h3>
-
-      <dl className="mt-2 space-y-1.5 text-sm">
-        <div className="flex items-start gap-2">
-          <dt className="sr-only">Company</dt>
-          <Building2 className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden="true" />
-          <dd className="min-w-0 truncate text-secondary">{job.company}</dd>
-        </div>
-
-        {job.location ? (
-          <div className="flex items-start gap-2">
-            <dt className="sr-only">Location</dt>
-            <MapPin className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden="true" />
-            <dd className="min-w-0 truncate text-secondary">{job.location}</dd>
-          </div>
-        ) : null}
-
-        {meta ? (
-          <div className="flex items-start gap-2">
-            <dt className="sr-only">Experience and pay</dt>
-            <Briefcase className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden="true" />
-            <dd className="min-w-0 truncate text-secondary">{meta}</dd>
-          </div>
-        ) : null}
-
-        {/* A posting with no location and no salary still gets a line, so the
-            card reads as complete rather than half-rendered. */}
-        {!job.location && !meta ? (
-          <div className="flex items-start gap-2">
-            <MapPin className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden="true" />
-            <dd className="text-muted">Location and pay not stated — ask when you apply</dd>
-          </div>
-        ) : null}
-      </dl>
-
-      {job.skills.length ? (
-        <ul className="mt-3 flex flex-wrap gap-1">
-          {job.skills.slice(0, 4).map((s) => (
-            <li key={s}>
-              <Badge tone="outline">{s}</Badge>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-
-      {job.state === 'pending_moderation' ? (
-        <p className="mt-3 rounded border border-line bg-warning-soft px-3 py-2 text-xs text-warning-fg">
-          Waiting for the placement cell. It has not been lost and it has not been rejected — no
-          student can see it until someone in the cell reads it, usually within two working days.
-        </p>
-      ) : null}
-
-      {job.state === 'rejected' ? (
-        <p className="mt-3 rounded border border-line bg-danger-soft px-3 py-2 text-xs text-danger-fg">
-          <span className="font-semibold">Sent back by the placement cell.</span>{' '}
-          {job.moderationNote ?? 'No reason was recorded. Write to the cell before resubmitting.'}
-        </p>
-      ) : null}
-
-      {job.state === 'closed' ? (
-        <p className="mt-3 text-xs text-muted">
-          {job.closesOn ? `Closed ${formatRelative(job.closesOn)}. ` : 'Closed. '}
-          Kept for the record; applications are shut.
-        </p>
-      ) : null}
-
-      <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 pt-3 text-xs text-muted">
-        <span>
-          Posted by {job.postedBy.fullName}
-          {job.postedBy.batchYear ? ` · ${job.postedBy.batchYear}` : ''}
-        </span>
-        <span aria-hidden="true">·</span>
-        <span>{formatRelative(job.createdAt)}</span>
-        {showApplicants ? (
-          <>
-            <span aria-hidden="true">·</span>
-            <span className="inline-flex items-center gap-1 font-medium text-secondary">
-              <Users className="size-3.5" aria-hidden="true" />
-              {job.applicationCount} applicant{job.applicationCount === 1 ? '' : 's'}
-            </span>
-          </>
-        ) : null}
-        {job.state === 'live' && job.closesOn ? (
-          <>
-            <span aria-hidden="true">·</span>
-            <span>Closes {formatDate(job.closesOn)}</span>
-          </>
-        ) : null}
-      </div>
-    </Card>
+    <EmptyState
+      icon={<Briefcase className="size-5" />}
+      title="No roles are live right now"
+      description="Postings from alumni and faculty appear here once the placement cell has checked them."
+      action={canPost ? <ButtonLink href="/jobs/new">Post a role</ButtonLink> : undefined}
+    />
   );
 }
 
@@ -502,16 +511,18 @@ function JobCard({
 function AppliedList({
   applications,
   reachable,
+  timing,
 }: {
   applications: JobApplication[];
   reachable: Map<string, JobPosting>;
+  timing: { locale: string; timeZone: string };
 }) {
   if (applications.length === 0) {
     return (
       <EmptyState
         icon={<ClipboardList className="size-5" />}
         title="You have not applied to anything yet"
-        description="Applications you send from this board are listed here with the note you attached, so you know what you told each company and when."
+        description="Each application you send is kept here with the note you wrote."
         action={
           <ButtonLink href="/jobs" variant="secondary">
             Browse open roles
@@ -525,14 +536,14 @@ function AppliedList({
 
   return (
     <Section
-      title="Your applications"
-      description="Only you and the person who posted the role can see these."
+      title={`${plural(applications.length, 'application')} · newest first`}
+      description="The poster and the placement cell see your name, branch, batch and note."
     >
-      <ul className="space-y-3">
+      <ul className="grid grid-cols-1 gap-3">
         {sorted.map((app) => {
           const job = reachable.get(app.jobId);
           return (
-            <li key={app.id}>
+            <li key={app.id} className="min-w-0">
               <Card as="article" className="p-card">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -547,10 +558,10 @@ function AppliedList({
                     </h3>
                     <p className="mt-0.5 text-sm text-secondary">{app.company}</p>
                   </div>
-                  <div className="flex shrink-0 flex-col items-end gap-1">
-                    <Badge tone="info">Applied {formatRelative(app.createdAt)}</Badge>
-                    <span className="text-xs text-muted">{formatDate(app.createdAt)}</span>
-                  </div>
+                  <p className="shrink-0 text-sm text-secondary">
+                    Applied {formatRelative(app.createdAt, timing)}
+                    <span className="sr-only">, on {formatDate(app.createdAt, timing)}</span>
+                  </p>
                 </div>
 
                 {app.note ? (
@@ -558,14 +569,11 @@ function AppliedList({
                     {app.note}
                   </blockquote>
                 ) : (
-                  <p className="mt-3 text-sm text-muted">You applied without a note.</p>
+                  <p className="mt-3 text-sm text-secondary">You applied without a note.</p>
                 )}
 
                 {!job ? (
-                  <p className="mt-3 text-xs text-muted">
-                    This posting has since been closed or withdrawn, so it is no longer on the
-                    board. Your application record stays here.
-                  </p>
+                  <p className="mt-3 text-sm text-secondary">This posting has closed. Your application is kept here.</p>
                 ) : null}
               </Card>
             </li>

@@ -1,9 +1,11 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { getSession } from '@/lib/auth/session';
+import { safeNextParam } from '@/lib/auth/route-policy';
 import { getTenantBrand } from '@/lib/tenant';
 import { getDemoAccounts } from '@/lib/data/repo';
-import { IS_FIXTURE } from '@/lib/config';
+import { IS_FIXTURE, OTP_TTL_SECONDS } from '@/lib/config';
+import { inSentence } from '@/lib/branding/copy';
 import { LoginForm, type DemoAccountView } from './LoginForm';
 
 export const metadata: Metadata = {
@@ -34,7 +36,10 @@ export default async function LoginPage({
   const copy = brand.pack.copy;
 
   const rawNext = typeof sp.next === 'string' ? sp.next : undefined;
-  const next = rawNext && /^\/(?!\/)/.test(rawNext) ? rawNext : undefined;
+  // The same allowlist the middleware applies when it builds this URL. A bare
+  // "starts with one slash" test lets `/\evil.example` through, which a browser
+  // reads as `//evil.example` - an open redirect after a real sign-in.
+  const next = (rawNext && safeNextParam(rawNext)) || undefined;
 
   const initialEmail = typeof sp.email === 'string' ? sp.email : '';
 
@@ -45,20 +50,21 @@ export default async function LoginPage({
     : [];
 
   return (
-    <div className="space-y-8">
+    <div className="mx-auto w-full max-w-md space-y-8">
       <header className="space-y-2">
         <h1 className="font-display text-display-sm font-bold">Sign in</h1>
         <p className="text-secondary">
-          {copy.portalName} sends a six-digit code to your email. There is no password to remember,
-          and nothing to reset.
+          Welcome back. We will email you a six-digit code — there is no password to remember.
         </p>
       </header>
 
       <LoginForm
         demoAccounts={demoAccounts}
-        supportEmail={copy.supportEmail}
         next={next}
         initialEmail={initialEmail}
+        rollMid={inSentence(copy.rollNumberLabel)}
+        officeName={copy.officeName}
+        otpMinutes={Math.round(OTP_TTL_SECONDS / 60)}
       />
     </div>
   );

@@ -52,14 +52,18 @@ export const SORTS = [
 export const COHORTS = [
   { value: 'all', label: 'Everyone' },
   { value: 'alumni', label: 'Alumni' },
-  { value: 'students', label: 'Final years' },
+  { value: 'students', label: 'Final-year students' },
 ] as const;
 
-/** The filters a chip can remove and the empty state can offer to drop. */
+/**
+ * The filters a chip can remove and the empty state can offer to drop.
+ * `chip` is the verb on the availability chips above the results, the
+ * same verb a member card uses ("Mentors", "Refers", "Speaks").
+ */
 export const AVAILABILITY = [
-  { key: 'mentoring', label: 'Open to mentoring', chip: 'Mentoring' },
-  { key: 'referrals', label: 'Open to referrals', chip: 'Referrals' },
-  { key: 'speaking', label: 'Open to speaking', chip: 'Speaking' },
+  { key: 'mentoring', label: 'Open to mentoring', chip: 'Mentors' },
+  { key: 'referrals', label: 'Open to referrals', chip: 'Refers' },
+  { key: 'speaking', label: 'Open to speaking', chip: 'Speaks' },
 ] as const satisfies ReadonlyArray<{ key: DirectoryParamKey; label: string; chip: string }>;
 
 const SORT_VALUES = new Set(SORTS.map((s) => s.value as string));

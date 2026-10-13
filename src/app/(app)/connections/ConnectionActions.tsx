@@ -42,6 +42,9 @@ const ACTION: Record<ConnectionOutcome, 'accept' | 'decline' | 'block' | 'withdr
 
 type Phase = 'saving' | 'saved' | 'not_persisted';
 
+/** Small buttons, full 44px targets on touch. */
+const TOUCH = 'min-h-11 sm:min-h-0';
+
 export function ConnectionActions({
   connectionId,
   memberName,
@@ -122,11 +125,11 @@ export function ConnectionActions({
   if (variant === 'sent') {
     return (
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="secondary" size="sm" onClick={() => void decide('withdrawn')}>
+        <Button variant="secondary" size="sm" className={TOUCH} onClick={() => void decide('withdrawn')}>
           <Undo2 className="size-4" aria-hidden="true" />
           Withdraw
         </Button>
-        <p className="text-xs text-muted">Frees a slot immediately.</p>
+        <p className="text-xs text-secondary">Frees a slot straight away.</p>
       </div>
     );
   }
@@ -134,17 +137,18 @@ export function ConnectionActions({
   return (
     <>
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" onClick={() => void decide('accepted')}>
+        <Button size="sm" className={TOUCH} onClick={() => void decide('accepted')}>
           <Check className="size-4" aria-hidden="true" />
           Accept
         </Button>
-        <Button variant="secondary" size="sm" onClick={() => void decide('declined')}>
+        <Button variant="secondary" size="sm" className={TOUCH} onClick={() => void decide('declined')}>
           <X className="size-4" aria-hidden="true" />
           Decline
         </Button>
         <Button
           variant="ghost"
           size="sm"
+          className={TOUCH}
           onClick={() => setConfirmingBlock(true)}
           aria-label={`Block ${memberName} from contacting you`}
         >
@@ -226,12 +230,6 @@ function Resolved({
 
         {phase === 'saving' ? <p className="text-xs opacity-80">Sending your answer…</p> : null}
 
-        {phase === 'not_persisted' ? (
-          <p className="text-xs opacity-80">
-            Shown here only — this build runs on seeded data with no database behind it. The
-            permission checks and the audit entry ran; the write did not.
-          </p>
-        ) : null}
       </div>
     </div>
   );

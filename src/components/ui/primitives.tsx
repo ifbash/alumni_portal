@@ -1,6 +1,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { cn } from '@/lib/cn';
+import { initialsOf } from '@/lib/identity';
 
 /**
  * Display primitives.
@@ -18,7 +19,7 @@ import { cn } from '@/lib/cn';
 // Button
 // ---------------------------------------------------------------
 
-type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'inverse' | 'link';
+type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'inverse' | 'link' | 'band' | 'band-outline';
 type ButtonSize = 'sm' | 'md' | 'lg' | 'icon' | 'icon-sm';
 
 const BUTTON_BASE =
@@ -39,6 +40,11 @@ const BUTTON_VARIANT: Record<ButtonVariant, string> = {
   inverse:
     'bg-surface-inverse text-on-inverse hover:opacity-90',
   link: 'text-brand-fg underline underline-offset-4 hover:opacity-80 h-auto p-0',
+  /** Only inside `.band-surface`: the band's foreground as the fill, the band as the label. */
+  band: 'bg-band-fg text-band shadow-sm hover:bg-band-muted',
+  /** Only inside `.band-surface`: the quieter partner of `band`. */
+  'band-outline':
+    'border border-band-muted text-band-fg hover:bg-[color-mix(in_srgb,var(--band-fg)_12%,transparent)]',
 };
 
 const BUTTON_SIZE: Record<ButtonSize, string> = {
@@ -138,8 +144,26 @@ export function Card({
   );
 }
 
-export function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('flex items-start justify-between gap-4 p-card pb-0', className)} {...props} />;
+/**
+ * `split` (default): title left, actions right. `stack`: title, then
+ * whatever follows it, one under the other — for a card header whose
+ * action is a sentence rather than a button, and for narrow rails.
+ */
+export function CardHeader({
+  className,
+  variant = 'split',
+  ...props
+}: React.HTMLAttributes<HTMLDivElement> & { variant?: 'split' | 'stack' }) {
+  return (
+    <div
+      className={cn(
+        variant === 'stack' ? 'flex flex-col items-start gap-1' : 'flex items-start justify-between gap-4',
+        'p-card pb-0',
+        className,
+      )}
+      {...props}
+    />
+  );
 }
 
 export function CardTitle({ className, as: As = 'h3', ...props }: React.HTMLAttributes<HTMLHeadingElement> & { as?: React.ElementType }) {
@@ -170,7 +194,9 @@ export function CardFooter({ className, ...props }: React.HTMLAttributes<HTMLDiv
 type BadgeTone = 'neutral' | 'brand' | 'accent' | 'success' | 'warning' | 'danger' | 'info' | 'outline';
 
 const BADGE_TONE: Record<BadgeTone, string> = {
-  neutral: 'bg-surface-sunken text-secondary',
+  // The hairline keeps a neutral badge from reading as a black hole on a
+  // dark card, where `surface-sunken` is darker than the card itself.
+  neutral: 'border border-line bg-surface-sunken text-secondary',
   brand: 'bg-brand-soft text-brand-soft-fg',
   accent: 'bg-accent-soft text-accent-soft-fg',
   success: 'bg-success-soft text-success-fg',
@@ -208,36 +234,51 @@ export function Badge({
 
 const AVATAR_SIZE = { xs: 'size-6 text-[10px]', sm: 'size-8 text-xs', md: 'size-10 text-sm', lg: 'size-14 text-md', xl: 'size-24 text-xl' } as const;
 
+/** FNV-1a, 32-bit. Stable across server and client, so the tint never flips on hydration. */
+function fnv1a(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
 /**
  * Initials fallback rather than a generic silhouette.
  *
  * Most alumni will never upload a photo. A directory of identical grey
- * heads is unscannable; initials in the brand tint at least give the eye
- * something to sort by.
+ * heads is unscannable; initials in two tints (brand and accent, chosen
+ * by a hash of the name, so a person keeps theirs everywhere) at least
+ * give the eye something to sort by. Honorifics are skipped: "Dr. Ramesh
+ * Chalasani" is RC, not DR.
+ *
+ * `shape="square"` is for organisations — a company monogram next to a
+ * job posting — so it never reads as a person.
  */
 export function Avatar({
   name,
   src,
   size = 'md',
+  shape = 'circle',
   className,
 }: {
   name: string;
   src?: string | null;
   size?: keyof typeof AVATAR_SIZE;
+  shape?: 'circle' | 'square';
   className?: string;
 }) {
-  const initials = name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase() ?? '')
-    .join('');
+  const initials = initialsOf(name);
+  const tint = fnv1a(name) % 2 === 0 ? 'bg-brand-soft text-brand-soft-fg' : 'bg-accent-soft text-accent-soft-fg';
 
   return (
     <span
       className={cn(
-        'relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full',
-        'bg-brand-soft font-semibold text-brand-soft-fg ring-1 ring-inset ring-line',
+        'relative inline-flex shrink-0 items-center justify-center overflow-hidden',
+        shape === 'square' ? 'rounded' : 'rounded-full',
+        'font-semibold ring-1 ring-inset ring-line',
+        tint,
         AVATAR_SIZE[size],
         className,
       )}
@@ -301,29 +342,52 @@ export function Alert({
   );
 }
 
+/**
+ * An empty list, said once: why the space is empty and what fills it,
+ * plus at most one action.
+ *
+ * `panel` (default) is for when the empty list *is* the page's main
+ * content: a solid-bordered block with an icon. `inline` is one line of
+ * secondary text and a link, for an empty section on a page that has
+ * other things on it — a dashed box in prime space reads as broken.
+ */
 export function EmptyState({
   icon,
   title,
   description,
   action,
   className,
+  variant = 'panel',
 }: {
   icon?: React.ReactNode;
   title: string;
   description?: string;
   action?: React.ReactNode;
   className?: string;
+  variant?: 'panel' | 'inline';
 }) {
+  if (variant === 'inline') {
+    return (
+      <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-secondary', className)}>
+        <p>
+          {title}
+          {description ? ` ${description}` : null}
+        </p>
+        {action ? <div className="shrink-0">{action}</div> : null}
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-line',
-        'bg-surface px-6 py-14 text-center',
+        'flex flex-col items-center justify-center gap-3 rounded-lg border border-line',
+        'bg-surface-raised px-6 py-10 text-center',
         className,
       )}
     >
       {icon ? (
-        <span className="grid size-11 place-items-center rounded-full bg-surface-sunken text-muted" aria-hidden="true">
+        <span className="grid size-11 place-items-center rounded-full bg-brand-soft text-brand-soft-fg" aria-hidden="true">
           {icon}
         </span>
       ) : null}
@@ -390,7 +454,7 @@ export function Separator({
     return (
       <div className={cn('flex items-center gap-3', className)}>
         <span className="h-px flex-1 bg-line" />
-        <span className="text-xs font-medium uppercase tracking-wide text-muted">{label}</span>
+        <span className="text-xs font-medium uppercase tracking-wide text-secondary">{label}</span>
         <span className="h-px flex-1 bg-line" />
       </div>
     );
@@ -404,12 +468,22 @@ export function Separator({
   );
 }
 
+/**
+ * A figure on a finance or reporting screen. Work screens use `NeedsYou`
+ * and `SummaryLine` instead; a tile of 0 is never rendered.
+ *
+ * `href` makes the whole card a link to the filtered view behind the
+ * figure. `tone="attention"` marks a figure that needs action (warning
+ * value and a warning edge); `positive` a figure that is good news.
+ */
 export function Stat({
   label,
   value,
   hint,
   icon,
   trend,
+  href,
+  tone = 'default',
   className,
 }: {
   label: string;
@@ -417,26 +491,51 @@ export function Stat({
   hint?: string;
   icon?: React.ReactNode;
   trend?: { direction: 'up' | 'down' | 'flat'; label: string };
+  href?: string;
+  tone?: 'default' | 'attention' | 'positive';
   className?: string;
 }) {
   const trendTone =
-    trend?.direction === 'up' ? 'text-success-fg' : trend?.direction === 'down' ? 'text-danger-fg' : 'text-muted';
+    trend?.direction === 'up' ? 'text-success-fg' : trend?.direction === 'down' ? 'text-danger-fg' : 'text-secondary';
+  const valueTone = tone === 'attention' ? 'text-warning-fg' : tone === 'positive' ? 'text-success-fg' : null;
 
-  return (
-    <Card className={cn('p-card', className)}>
+  const body = (
+    <>
       <div className="flex items-start justify-between gap-3">
         <p className="text-sm font-medium text-secondary">{label}</p>
         {icon ? <span className="text-muted" aria-hidden="true">{icon}</span> : null}
       </div>
-      <p className="mt-2 font-display text-display-xs font-bold tabular">{value}</p>
+      {/* Joined, not `cn`: tailwind-merge reads `text-display-xs` as a
+          colour and would drop it in favour of the tone. */}
+      <p className={['mt-2 font-display text-display-xs font-bold tabular', valueTone].filter(Boolean).join(' ')}>{value}</p>
       {trend || hint ? (
         <p className="mt-1 flex items-center gap-2 text-xs">
           {trend ? <span className={cn('font-semibold', trendTone)}>{trend.label}</span> : null}
-          {hint ? <span className="text-muted">{hint}</span> : null}
+          {hint ? <span className="text-secondary">{hint}</span> : null}
         </p>
       ) : null}
-    </Card>
+    </>
   );
+
+  const frame = cn('p-card', tone === 'attention' && 'border-l-4 border-l-warning', className);
+
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className={cn(
+          'block rounded-lg border border-line bg-surface-raised shadow-sm',
+          'transition-colors duration-fast ease-brand hover:border-line-strong',
+          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]',
+          frame,
+        )}
+      >
+        {body}
+      </Link>
+    );
+  }
+
+  return <Card className={frame}>{body}</Card>;
 }
 
 /** Key/value row used across every detail panel in the app. */

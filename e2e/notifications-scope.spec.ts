@@ -42,9 +42,12 @@ test.describe('notification scoping', () => {
     // The regression this pins: `getNotifications(session)` opened with
     // `void session` and returned one static list to everybody, so five
     // roles received a byte-identical body.
+    // The vendor is not in this loop: `/api/notifications` refuses a
+    // vendor-only session with 403 by design (the vendor boundary). The
+    // second test below still pins that no named student reaches /admin.
     const bodies = new Map<string, string>();
 
-    for (const caller of ['student', 'alumni', 'admin', 'platform', 'finance'] as const) {
+    for (const caller of ['student', 'alumni', 'admin', 'finance'] as const) {
       const res = await request.get('/api/notifications', { headers: cookieFor(caller), maxRedirects: 0 });
       expect(res.status()).toBe(200);
       bodies.set(caller, await res.text());
@@ -59,8 +62,7 @@ test.describe('notification scoping', () => {
         '  session and does nothing with it is worse than one that never took it: every caller',
         '  reads as authorised.',
         '',
-      ].join('
-'),
+      ].join('\n'),
     ).toBeGreaterThan(1);
   });
 
@@ -82,8 +84,7 @@ test.describe('notification scoping', () => {
         '  is still filtering on session.memberId, and that no other panel renders an',
         '  unscoped list.',
         '',
-      ].join('
-'),
+      ].join('\n'),
     ).toBe(false);
 
     // The boundary behind it, unchanged.

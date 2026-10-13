@@ -6,7 +6,6 @@ import {
   mixHex,
   withAlpha,
   accessibleStop,
-  validateContrast,
   STOPS,
   type Stop,
   type ContrastIssue,
@@ -89,8 +88,15 @@ const ELEVATION: Record<BrandPack['shape']['elevation'], { sm: string; md: strin
  */
 function typeScale(scale: number): Record<string, string> {
   const s = (rem: number) => `${(rem * scale).toFixed(3)}rem`;
-  const fluid = (min: number, max: number) =>
-    `clamp(${s(min)}, ${(min * scale).toFixed(2)}rem + ${(((max - min) * scale) / 0.24).toFixed(2)}vw, ${s(max)})`;
+  // Spread across 360–1200px: `min` at a 360px phone, `max` at 1200px and
+  // up, linear in between. The previous slope divided by 0.24vw, so every
+  // display size hit its maximum above about 24px of viewport — a 54px h1
+  // on a phone.
+  const fluid = (min: number, max: number) => {
+    const slope = ((max - min) * 16 * 100) / 840; // vw
+    const intercept = min - ((max - min) * 360) / 840; // rem
+    return `clamp(${s(min)}, ${(intercept * scale).toFixed(3)}rem + ${(slope * scale).toFixed(3)}vw, ${s(max)})`;
+  };
 
   return {
     '--text-xs': s(0.75),
@@ -133,7 +139,12 @@ export function buildTokens(pack: BrandPack): TokenSet {
   }
 
   light['--surface'] = surface;
-  light['--surface-raised'] = contrastRatio(surface, '#ffffff') > 1.06 ? '#ffffff' : neutral[50];
+  // Cards, inputs and the header bar. On a near-white page this is the page
+  // lifted toward white, never `neutral[50]`: the neutral ramp anchors a
+  // near-achromatic surface at an arbitrary warm hue, and DIET's inputs,
+  // cards and header came out faintly pink (#FFF8F6) beside navy and gold.
+  light['--surface-raised'] =
+    contrastRatio(surface, '#ffffff') > 1.06 ? '#ffffff' : mixHex(surface, '#ffffff', 0.6);
   light['--surface-sunken'] = mixHex(surface, brand[900], 0.04);
   light['--surface-inverse'] = ink;
 
@@ -164,12 +175,25 @@ export function buildTokens(pack: BrandPack): TokenSet {
   light['--accent-soft'] = mixHex(surface, accent[500], 0.1);
   light['--accent-soft-fg'] = accessibleStop(accent, mixHex(surface, accent[500], 0.1), 4.5).hex;
 
-  const btn = pickFill(brand, [600, 700, 500, 800], [paper, '#ffffff', ink, '#111111']);
-  light['--button-primary-bg'] = btn.fill;
-  light['--button-primary-hover'] = brand[btn.stop === 600 ? 700 : 800] ?? brand[700];
-  light['--button-primary-fg'] = btn.label;
+  // The primary button is the college's own colour whenever a light label
+  // reads on it. A derived stop sat as a second, washed-out blue (or red)
+  // between two slabs of the real band colour in the public header. Only a
+  // seed too pale for a light label falls back to walking the ramp.
+  const seedLabel = bestOn(c.primary, [paper, '#ffffff']);
+  if (contrastRatio(c.primary, seedLabel) >= 4.5) {
+    light['--button-primary-bg'] = c.primary;
+    light['--button-primary-hover'] = hoverFill(c.primary, seedLabel, 'darker');
+    light['--button-primary-fg'] = seedLabel;
+  } else {
+    const btn = pickFill(brand, [600, 700, 500, 800], [paper, '#ffffff', ink, '#111111']);
+    light['--button-primary-bg'] = btn.fill;
+    light['--button-primary-hover'] = brand[btn.stop === 600 ? 700 : 800] ?? brand[700];
+    light['--button-primary-fg'] = btn.label;
+  }
 
-  light['--focus-ring'] = accessibleStop(brand, surface, 3, 'darker').hex;
+  // The ring lands on the page and on every raised surface — the header
+  // bar, cards, chips, inputs — so it clears 3:1 on both.
+  light['--focus-ring'] = ringStop(brand, [surface, light['--surface-raised']!], 'darker');
   light['--shadow-color'] = withAlpha(ink, 0.1);
   light['--overlay'] = withAlpha(ink, 0.55);
   light['--marker'] = c.marker ?? accent[500];
@@ -221,12 +245,17 @@ export function buildTokens(pack: BrandPack): TokenSet {
   dark['--accent-soft'] = mixHex(surfaceDark, accent[400], 0.16);
   dark['--accent-soft-fg'] = accessibleStop(accent, mixHex(surfaceDark, accent[400], 0.16), 4.5, 'lighter').hex;
 
-  const btnDark = pickFill(brand, [500, 400, 600, 300], ['#ffffff', '#0b0b0c', surfaceDark, ink]);
+  // Mid-tone stops first, so a dark-mode button stays a college colour
+  // with a white label instead of turning pastel with a black one.
+  const btnDark = pickFill(brand, [600, 700, 500, 400], ['#ffffff', '#0b0b0c', surfaceDark, ink]);
   dark['--button-primary-bg'] = btnDark.fill;
-  dark['--button-primary-hover'] = brand[btnDark.stop === 500 ? 400 : 300] ?? brand[400];
+  dark['--button-primary-hover'] = hoverFill(btnDark.fill, btnDark.label, 'lighter');
   dark['--button-primary-fg'] = btnDark.label;
 
-  dark['--focus-ring'] = accessibleStop(brand, surfaceDark, 3, 'lighter').hex;
+  // Measured against the raised surface too: walking against the page
+  // alone left the ring at 2.8–3.0:1 on the dark header bar, chips and
+  // cards on every pack.
+  dark['--focus-ring'] = ringStop(brand, [surfaceDark, dark['--surface-raised']!], 'lighter');
   dark['--shadow-color'] = 'rgb(0 0 0 / 0.5)';
   dark['--overlay'] = 'rgb(0 0 0 / 0.7)';
   dark['--marker'] = c.marker ?? accent[400];
@@ -276,12 +305,83 @@ export function buildTokens(pack: BrandPack): TokenSet {
   Object.assign(light, c.overrides);
   Object.assign(dark, c.darkOverrides);
 
+  // ---------------------------------------------------------------
+  // Chart marks
+  // ---------------------------------------------------------------
+  //
+  // A bar is a graphical object, so it needs 3:1 against the card it sits
+  // on (WCAG 1.4.11), not the 4.5:1 of text. The previous bars were
+  // `--brand-soft`, a 10% tint that measured about 1.1:1 on a card: the
+  // chart was a shape only its author could see. Derived after the
+  // overrides, so a pinned `--surface-raised` is the ground measured.
+  applyChart(light, brand, accent, [400, 500, 600, 700, 800]);
+  applyChart(dark, brand, accent, [400, 300, 500, 200, 600]);
+
+  // ---------------------------------------------------------------
+  // The college band
+  // ---------------------------------------------------------------
+  //
+  // The college's own seed colour, as a surface: the public header strip,
+  // the landing hero, the footer, the sign-in panel. It is the same in
+  // light and dark, because it is the college's identity rather than a
+  // theme colour — except when the seed sits within 1.3:1 of the dark
+  // page, where it would read as a hole in the page rather than a band,
+  // and steps to brand-800 (else brand-700) in dark mode only.
+  //
+  // Derived after the overrides so that `--band` is always a hex this
+  // function chose or validated: a non-hex override is ignored, loudly.
+
+  const bandIssues: ContrastIssue[] = [];
+  const bandFg = (x: string) => bestOn(x, [paper, '#ffffff']);
+
+  const seedBand =
+    [c.primary, brand[800], brand[900]].find((x) => contrastRatio(bandFg(x), x) >= 7) ?? brand[900];
+
+  const lightBandOverride = c.overrides['--band'];
+  const bandLight = isHex6(lightBandOverride) ? lightBandOverride : seedBand;
+  if (lightBandOverride !== undefined && !isHex6(lightBandOverride)) {
+    bandIssues.push({ token: '--band', against: lightBandOverride, ratio: 0, required: 0, severity: 'warning' });
+  }
+
+  const darkPage = isHex6(dark['--surface']) ? dark['--surface'] : surfaceDark;
+  const darkBandOverride = c.darkOverrides['--band'];
+  let bandDark: string;
+  if (isHex6(darkBandOverride)) {
+    bandDark = darkBandOverride;
+  } else {
+    if (darkBandOverride !== undefined) {
+      bandIssues.push({ token: '--band (dark)', against: darkBandOverride, ratio: 0, required: 0, severity: 'warning' });
+    }
+    bandDark =
+      contrastRatio(bandLight, darkPage) >= 1.3
+        ? bandLight
+        : ([brand[800], brand[700]].find(
+            (x) => contrastRatio(x, darkPage) >= 1.3 && contrastRatio(bandFg(x), x) >= 7,
+          ) ?? bandLight);
+  }
+
+  const lightBand = bandFamily(bandLight, paper, brand, accent);
+  const darkBand = bandFamily(bandDark, paper, brand, accent);
+  Object.assign(light, lightBand.tokens);
+  Object.assign(dark, darkBand.tokens);
+
+  // The page's own focus ring, for light islands inside a band
+  // (`.band-exit`), which has to restore it after `.band-surface`
+  // redefines `--focus-ring`. Taken after the overrides, so a pinned ring
+  // is the one restored.
+  light['--focus-ring-surface'] = light['--focus-ring']!;
+  dark['--focus-ring-surface'] = dark['--focus-ring']!;
+
   // Only the tokens the UI actually renders are audited. Checking raw
   // ramp stops instead produced warnings about steps nothing uses — a
   // border check against `brand-400` when borders are drawn from
   // `--border-strong` — and warnings nobody can act on get ignored,
   // including the ones that matter.
-  const issues = [...auditTokens(light, 'light'), ...auditTokens(dark, 'dark')];
+  const issues = [
+    ...bandIssues,
+    ...auditTokens(light, 'light', bandChecks(light, lightBand.scrimWorstCase)),
+    ...auditTokens(dark, 'dark', bandChecks(dark, darkBand.scrimWorstCase)),
+  ];
 
   return {
     light,
@@ -316,6 +416,93 @@ function pickFill(
   }
 
   return { stop: best.stop, fill: best.fill, label: best.label };
+}
+
+/**
+ * A hover fill for a button, keeping its label at 4.5:1. Prefers the given
+ * direction (darker on a light page, lighter on a dark one, so the hover
+ * reads as a lift rather than a hole) and turns the other way only when
+ * the label would fall below AA.
+ */
+function hoverFill(fill: string, label: string, prefer: 'darker' | 'lighter'): string {
+  const toward = prefer === 'darker' ? '#000000' : '#ffffff';
+  for (const t of [0.16, 0.12, 0.08]) {
+    const h = mixHex(fill, toward, t);
+    if (contrastRatio(h, label) >= 4.5) return h;
+  }
+  return mixHex(fill, prefer === 'darker' ? '#ffffff' : '#000000', 0.14);
+}
+
+/** Contrast that treats an unparseable colour (an `rgb()` override) as failing rather than throwing. */
+function safeContrast(a: string | undefined, b: string | undefined): number {
+  if (!a || !b) return 0;
+  try {
+    return contrastRatio(a, b);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * `--chart-bar`, `--chart-bar-highlight` and `--chart-track` for one mode.
+ *
+ * The bar is the first brand stop in `walk` that clears 3:1 on this mode's
+ * `--surface-raised`; the highlight is the same walk over the accent ramp.
+ * A pack with no accent has an accent ramp identical to the brand ramp,
+ * and a highlight the same colour as the bars it picks out highlights
+ * nothing, so the highlight then moves one qualifying stop further along
+ * the walk. With no qualifying stop at all, both fall back to the primary
+ * button fill, which the pack already guarantees is a strong colour.
+ */
+function applyChart(
+  t: Record<string, string>,
+  brand: Record<Stop, string>,
+  accent: Record<Stop, string>,
+  walk: Stop[],
+): void {
+  const ground = t['--surface-raised'];
+  const fallback = t['--button-primary-bg']!;
+  const passing = (ramp: Record<Stop, string>) =>
+    walk.map((s) => ramp[s]).filter((hex) => safeContrast(hex, ground) >= 3);
+
+  const bar = passing(brand)[0] ?? fallback;
+  const accentStops = passing(accent);
+  const highlight =
+    accentStops.find((hex) => hex.toLowerCase() !== bar.toLowerCase()) ??
+    passing(brand).find((hex) => hex.toLowerCase() !== bar.toLowerCase()) ??
+    (fallback.toLowerCase() !== bar.toLowerCase() ? fallback : bar);
+
+  t['--chart-bar'] = bar;
+  t['--chart-bar-highlight'] = highlight;
+  t['--chart-track'] = t['--border-strong']!;
+}
+
+/**
+ * The density tokens for one element, optionally only from a width up.
+ *
+ * The staff console is dense work on a desk: at `lg` it takes the compact
+ * control heights and gutters whatever the college picked, while phones
+ * keep the comfortable 44px targets. Emitted into a `<style>` by the
+ * console shell: `densityCss('compact', '.console-density', 1024)`.
+ */
+export function densityCss(
+  density: BrandPack['shape']['density'],
+  selector: string,
+  minWidthPx?: number,
+): string {
+  const body = `${selector}{${Object.entries(DENSITY[density])
+    .map(([k, v]) => `${k}:${v}`)
+    .join(';')}}`;
+  return minWidthPx ? `@media (min-width:${minWidthPx}px){${body}}` : body;
+}
+
+/** The first stop, walking in `dir`, that clears 3:1 on every ground given. */
+function ringStop(ramp: Record<Stop, string>, grounds: string[], dir: 'darker' | 'lighter'): string {
+  const order = dir === 'darker' ? [...STOPS] : [...STOPS].reverse();
+  for (const stop of order) {
+    if (grounds.every((g) => contrastRatio(ramp[stop], g) >= 3)) return ramp[stop];
+  }
+  return accessibleStop(ramp, grounds[0]!, 3, dir).hex;
 }
 
 function applyStatus(
@@ -381,18 +568,79 @@ function worseGround(
   return order.indexOf(stopA.stop) >= order.indexOf(stopB.stop) ? a : b;
 }
 
+function isHex6(v: string | undefined): v is string {
+  return typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v);
+}
+
+/**
+ * Everything that sits on the college band, derived from the band alone.
+ *
+ * - `--band-fg`: the pack's paper or white, whichever reads better.
+ * - `--band-muted` / `--band-accent`: the palest brand and accent stops
+ *   that still clear 4.5:1 on the band, so secondary text and the hero's
+ *   emphasis stay in the college's hues instead of turning grey.
+ * - `--scrim`: the band at the lowest alpha where `--band-fg` still clears
+ *   4.5:1 over a pure-white pixel — the worst a photograph can do. Text
+ *   over a photo is legible by construction, whatever the photo is.
+ * - `--scrim-edge`: the far end of the desktop hero gradient, which
+ *   carries no text.
+ */
+function bandFamily(band: string, paper: string, brand: Record<Stop, string>, accent: Record<Stop, string>) {
+  const fg = bestOn(band, [paper, '#ffffff']);
+  const muted = [brand[100], brand[50]].find((x) => contrastRatio(x, band) >= 4.5) ?? fg;
+  const accentText = [accent[200], accent[100], accent[50]].find((x) => contrastRatio(x, band) >= 4.5) ?? fg;
+  const alpha =
+    [0.6, 0.64, 0.68, 0.72, 0.76, 0.8, 0.84, 0.88].find(
+      (a) => contrastRatio(fg, mixHex('#ffffff', band, a)) >= 4.5,
+    ) ?? 0.92;
+  return {
+    tokens: {
+      '--band': band,
+      '--band-fg': fg,
+      '--band-muted': muted,
+      '--band-accent': accentText,
+      '--band-rule': mixHex(band, fg, 0.2),
+      '--scrim': withAlpha(band, alpha),
+      '--scrim-edge': withAlpha(band, 0.2),
+    },
+    scrimWorstCase: mixHex('#ffffff', band, alpha),
+  };
+}
+
+type AuditCheck = [token: string, fg: string, bg: string, required: number, severity: 'error' | 'warning'];
+
+/**
+ * The band pairs, plus the one composite no token holds: band text over
+ * the scrim over a white pixel. Errors come before the AAA warning for the
+ * same pair, so a failing band reports once, as the error.
+ */
+function bandChecks(t: Record<string, string>, scrimWorstCase: string): AuditCheck[] {
+  const band = t['--band']!;
+  return [
+    ['--band-fg', t['--band-fg']!, band, 4.5, 'error'],
+    ['--band-fg', t['--band-fg']!, band, 7, 'warning'],
+    ['--band-muted', t['--band-muted']!, band, 4.5, 'error'],
+    ['--band-accent', t['--band-accent']!, band, 4.5, 'error'],
+    ['--scrim (band text over a white photo)', t['--band-fg']!, scrimWorstCase, 4.5, 'error'],
+  ];
+}
+
 /**
  * Post-derivation audit.
  *
  * `validateContrast` checks the raw ramp; this checks the tokens the UI
  * actually renders, including anything a customer pinned via `overrides`.
  * A pinned colour is exactly where an inaccessible value gets in.
+ *
+ * `extra` carries checks whose ground is not a token — the scrim
+ * composite — alongside the band pairs.
  */
-function auditTokens(t: Record<string, string>, mode: 'light' | 'dark'): ContrastIssue[] {
+function auditTokens(t: Record<string, string>, mode: 'light' | 'dark', extra: AuditCheck[] = []): ContrastIssue[] {
   const issues: ContrastIssue[] = [];
   const surface = t['--surface']!;
+  const flagged = new Set<string>();
 
-  const checks: Array<[string, string, string, number, 'error' | 'warning']> = [
+  const checks: AuditCheck[] = [
     ['--text-primary', t['--text-primary']!, surface, 7, 'error'],
     ['--text-secondary', t['--text-secondary']!, surface, 4.5, 'error'],
     ['--text-muted', t['--text-muted']!, surface, 3, 'warning'],
@@ -401,15 +649,25 @@ function auditTokens(t: Record<string, string>, mode: 'light' | 'dark'): Contras
     ['--accent-fg', t['--accent-fg']!, surface, 4.5, 'warning'],
     ['--button-primary-fg', t['--button-primary-fg']!, t['--button-primary-bg']!, 4.5, 'error'],
     ['--focus-ring', t['--focus-ring']!, surface, 3, 'error'],
+    ['--focus-ring', t['--focus-ring']!, t['--surface-raised']!, 3, 'error'],
     ['--border-strong', t['--border-strong']!, surface, 1.6, 'warning'],
     ['--danger-fg', t['--danger-fg']!, surface, 4.5, 'error'],
     ['--text-on-inverse', t['--text-on-inverse']!, t['--surface-inverse']!, 4.5, 'error'],
+    // Chart bars are graphical objects on a card: 3:1 (WCAG 1.4.11).
+    ['--chart-bar', t['--chart-bar']!, t['--surface-raised']!, 3, 'error'],
+    ['--chart-bar-highlight', t['--chart-bar-highlight']!, t['--surface-raised']!, 3, 'error'],
+    ...extra,
   ];
 
   for (const [token, fg, bg, required, severity] of checks) {
     if (!fg || !bg || fg.startsWith('rgb')) continue;
+    // One issue per token and ground: a pair that fails the error floor
+    // is not reported again for missing the advisory one.
+    const key = `${token}|${bg}`;
+    if (flagged.has(key)) continue;
     const ratio = contrastRatio(fg, bg);
     if (ratio < required) {
+      flagged.add(key);
       issues.push({
         token: `${token}${mode === 'dark' ? ' (dark)' : ''}`,
         against: bg,

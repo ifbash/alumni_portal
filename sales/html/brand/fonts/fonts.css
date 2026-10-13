@@ -1,0 +1,14 @@
+/* ifBash web fonts — self-hosted. Works offline; no Google request.
+   Paths are relative to this file. SIL OFL 1.1 — see OFL.txt beside it.
+   Bricolage ships one static file (Bold 700). It is declared across 700–800 so
+   an 800 request renders the real 700 drawing instead of a faux-bolded one. */
+@font-face { font-family: 'Bricolage Grotesque'; src: url('BricolageGrotesque-Bold.ttf') format('truetype'); font-weight: 700 800; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Hanken Grotesk'; src: url('HankenGrotesk-Regular.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Hanken Grotesk'; src: url('HankenGrotesk-Medium.ttf') format('truetype'); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Hanken Grotesk'; src: url('HankenGrotesk-SemiBold.ttf') format('truetype'); font-weight: 600; font-style: normal; font-display: swap; }
+@font-face { font-family: 'IBM Plex Mono'; src: url('IBMPlexMono-Regular.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'IBM Plex Mono'; src: url('IBMPlexMono-Medium.ttf') format('truetype'); font-weight: 500; font-style: normal; font-display: swap; }
+
+.if-display { font-family: 'Bricolage Grotesque', 'Aptos Display', 'Helvetica Neue', Arial, sans-serif; font-weight: 700; letter-spacing: -.04em; }
+.if-text    { font-family: 'Hanken Grotesk', 'Aptos', 'Helvetica Neue', Arial, sans-serif; }
+.if-mono    { font-family: 'IBM Plex Mono', Consolas, ui-monospace, monospace; letter-spacing: .18em; text-transform: uppercase; }

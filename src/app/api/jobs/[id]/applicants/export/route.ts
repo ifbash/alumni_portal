@@ -179,7 +179,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       );
     }
 
-    // Before the file, not after it.
+    // Before the file, not after it - and `strict`: if the entry cannot be
+    // written, no file is produced.
     await logAudit({
       tenantId: tenant.id,
       session,
@@ -200,7 +201,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         format: 'csv',
       },
       ip: request.headers.get('x-forwarded-for') ?? clientIp(request),
-    });
+    }, { strict: true });
 
     const header = columns.map((c) => cell(c.label)).join(',');
     const lines = rows.map((r) => columns.map((c) => cell(c.get(r))).join(','));

@@ -2,19 +2,10 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import {
-  ArrowLeft,
-  Briefcase,
-  Check,
-  MapPin,
-  Plus,
-  ShieldCheck,
-  Sparkles,
-  X,
-} from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, MapPin, Plus, X } from 'lucide-react';
 import {
   Alert,
+  Avatar,
   Badge,
   Button,
   Card,
@@ -32,27 +23,36 @@ import {
   describedBy,
   useToast,
 } from '@/components/ui';
+import { cn } from '@/lib/cn';
+import { outcomeToast } from '@/lib/client/api';
+import { availabilityEntries } from '@/lib/availability-copy';
+import { VISIBILITY_FOOTNOTE, VISIBILITY_OPTIONS } from '@/lib/visibility-copy';
 import type { ContactVisibility } from '@/lib/data/types';
 import type { ProfileCheck } from '../profile/completeness';
 
 /**
  * The first-run wizard.
  *
- * Four steps, each of which can be skipped with a button that is as
- * prominent as the one that continues. The two things worth defending:
+ * A welcome panel, four steps, and a last screen. Each step can be
+ * skipped with a button as prominent as the one that continues. The two
+ * things worth defending:
  *
  *  1. **Each step saves on its own.** A member who fills in step one and
  *     closes the tab keeps step one. A wizard that only writes at the end
  *     throws away most of what people actually typed.
- *  2. **The availability step states the commitment, not the label.** A
- *     switch called "Open to mentoring" with nothing written next to it
- *     gets turned on once and regretted the first time a student writes at
- *     eleven at night. "Not right now" is rendered as an equal choice
- *     because for a lot of people it is the correct one, and a greyed-out
- *     afterthought reads as disapproval.
+ *  2. **The availability step states the commitment, not the label.** The
+ *     lines come from `availabilityCopy()`, the same words the profile form
+ *     and the home page use. "Not right now" is rendered as an equal choice
+ *     because for a lot of people it is the correct one.
+ *
+ * The welcome band, the header shown during the steps and the last screen
+ * are rendered on the server and passed in; this component only chooses
+ * which is showing. `StartSetupButton`, placed in the band by the page,
+ * reaches the wizard through context.
  */
 
 export interface WelcomeValues {
+  photoUrl: string;
   currentCompany: string;
   designation: string;
   industry: string;
@@ -66,41 +66,76 @@ export interface WelcomeValues {
   visibility: ContactVisibility;
 }
 
+/** Who is being welcomed: it changes the words, never what is saved. */
+export type WelcomeAudience = 'alumni' | 'faculty' | 'student';
+
 type FieldErrors = Record<string, string | undefined>;
 
 const STEP_COUNT = 4;
 
+const StartContext = React.createContext<(() => void) | null>(null);
+
+/** "Set up in a minute", for the welcome band. Starts step one. */
+export function StartSetupButton() {
+  const start = React.useContext(StartContext);
+  return (
+    <Button type="button" variant="band" className="min-h-11" onClick={() => start?.()}>
+      Set up in a minute
+      <ArrowRight className="size-4" aria-hidden="true" />
+    </Button>
+  );
+}
+
 export function WelcomeWizard({
+  intro,
+  header,
+  done: doneScreen,
+  name,
   values: initial,
   checks,
-  isStudent,
+  audience,
   noticeVersion,
   shortName,
+  officeName,
+  openLimit,
   connectionsOn,
   mentorshipOn,
   directoryOn,
 }: {
+  /** The welcome band, shown before step one. */
+  intro: React.ReactNode;
+  /** The compact band shown above the steps and the last screen. */
+  header: React.ReactNode;
+  /** The last screen. */
+  done: React.ReactNode;
+  /** The member's own name, for the photo preview's initials. */
+  name: string;
   values: WelcomeValues;
   checks: ProfileCheck[];
-  isStudent: boolean;
+  audience: WelcomeAudience;
   noticeVersion: string;
   shortName: string;
+  /** The pack's office, mid-sentence ("alumni cell"). */
+  officeName: string;
+  /** The per-student open-request limit, for the referrals explanation. */
+  openLimit: number;
   connectionsOn: boolean;
   mentorshipOn: boolean;
   directoryOn: boolean;
 }) {
-  const router = useRouter();
   const toast = useToast();
+  const isStudent = audience === 'student';
 
+  const [stage, setStage] = React.useState<'intro' | 'steps' | 'done'>('intro');
   const [step, setStep] = React.useState(0);
   const [values, setValues] = React.useState<WelcomeValues>(initial);
   const [errors, setErrors] = React.useState<FieldErrors>({});
   const [formError, setFormError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
-  /** Null until the first save; false once a route has told us it did not store. */
-  const [stored, setStored] = React.useState<boolean | null>(null);
+  /** Whether the "checked, not saved" note has been shown once already. */
+  const toldUnsaved = React.useRef(false);
 
-  const done = React.useMemo(
+  const filled = React.useMemo(
     () => new Set(checks.filter((c) => c.done).map((c) => c.id)),
     [checks],
   );
@@ -122,7 +157,7 @@ export function WelcomeWizard({
       return;
     }
     sectionRef.current?.focus();
-  }, [step]);
+  }, [step, stage]);
 
   function set<K extends keyof WelcomeValues>(key: K, value: WelcomeValues[K]) {
     setValues((v) => ({ ...v, [key]: value }));
@@ -158,10 +193,13 @@ export function WelcomeWizard({
 
       const body = (await res.json().catch(() => null)) as { persisted?: boolean } | null;
       // The route ran every guard, the validation and the audit write, then
-      // told us there is no store behind it. Saying "saved" over that would
-      // be the one dishonest sentence in the product.
-      if (body?.persisted === false) setStored(false);
-      else setStored(true);
+      // told us there is no store behind it. Say so once, the way every
+      // other form does, rather than on every step.
+      if (body?.persisted === false && !toldUnsaved.current) {
+        toldUnsaved.current = true;
+        const t = outcomeToast({ status: 'ok', data: null, persisted: false }, 'Step checked');
+        if (t) toast.show(t);
+      }
 
       return true;
     } catch (err) {
@@ -178,6 +216,7 @@ export function WelcomeWizard({
   function payloadFor(index: number): Record<string, unknown> {
     if (index === 0) {
       return {
+        photoUrl: values.photoUrl.trim() || null,
         currentCompany: values.currentCompany.trim(),
         designation: values.designation.trim(),
         industry: values.industry.trim(),
@@ -203,6 +242,7 @@ export function WelcomeWizard({
   function unchanged(index: number): boolean {
     if (index === 0) {
       return (
+        values.photoUrl === initial.photoUrl &&
         values.currentCompany === initial.currentCompany &&
         values.designation === initial.designation &&
         values.industry === initial.industry
@@ -224,8 +264,9 @@ export function WelcomeWizard({
   }
 
   function finish() {
-    router.push('/dashboard');
-    router.refresh();
+    setErrors({});
+    setFormError(null);
+    setStage('done');
   }
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -242,7 +283,6 @@ export function WelcomeWizard({
         });
         if (!ok) return;
       }
-      toast.success('You are set up', 'Everything here can be changed later from your profile.');
       finish();
       return;
     }
@@ -305,30 +345,93 @@ export function WelcomeWizard({
     }));
   }
 
+  const entries = availabilityEntries({
+    audience: audience === 'faculty' ? 'faculty' : 'alumni',
+    company: values.currentCompany,
+    officeName,
+    openLimit,
+  });
+  const FIELD = {
+    mentoring: 'openToMentoring',
+    referrals: 'openToReferrals',
+    speaking: 'openToSpeaking',
+  } as const;
+
   // ---- steps ------------------------------------------------------------
 
   const steps = [
-    { label: 'Work', doneId: 'work' },
-    { label: 'Location', doneId: 'city' },
-    { label: isStudent ? 'Skills' : 'Skills and availability', doneId: 'skills' },
-    { label: 'Privacy', doneId: null },
-  ] as const;
+    { label: 'Work', long: isStudent ? 'Internship or project' : 'Work', doneIds: ['work'] },
+    { label: 'City', long: 'City', doneIds: ['city'] },
+    {
+      label: availabilityApplies ? 'Skills and availability' : 'Skills',
+      long: availabilityApplies ? 'Skills and what you are open to' : 'Skills',
+      doneIds: ['skills'],
+    },
+    { label: 'Contact', long: 'Who sees your contact', doneIds: [] as string[] },
+  ];
 
   const current = steps[step]!;
-  const alreadyFilled = current.doneId ? done.has(current.doneId) : false;
+  const alreadyFilled = current.doneIds.length > 0 && current.doneIds.every((id) => filled.has(id));
+
+  const photoPreview = /^(https:\/\/|\/)/.test(values.photoUrl.trim()) ? values.photoUrl.trim() : null;
+
+  const benefit = BENEFIT[audience][step]!;
+
+  if (stage === 'intro') {
+    return (
+      <StartContext.Provider value={() => setStage('steps')}>
+        {intro}
+        <section aria-labelledby="welcome-steps-title" className="rounded-lg border border-line bg-surface-raised p-card shadow-sm">
+          <h2 id="welcome-steps-title" className="text-sm font-semibold text-primary">
+            Four short steps
+          </h2>
+          <ol className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
+            {steps.map((s, i) => (
+              <li key={s.label} className="flex items-center gap-2.5 text-sm text-primary">
+                <span
+                  className="grid size-7 shrink-0 place-items-center rounded-full bg-brand-soft text-xs font-semibold tabular text-brand-soft-fg"
+                  aria-hidden="true"
+                >
+                  {i + 1}
+                </span>
+                {s.long}
+              </li>
+            ))}
+          </ol>
+          <p className="mt-3 text-sm text-secondary">Each one saves on its own, and you can skip any of them.</p>
+        </section>
+      </StartContext.Provider>
+    );
+  }
+
+  if (stage === 'done') {
+    return (
+      <>
+        {header}
+        <section ref={sectionRef} tabIndex={-1} aria-label="Set up finished" className="focus:outline-none">
+          {doneScreen}
+        </section>
+      </>
+    );
+  }
 
   return (
-    <div className="space-y-4">
+    <>
+      {header}
+
       {/* ---- Progress ---------------------------------------------------- */}
 
       <div className="space-y-2.5">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <div className="flex items-center justify-between gap-4">
           <p className="text-sm font-medium" aria-live="polite">
             Step {step + 1} of {STEP_COUNT}
-            <span className="ml-2 font-normal text-secondary">{current.label}</span>
+            <span className="font-normal text-secondary"> · {current.label}</span>
           </p>
-          <Link href="/dashboard" className="link text-xs">
-            Skip all of this and open my dashboard
+          <Link
+            href="/dashboard"
+            className="-my-2 inline-flex min-h-11 shrink-0 items-center text-sm font-semibold text-brand-fg hover:underline"
+          >
+            Skip for now
           </Link>
         </div>
 
@@ -339,20 +442,22 @@ export function WelcomeWizard({
           label={`Step ${step + 1} of ${STEP_COUNT}`}
         />
 
-        <ol className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+        <ol className="hidden gap-x-5 text-xs text-secondary sm:flex">
           {steps.map((s, i) => (
             <li
               key={s.label}
-              className={i === step ? 'font-semibold text-primary' : undefined}
+              className={cn('inline-flex items-center gap-1', i === step && 'font-semibold text-primary')}
               aria-current={i === step ? 'step' : undefined}
             >
-              <span className="tabular">{i + 1}.</span> {s.label}
               {i < step ? (
                 <>
-                  <Check className="ml-1 inline size-3 text-success-fg" aria-hidden="true" />
-                  <span className="sr-only"> done</span>
+                  <Check className="size-3.5 text-success-fg" aria-hidden="true" />
+                  <span className="sr-only">Done: </span>
                 </>
-              ) : null}
+              ) : (
+                <span className="tabular">{i + 1}.</span>
+              )}
+              {s.label}
             </li>
           ))}
         </ol>
@@ -366,14 +471,10 @@ export function WelcomeWizard({
           className="focus:outline-none"
         >
           <Card>
-            <CardHeader>
-              <div className="min-w-0 space-y-1">
-                <CardTitle as="h2" id="welcome-step-title">
-                  {step === 0
-                    ? isStudent
-                      ? 'Where are you interning?'
-                      : 'Where do you work now?'
-                    : null}
+            <CardHeader variant="stack">
+              <div className="flex w-full items-start justify-between gap-3">
+                <CardTitle as="h2" id="welcome-step-title" className="min-w-0">
+                  {step === 0 ? (isStudent ? 'Where are you interning?' : 'Where do you work now?') : null}
                   {step === 1 ? 'Which city are you in?' : null}
                   {step === 2
                     ? isStudent
@@ -382,34 +483,14 @@ export function WelcomeWizard({
                     : null}
                   {step === 3 ? 'Who can see your email and mobile?' : null}
                 </CardTitle>
-                <CardDescription>
-                  {step === 0
-                    ? isStudent
-                      ? 'An alumnus reading a request from you looks at this line first. An internship, a project role, or nothing at all — all three are fine.'
-                      : 'Company and designation are the two fields the directory is searched on most. This is how your batch finds you fourteen years later.'
-                    : null}
-                  {step === 1
-                    ? isStudent
-                      ? 'Alumni working in the city you are aiming at are the ones best placed to answer you. It is also how the alumni cell decides where to hold a placement drive.'
-                      : 'Batch meets are organised city by city. An unlisted city gets no invitation — that is the whole reason this field exists.'
-                    : null}
-                  {step === 2
-                    ? isStudent
-                      ? 'Skills are how an alumnus decides whether they are the right person to reply. Without them you appear only in searches for your own name.'
-                      : 'Skills are what a student filters on before they write to anyone, and the switches below decide whether they are told they may write at all.'
-                    : null}
-                  {step === 3
-                    ? 'Your contact details are held in a separate table from your profile. Releasing them needs two things at once: the person asking must be entitled, and you must have agreed. This is your half.'
-                    : null}
-                </CardDescription>
+                {alreadyFilled ? (
+                  <Badge tone="success" className="mt-1 shrink-0">
+                    <Check className="size-3.5" aria-hidden="true" />
+                    Filled in
+                  </Badge>
+                ) : null}
               </div>
-
-              {alreadyFilled ? (
-                <Badge tone="success">
-                  <Check className="size-3.5" aria-hidden="true" />
-                  Already filled in
-                </Badge>
-              ) : null}
+              <CardDescription>{benefit}</CardDescription>
             </CardHeader>
 
             <CardBody className="space-y-5">
@@ -419,11 +500,36 @@ export function WelcomeWizard({
                 </Alert>
               ) : null}
 
-              {/* ---- Step 1: current work ------------------------------- */}
+              {/* ---- Step 1: work and photo ---------------------------- */}
 
               {step === 0 ? (
                 <>
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="flex items-end gap-4">
+                    <Avatar name={name} src={photoPreview} size="lg" />
+                    <Field
+                      htmlFor="w-photo"
+                      label="Photo link"
+                      hint="An https link to a photo of you. Optional."
+                      error={errors.photoUrl}
+                      className="min-w-0 flex-1"
+                    >
+                      <Input
+                        id="w-photo"
+                        type="url"
+                        inputMode="url"
+                        value={values.photoUrl}
+                        onChange={(e) => set('photoUrl', e.currentTarget.value)}
+                        placeholder="https://"
+                        invalid={Boolean(errors.photoUrl)}
+                        aria-describedby={describedBy('w-photo', {
+                          hint: true,
+                          error: Boolean(errors.photoUrl),
+                        })}
+                      />
+                    </Field>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <Field
                       htmlFor="w-company"
                       label={isStudent ? 'Company, if you are interning' : 'Employer'}
@@ -433,7 +539,6 @@ export function WelcomeWizard({
                         id="w-company"
                         value={values.currentCompany}
                         onChange={(e) => set('currentCompany', e.currentTarget.value)}
-                        placeholder={isStudent ? 'Cognizant' : 'Amazon'}
                         autoComplete="organization"
                         invalid={Boolean(errors.currentCompany)}
                       />
@@ -448,30 +553,19 @@ export function WelcomeWizard({
                         id="w-designation"
                         value={values.designation}
                         onChange={(e) => set('designation', e.currentTarget.value)}
-                        placeholder={isStudent ? 'Software Intern' : 'Senior Software Engineer'}
                         autoComplete="organization-title"
                         invalid={Boolean(errors.designation)}
                       />
                     </Field>
                   </div>
 
-                  <Field
-                    htmlFor="w-industry"
-                    label="Industry"
-                    hint="Used to group alumni when the placement cell goes looking for a particular sector. It is never shown as a filter to students on its own."
-                    error={errors.industry}
-                  >
+                  <Field htmlFor="w-industry" label="Industry" error={errors.industry}>
                     <Input
                       id="w-industry"
                       list="w-industry-options"
                       value={values.industry}
                       onChange={(e) => set('industry', e.currentTarget.value)}
-                      placeholder="Information Technology"
                       invalid={Boolean(errors.industry)}
-                      aria-describedby={describedBy('w-industry', {
-                        hint: true,
-                        error: Boolean(errors.industry),
-                      })}
                     />
                     <datalist id="w-industry-options">
                       {INDUSTRIES.map((i) => (
@@ -479,27 +573,20 @@ export function WelcomeWizard({
                       ))}
                     </datalist>
                   </Field>
-
-                  <WhyNote icon={<Briefcase className="size-4" />}>
-                    {isStudent
-                      ? 'Nothing here is checked against the college record — an internship is yours to state. Your roll number, branch and batch came from the register and are not editable by anyone but the alumni cell.'
-                      : 'This is the field that goes stale first. Change it whenever you move; the directory shows the new version on the next page load, and nobody is notified.'}
-                  </WhyNote>
                 </>
               ) : null}
 
-              {/* ---- Step 2: location ----------------------------------- */}
+              {/* ---- Step 2: city --------------------------------------- */}
 
               {step === 1 ? (
                 <>
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <Field htmlFor="w-city" label="City" error={errors.city}>
                       <Input
                         id="w-city"
                         list="w-city-options"
                         value={values.city}
                         onChange={(e) => set('city', e.currentTarget.value)}
-                        placeholder="Hyderabad"
                         autoComplete="address-level2"
                         invalid={Boolean(errors.city)}
                       />
@@ -515,23 +602,17 @@ export function WelcomeWizard({
                         id="w-state"
                         value={values.state}
                         onChange={(e) => set('state', e.currentTarget.value)}
-                        placeholder="Telangana"
                         autoComplete="address-level1"
                         invalid={Boolean(errors.state)}
                       />
                     </Field>
                   </div>
 
-                  <Field
-                    htmlFor="w-country"
-                    label="Country"
-                    hint="Alumni outside India get the video sessions rather than the campus ones, and the reunion mail goes out on a timetable that suits their time zone."
-                  >
+                  <Field htmlFor="w-country" label="Country">
                     <Select
                       id="w-country"
                       value={values.country}
                       onChange={(e) => set('country', e.currentTarget.value)}
-                      aria-describedby={describedBy('w-country', { hint: true })}
                     >
                       {COUNTRIES.map((c) => (
                         <option key={c.code} value={c.code}>
@@ -541,11 +622,10 @@ export function WelcomeWizard({
                     </Select>
                   </Field>
 
-                  <WhyNote icon={<MapPin className="size-4" />}>
-                    Only the city, state and country are stored — never an address. A city is enough
-                    to be invited to the Vijayawada meet or the Bengaluru one; a street is not
-                    something the portal has any use for.
-                  </WhyNote>
+                  <p className="flex gap-2 text-sm text-secondary">
+                    <MapPin className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
+                    Only your city, state and country are stored, never an address.
+                  </p>
                 </>
               ) : null}
 
@@ -554,16 +634,16 @@ export function WelcomeWizard({
               {step === 2 ? (
                 <>
                   {values.skills.length ? (
-                    <ul className="flex flex-wrap gap-1.5">
+                    <ul className="flex flex-wrap gap-1.5" aria-label="Your skills">
                       {values.skills.map((s) => (
                         <li key={s}>
-                          <span className="inline-flex items-center gap-1 rounded-full bg-brand-soft px-2.5 py-1 text-xs font-semibold text-brand-soft-fg">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-brand-soft py-1 pl-2.5 pr-1 text-xs font-semibold text-brand-soft-fg">
                             {s}
                             <button
                               type="button"
                               onClick={() => set('skills', values.skills.filter((x) => x !== s))}
                               aria-label={`Remove ${s}`}
-                              className="grid size-4 place-items-center rounded-full hover:bg-surface-raised"
+                              className="relative grid size-6 place-items-center rounded-full after:absolute after:-inset-2.5 after:content-[''] hover:bg-surface-raised"
                             >
                               <X className="size-3" aria-hidden="true" />
                             </button>
@@ -576,7 +656,7 @@ export function WelcomeWizard({
                   <Field
                     htmlFor="w-skills"
                     label="Add a skill"
-                    hint="Press Enter or comma after each one. Three is the point at which you start appearing in searches that are not for your own name."
+                    hint="Press Enter or a comma after each one."
                     error={errors.skills}
                   >
                     <div className="flex gap-2">
@@ -586,7 +666,6 @@ export function WelcomeWizard({
                         onChange={(e) => setSkillDraft(e.currentTarget.value)}
                         onKeyDown={onSkillKeyDown}
                         onBlur={() => addSkill(skillDraft)}
-                        placeholder={isStudent ? 'React' : 'System Design'}
                         invalid={Boolean(errors.skills)}
                         aria-describedby={describedBy('w-skills', {
                           hint: true,
@@ -609,16 +688,16 @@ export function WelcomeWizard({
                     <div className="space-y-4 border-t border-line pt-5">
                       <Fieldset
                         legend="Can students send you a request?"
-                        hint="Both answers are ordinary. Roughly half the directory has all three switches off, and nobody is shown a list of who said no."
+                        hint="Either answer is fine. You can change it from your profile at any time."
                       >
-                        <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                           <ChoiceCard selected={openToAsking}>
                             <Radio
                               id="w-open-yes"
                               name="availability"
                               value="yes"
                               label="Yes, they can ask"
-                              hint="You choose what they may ask about on the next line. Every request still needs your reply — none of this is automatic."
+                              hint="Choose what about below. You reply to each request yourself."
                               checked={openToAsking}
                               onChange={() => setOpenToAsking(true)}
                             />
@@ -630,7 +709,11 @@ export function WelcomeWizard({
                               name="availability"
                               value="no"
                               label="Not right now"
-                              hint="No request reaches you and no student is told to ask. You stay in the directory with your batch, branch and employer, which is most of what people search on."
+                              hint={
+                                mentorshipOn
+                                  ? 'You stay in the directory, but not on the mentorship page.'
+                                  : 'You stay in the directory with your batch, branch and employer.'
+                              }
                               checked={!openToAsking}
                               onChange={chooseNotRightNow}
                             />
@@ -639,124 +722,75 @@ export function WelcomeWizard({
                       </Fieldset>
 
                       {openToAsking ? (
-                        <div className="space-y-5 rounded-lg border border-line p-4">
-                          <Switch
-                            id="w-mentoring"
-                            label="Mentoring"
-                            hint="A student may send you one message asking for guidance — preparation, higher studies, which way to go next. Five open requests each and ten a month across the whole portal, so you cannot be flooded. Declining is silent: they are not told why, and they cannot ask again while a request is open."
-                            checked={values.openToMentoring}
-                            onChange={(e) => set('openToMentoring', e.currentTarget.checked)}
-                          />
-                          <Switch
-                            id="w-referrals"
-                            label="Referrals"
-                            hint={
-                              values.currentCompany.trim()
-                                ? `A student may ask you to refer them at ${values.currentCompany.trim()}. You see their name, branch, batch and what they have built before you decide. It commits you to reading a request — never to making the referral.`
-                                : 'Add your employer on the first step and this switch has a company to point at. A referral request with no company attached is not a request anyone can act on.'
-                            }
-                            checked={values.openToReferrals}
-                            disabled={!values.currentCompany.trim()}
-                            onChange={(e) => set('openToReferrals', e.currentTarget.checked)}
-                          />
-                          <Switch
-                            id="w-speaking"
-                            label="Speaking on campus"
-                            hint="The alumni cell may invite you to a session — usually two hours on a Saturday, at Ganguru or over video. An invitation you can turn down, not a booking. Students cannot invite you directly."
-                            checked={values.openToSpeaking}
-                            onChange={(e) => set('openToSpeaking', e.currentTarget.checked)}
-                          />
-
-                          {!anyAvailability ? (
-                            <p className="text-xs text-muted">
-                              None of the three is on yet, so this is the same as choosing
-                              &ldquo;not right now&rdquo;. Turn on whichever you actually mean.
-                            </p>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <Alert tone="neutral" title="Nothing will be sent to you">
-                          <p>
-                            {mentorshipOn
-                              ? 'You will not appear on the mentorship page and no student is prompted to write to you. '
-                              : 'No student is prompted to write to you. '}
-                            This can be turned on from your profile at any time, and the portal will
-                            not ask you again.
-                          </p>
-                        </Alert>
-                      )}
+                        <ul className="space-y-4 rounded-lg border border-line p-4">
+                          {entries.map((a) => {
+                            const needsCompany = a.key === 'referrals' && !values.currentCompany.trim();
+                            return (
+                              <li key={a.key}>
+                                <Switch
+                                  id={`w-${a.key}`}
+                                  label={a.label}
+                                  hint={needsCompany ? 'Add your employer on the first step to turn this on.' : a.line}
+                                  checked={values[FIELD[a.key]]}
+                                  disabled={needsCompany}
+                                  onChange={(e) => set(FIELD[a.key], e.currentTarget.checked)}
+                                />
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : null}
                     </div>
-                  ) : (
-                    <Alert
-                      tone="neutral"
-                      title={
-                        isStudent
-                          ? 'Mentoring and referrals come later'
-                          : 'Requests are switched off for this college'
-                      }
-                    >
-                      {isStudent
-                        ? 'The mentoring, referral and speaking switches belong to alumni — they are how an alumnus says what a final-year may ask them. Your account gets them when your batch is rolled over after graduation. Nothing to set today.'
-                        : `Connection requests are not enabled on ${shortName} yet, so there is nothing for these switches to control. Your skills still make you findable in the directory.`}
-                    </Alert>
-                  )}
+                  ) : isStudent ? (
+                    <p className="border-t border-line pt-4 text-sm text-secondary">
+                      After you graduate, this is where you can offer to help the final-year students
+                      who come after you.
+                    </p>
+                  ) : null}
                 </>
               ) : null}
 
-              {/* ---- Step 4: privacy ------------------------------------ */}
+              {/* ---- Step 4: who sees your contact ---------------------- */}
 
               {step === 3 ? (
-                <>
-                  <Fieldset
-                    legend="Who can see your contact details"
-                    hint="This is consent, and it can be changed whenever you like. Changing it narrows what is released next — it does not withdraw an address already given to somebody whose request you accepted."
-                  >
-                    <div className="space-y-3">
-                      {VISIBILITY_OPTIONS.map((o) => (
-                        // A plain div, not a wrapping label: `Radio` renders
-                        // its own label, and a label inside a label is
-                        // invalid and confuses every screen reader
-                        // differently.
-                        <ChoiceCard key={o.value} selected={values.visibility === o.value}>
-                          <Radio
-                            id={`w-visibility-${o.value}`}
-                            name="visibility"
-                            value={o.value}
-                            label={o.label}
-                            hint={o.hint}
-                            checked={values.visibility === o.value}
-                            onChange={() => set('visibility', o.value)}
-                          />
-                        </ChoiceCard>
-                      ))}
-                    </div>
-                  </Fieldset>
-
-                  <Alert tone="neutral" title="Two things this setting does not change" icon={<ShieldCheck className="size-4" />}>
-                    <ul className="mt-1 list-disc space-y-1 pl-5">
-                      <li>
-                        Your mobile number is never listed in the directory at any setting. It is
-                        released only on a connection you have accepted, or to the college admin.
-                      </li>
-                      <li>
-                        The college admin can export contact details in bulk for things like a NAAC
-                        submission. It is the only role that can, and every export is written to the
-                        audit log with who did it and why.
-                      </li>
-                    </ul>
-                  </Alert>
-
-                  <p className="text-xs text-muted">
-                    Recorded against privacy notice{' '}
-                    <span className="font-mono">{noticeVersion}</span>. The full control, the
-                    role-by-role table of what each member of staff can see, and your consent
-                    history are on{' '}
+                <fieldset className="space-y-3">
+                  {/* The card title already asks the question on screen. */}
+                  <legend className="sr-only">Who can see your email and mobile</legend>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {VISIBILITY_OPTIONS.map((o) => (
+                      // A plain div, not a wrapping label: `Radio` renders
+                      // its own label, and a label inside a label is
+                      // invalid and confuses every screen reader
+                      // differently.
+                      <ChoiceCard key={o.value} selected={values.visibility === o.value}>
+                        <Radio
+                          id={`w-visibility-${o.value}`}
+                          name="visibility"
+                          value={o.value}
+                          label={
+                            o.recommended ? (
+                              <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+                                {o.label}
+                                <Badge tone="brand">Recommended</Badge>
+                              </span>
+                            ) : (
+                              o.label
+                            )
+                          }
+                          hint={o.line}
+                          checked={values.visibility === o.value}
+                          onChange={() => set('visibility', o.value)}
+                        />
+                      </ChoiceCard>
+                    ))}
+                  </div>
+                  <p className="text-sm text-secondary">
+                    {VISIBILITY_FOOTNOTE}{' '}
                     <Link href="/settings/privacy" className="link">
-                      your privacy settings
+                      Privacy settings
                     </Link>
-                    .
                   </p>
-                </>
+                </fieldset>
               ) : null}
 
               {/* ---- Actions -------------------------------------------- */}
@@ -768,54 +802,39 @@ export function WelcomeWizard({
                     variant="ghost"
                     onClick={() => setStep(step - 1)}
                     disabled={saving}
+                    className="min-h-11"
                   >
                     <ArrowLeft className="size-4" aria-hidden="true" />
                     Back
                   </Button>
                 ) : null}
 
-                <div className="ml-auto flex flex-wrap items-center gap-3">
+                <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
                   {/* Deliberately a real button of the same size as the one
                       beside it. Skipping is a legitimate answer, and a
                       wizard that renders it as a whisper is a wizard that
                       collects bad data. */}
-                  <Button type="button" variant="secondary" onClick={onSkip} disabled={saving}>
-                    {step === 3 ? 'Decide this later' : 'Skip this step'}
+                  <Button type="button" variant="secondary" onClick={onSkip} disabled={saving} className="min-h-11">
+                    {step === 3 ? 'Decide later' : 'Skip this step'}
                   </Button>
 
-                  <Button type="submit" loading={saving}>
-                    {step === 3 ? (
-                      <>
-                        <Sparkles className="size-4" aria-hidden="true" />
-                        Finish and open my dashboard
-                      </>
-                    ) : (
-                      'Save and continue'
-                    )}
+                  <Button type="submit" loading={saving} className="min-h-11">
+                    {step === 3 ? 'Save and finish' : 'Save and continue'}
                   </Button>
                 </div>
               </div>
-
-              {stored === false ? (
-                <p className="text-xs text-muted">
-                  This deployment runs on the seeded dataset and has no writable store yet.
-                  Validation, the permission checks and the audit entry all ran on that save;
-                  nothing was written. What you typed stays on this screen until you leave it.
-                </p>
-              ) : null}
             </CardBody>
           </Card>
         </section>
       </form>
 
       {!directoryOn ? (
-        <p className="text-xs text-muted">
-          The member directory is switched off for {shortName} at the moment, so nothing you fill in
-          here is visible to another member yet. It is held against your record for when the college
-          turns it on.
+        <p className="text-sm text-secondary">
+          The directory is switched off for {shortName} at the moment, so other members cannot see
+          this yet.
         </p>
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -843,43 +862,31 @@ function ChoiceCard({ selected, children }: { selected: boolean; children: React
   );
 }
 
-function WhyNote({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <p className="flex gap-2.5 border-t border-line pt-4 text-xs text-secondary">
-      <span className="mt-0.5 shrink-0 text-muted" aria-hidden="true">
-        {icon}
-      </span>
-      <span className="min-w-0">{children}</span>
-    </p>
-  );
-}
-
 // ---------------------------------------------------------------
 // Copy
 // ---------------------------------------------------------------
 
-const VISIBILITY_OPTIONS: Array<{ value: ContactVisibility; label: string; hint: string }> = [
-  {
-    value: 'on_accept',
-    label: 'Only people whose request I accept',
-    hint: 'The default, and the setting the network is designed around. Anyone else sees a masked address and is told that release is your decision, not a restriction the college applied to them.',
-  },
-  {
-    value: 'alumni_only',
-    label: 'Alumni and faculty',
-    hint: 'They see your email and mobile without asking. Students cannot, whatever they ask for — they still have to send a request.',
-  },
-  {
-    value: 'all_members',
-    label: 'Every verified member',
-    hint: 'Your email is shown to any signed-in, verified member. Your mobile number is still never listed. Nothing here is ever public: the directory has no anonymous view.',
-  },
-  {
-    value: 'private',
-    label: 'Nobody',
-    hint: 'No member sees your email or mobile through the portal. People can still send you a request and you can reply from your own inbox — declining to publish an address is not the same as declining to be reachable.',
-  },
-];
+/** One line per step: what filling it in does for this member. */
+const BENEFIT: Record<WelcomeAudience, readonly string[]> = {
+  alumni: [
+    'Batchmates and final-year students search the directory by company and role.',
+    'Batchmates can find you by city in the directory.',
+    'Final-year students filter on skills before they ask anyone for help.',
+    'You decide who sees them, and you can change it at any time.',
+  ],
+  faculty: [
+    'Graduates and final-year students search the directory by role.',
+    'Graduates can find you by city in the directory.',
+    'Final-year students filter on skills before they ask anyone for help.',
+    'You decide who sees them, and you can change it at any time.',
+  ],
+  student: [
+    'Faculty and the placement cell see this on your profile.',
+    'Your profile stays with you when you graduate, so this is ready then.',
+    'Faculty and the placement cell can find you by skill.',
+    'You decide who sees them, and you can change it at any time.',
+  ],
+};
 
 const INDUSTRIES = [
   'Information Technology',
@@ -897,23 +904,19 @@ const INDUSTRIES = [
   'Telecom',
 ];
 
+/** Suggestions only: large Indian cities, alphabetical. The field takes any city. */
 const CITIES = [
-  'Hyderabad',
+  'Ahmedabad',
   'Bengaluru',
   'Chennai',
-  'Pune',
-  'Mumbai',
-  'Vijayawada',
-  'Visakhapatnam',
-  'Guntur',
-  'Tirupati',
-  'Noida',
+  'Delhi',
   'Gurugram',
+  'Hyderabad',
   'Kochi',
   'Kolkata',
-  'Ahmedabad',
-  'Bhubaneswar',
-  'Nellore',
+  'Mumbai',
+  'Noida',
+  'Pune',
 ];
 
 const COUNTRIES = [

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { getSession } from '@/lib/auth/session';
 import { can } from '@/lib/auth/guard';
-import { getTenant } from '@/lib/tenant';
+import { getTenant, getTenantBrand } from '@/lib/tenant';
 import { logAudit } from '@/lib/audit/log';
 import { NOTICE_VERSION } from '@/lib/config';
 import { findMemberByEmail, searchDegreeRegister, getDepartments } from '@/lib/data/repo';
@@ -46,7 +46,7 @@ const Body = z.object({
   rollNumber: z
     .string()
     .trim()
-    .min(6, 'A roll number is at least six characters — for example 13JN1A0501.')
+    .min(6, 'A roll number is at least six characters.')
     .max(20, 'That is longer than any roll number the college issues.'),
   fullName: z
     .string()
@@ -57,7 +57,7 @@ const Body = z.object({
   yearOfPassing: z
     .number()
     .int()
-    .min(1990, 'The college was established well after that.')
+    .min(1990, "That year is earlier than any on the college's register.")
     .max(new Date().getFullYear() + 1, 'That year has not happened yet.'),
   email: z.string().trim().min(1).max(254).email('That does not look like an email address.'),
   mobile: z
@@ -135,17 +135,26 @@ export async function POST(request: Request) {
     const email = input.email.toLowerCase();
     const ip = clientIp(request);
 
+    // Read before the limits, which name the office too. The office name
+    // and any promised turnaround are the college's words, from its pack.
+    // Wording only: a host that resolves to no tenant is still answered by
+    // the checks below (the audit write already tolerates it), never by a
+    // TypeError here.
+    const resolved = await getTenantBrand();
+    const office = resolved?.brand.pack.copy.officeName ?? 'alumni cell';
+    const turnaround = resolved?.brand.pack.copy.reviewTurnaround;
+
     limit(
       `claim:ip:${ip}`,
       10,
       60 * 60,
-      'Several claims have already been submitted from this network in the last hour. Wait a while, or email the alumni cell with your roll number.',
+      `Several claims have already been submitted from this network in the last hour. Wait a while, or email the ${office} with your roll number.`,
     );
     limit(
       `claim:email:${email}`,
       3,
       60 * 60,
-      'A claim for that address was submitted very recently. Check your inbox — the alumni cell replies to each one by hand.',
+      `A claim for that address was submitted very recently. Check your inbox — the ${office} replies to each one by hand.`,
     );
 
     const departments = getDepartments();
@@ -278,10 +287,10 @@ export async function POST(request: Request) {
         : scored.map(redact),
       message:
         outcome.decision === 'auto_approve'
-          ? 'Your record matched the degree register exactly. The alumni cell will confirm and open your account.'
+          ? `Your record matched the degree register exactly. The ${office} will confirm and open your account.`
           : outcome.decision === 'review'
-            ? 'Your claim is with the alumni cell. Someone checks it against the register by hand, usually within two working days.'
-            : 'We could not find a matching record. That is often a roll number typed from memory rather than the certificate — check it and try again, or email the alumni cell.',
+            ? `Your registration is with the ${office}. Someone checks it against the register by hand${turnaround ? `, usually within ${turnaround}` : ''}.`
+            : `We could not find a matching record. That is often a roll number typed from memory rather than the certificate — check it and try again, or email the ${office}.`,
     });
   } catch (err) {
     return fail(err);

@@ -1,22 +1,25 @@
 import { Github, Globe, Linkedin, Lock, Mail, Phone } from 'lucide-react';
-import { Alert, Badge, Card, CardBody, CardTitle } from '@/components/ui';
-import { maskEmail, maskMobile } from '@/lib/format';
+import { Badge, Card, CardBody, CardTitle } from '@/components/ui';
+import { firstNameOf } from '@/lib/identity';
 import type { ContactDetails } from '@/lib/data/types';
 
 /**
  * Contact block.
  *
- * Renders one of three states, and the middle one is the important one:
+ * Renders one of three states:
  *
- *  - **Released** — both gates passed, real values shown.
- *  - **Withheld** — a contact exists but the viewer is not entitled to
- *    it, or the owner has not consented. Shown masked, with the reason.
+ *  - **Released** — both gates passed, real values shown, with one line
+ *    saying why this viewer can see them.
+ *  - **Withheld** — one lock row, "Email and mobile are private", and the
+ *    reason in the owner's terms, then the page's action. No masked
+ *    placeholders: a fake `v•••@gmail.com` is a claim about data the
+ *    viewer was not given.
  *  - **Absent** — the member never supplied one.
  *
- * Masking rather than hiding is deliberate. It tells the viewer that the
- * data exists and that access is a permissions question, not a
- * data-quality one, which is the difference between "request an
- * introduction" and a support ticket saying the directory is broken.
+ * Every sentence here must stay true of `releaseContact()` in
+ * `src/lib/members/projection.ts`. In particular, nothing promises that a
+ * request releases contact under `alumni_only` or `all_members`: it does
+ * not, for a student, ever.
  *
  * The component is incapable of leaking: it renders what it is handed. If
  * `releaseContact()` returned null, there is nothing here to show.
@@ -28,6 +31,12 @@ export function ContactBlock({
   hasAcceptedConnection,
   viewerIsOwner = false,
   action,
+  ownerFirstName,
+  releasedBecause,
+  // Reserved: accepted so pages can pass it today and the block can tighten
+  // student copy later without a signature change. See the prop's doc below.
+  viewerIsStudent: _viewerIsStudent = false,
+  shortName,
 }: {
   contact: Partial<ContactDetails> | null;
   ownerName: string;
@@ -36,7 +45,27 @@ export function ContactBlock({
   viewerIsOwner?: boolean;
   /** "Request an introduction" button, supplied by the page. */
   action?: React.ReactNode;
+  /** Defaults to `firstNameOf(ownerName)`. */
+  ownerFirstName?: string;
+  /**
+   * Why the viewer can see a released contact, for the footnote. The page
+   * knows which gate opened; the block does not guess. Omitted means an
+   * accepted connection when there is one, else no footnote.
+   */
+  releasedBecause?: 'connection' | 'visibility' | 'role' | 'owner';
+  /**
+   * Whether the viewer is a final-year student. The withheld reasons are
+   * written to be true for a student already (none promises that a
+   * request releases `alumni_only` or `all_members` contact), so today
+   * this changes no wording; pages pass it so the block can tighten
+   * student copy without a signature change.
+   */
+  viewerIsStudent?: boolean;
+  /** The college's short name, for "shares this with DIET alumni and faculty". */
+  shortName?: string;
 }) {
+  const first = ownerFirstName?.trim() || firstNameOf(ownerName);
+
   if (contact) {
     const rows = [
       contact.email ? { icon: <Mail className="size-4" />, label: 'Email', value: contact.email, href: `mailto:${contact.email}` } : null,
@@ -51,23 +80,33 @@ export function ContactBlock({
         <Card>
           <CardBody className="space-y-3">
             <CardTitle as="h2">Contact</CardTitle>
-            <p className="text-sm text-secondary">{ownerName} has not added any contact details.</p>
+            <p className="text-sm text-secondary">{first} has not added any contact details.</p>
           </CardBody>
         </Card>
       );
     }
+
+    const because = viewerIsOwner ? 'owner' : (releasedBecause ?? (hasAcceptedConnection ? 'connection' : undefined));
+    const footnote =
+      because === 'connection'
+        ? `Shared because ${first} accepted your request.`
+        : because === 'visibility'
+          ? `${first} shares this with ${shortName ? `${shortName} ` : ''}alumni and faculty.`
+          : because === 'role'
+            ? 'Shown to you because of your staff role.'
+            : null;
 
     return (
       <Card>
         <CardBody className="space-y-3">
           <div className="flex items-center justify-between gap-3">
             <CardTitle as="h2">Contact</CardTitle>
-            {viewerIsOwner ? <Badge tone="neutral">Only you see this</Badge> : null}
+            {because === 'owner' ? <Badge tone="neutral">Only you see this</Badge> : null}
           </div>
 
           <dl className="space-y-2">
             {rows.map((r) => (
-              <div key={r!.label} className="flex items-center gap-2.5 text-sm">
+              <div key={r!.label} className="relative flex min-h-11 items-center gap-2.5 text-sm sm:min-h-0">
                 <dt className="flex items-center gap-2.5 text-muted">
                   <span aria-hidden="true">{r!.icon}</span>
                   <span className="sr-only">{r!.label}</span>
@@ -75,7 +114,7 @@ export function ContactBlock({
                 <dd className="min-w-0 truncate">
                   <a
                     href={r!.href}
-                    className="link"
+                    className="link after:absolute after:inset-0"
                     {...(r!.href.startsWith('http') ? { target: '_blank', rel: 'noreferrer noopener' } : {})}
                   >
                     {r!.value}
@@ -85,49 +124,24 @@ export function ContactBlock({
             ))}
           </dl>
 
-          {!viewerIsOwner ? (
-            <p className="border-t border-line pt-3 text-xs text-muted">
-              Shared with you by {ownerName.split(' ')[0]}. Use it for the reason you asked — the college
-              logs how contact details are released.
-            </p>
-          ) : null}
+          {footnote ? <p className="border-t border-line pt-3 text-xs text-secondary">{footnote}</p> : null}
         </CardBody>
       </Card>
     );
   }
 
-  const reason = withheldReason(visibility, hasAcceptedConnection);
-
   return (
     <Card>
       <CardBody className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <CardTitle as="h2">Contact</CardTitle>
-          <Badge tone="neutral" dot>
-            Not shared
-          </Badge>
+        <CardTitle as="h2">Contact</CardTitle>
+
+        <div className="flex items-start gap-2.5 text-sm">
+          <Lock className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
+          <div className="min-w-0 space-y-1">
+            <p className="font-medium text-primary">Email and mobile are private</p>
+            <p className="text-secondary">{withheldReason(visibility, first)}</p>
+          </div>
         </div>
-
-        <dl className="space-y-2 text-sm" aria-label="Withheld contact details">
-          <div className="flex items-center gap-2.5">
-            <dt className="text-muted">
-              <Mail className="size-4" aria-hidden="true" />
-              <span className="sr-only">Email</span>
-            </dt>
-            <dd className="font-mono text-secondary">{maskEmail('hidden@example.com')}</dd>
-          </div>
-          <div className="flex items-center gap-2.5">
-            <dt className="text-muted">
-              <Phone className="size-4" aria-hidden="true" />
-              <span className="sr-only">Mobile</span>
-            </dt>
-            <dd className="font-mono text-secondary">{maskMobile('+91 00000 00000')}</dd>
-          </div>
-        </dl>
-
-        <Alert tone="neutral" icon={<Lock className="size-4" />}>
-          {reason}
-        </Alert>
 
         {action ? <div className="pt-1">{action}</div> : null}
       </CardBody>
@@ -135,22 +149,27 @@ export function ContactBlock({
   );
 }
 
-function withheldReason(
-  visibility: ContactDetails['visibility'] | null,
-  hasAcceptedConnection: boolean,
-): string {
+/**
+ * The reason, in the owner's terms. Each line is true of the projection:
+ *
+ *  - private: nothing releases it (an admin with the contact capability
+ *    aside), but a request is still delivered.
+ *  - on_accept: an accepted request releases it, to anyone.
+ *  - alumni_only / all_members: alumni and faculty only. A request does
+ *    not change that, so none is promised — this is what a student sees.
+ */
+function withheldReason(visibility: ContactDetails['visibility'] | null, first: string): string {
   switch (visibility) {
     case 'private':
-      return 'This member has chosen not to share contact details with anyone. You can still send a connection request, and they will see your message.';
+      return `${first} keeps contact details private. A request still reaches them.`;
     case 'on_accept':
-      return hasAcceptedConnection
-        ? 'Details are being released — refresh in a moment.'
-        : 'Details are released once this member accepts your connection request. That is their choice, not a restriction the college applies to you.';
+      return `Released when ${first} accepts your request.`;
     case 'alumni_only':
-      return 'This member shares contact details with alumni and faculty only.';
     case 'all_members':
-      return 'Sign in as a verified member to see shared contact details.';
+      // True for everyone refused here: a student, or a staff role with
+      // neither the alumni nor the faculty role.
+      return `${first} shares contact details with alumni and faculty only.`;
     default:
-      return 'Contact details are released when the member has consented and you are entitled to see them. Both have to be true.';
+      return `${first} has not chosen who can see their contact details.`;
   }
 }

@@ -9,6 +9,7 @@ import {
   type Capability,
   type Role,
 } from '@/lib/auth/permissions';
+import { tenantRoleChangeRefusal } from '@/lib/auth/role-grants';
 import { ROLE_LABELS } from '@/lib/navigation';
 import { getTenant } from '@/lib/tenant';
 import { getDepartments, getMembersForAdmin } from '@/lib/data/repo';
@@ -38,6 +39,14 @@ import { clientIp, fail, fixtureWrite, HttpError, json, limit, readJson } from '
  * Cohort roles (`student`, `alumni`) are not grantable. They follow the
  * member's status, which is what `rollover_batch()` moves; granting one by
  * hand would produce an account whose role and status disagree.
+ *
+ * The vendor's role (`platform_admin`) is neither grantable nor revocable
+ * here, in either direction. `role.manage` is a tenant capability and
+ * `platform_admin` is not a tenant role: it holds `tenant.provision`, so a
+ * college admin who could grant it could make any member of their college
+ * the vendor. The decision lives in `tenantRoleChangeRefusal()`
+ * (`src/lib/auth/role-grants.ts`) and runs before every other rule. Hiding
+ * it in the roles screen's picker is presentation; this is the refusal.
  */
 
 const Reason = z.string().trim().max(1000);
@@ -106,6 +115,18 @@ export async function POST(request: Request) {
 
     const role = body.role;
     const scoped = scopedCapabilitiesOf(role);
+
+    // The vendor boundary, first and for both actions. Unlike the grant
+    // rules below, this one binds a revoke too: the question is not
+    // whether the grant is well-formed but whether it is the college's to
+    // touch at all, and the vendor's role is not. Refused like the other
+    // role refusals on this route — 422, nothing audited, nothing written.
+    const vendorRefusal = tenantRoleChangeRefusal(body.action, role, label(role));
+    if (vendorRefusal) {
+      throw new HttpError(vendorRefusal.status, vendorRefusal.code, vendorRefusal.message, {
+        fieldErrors: vendorRefusal.fieldErrors,
+      });
+    }
 
     // These three shape what a grant may say. A revoke is not checked
     // against them on purpose: it has to be able to remove a grant that

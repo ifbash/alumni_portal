@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint src tests e2e scripts --ext .ts,.tsx",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -25,7 +25,7 @@
     "@prisma/client": "^6.2.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.469.0",
-    "next": "^15.1.0",
+    "next": "^15.5.27",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "server-only": "^0.0.1",
@@ -33,6 +33,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.3.14",
     "@playwright/test": "^1.62.1",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",

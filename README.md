@@ -90,7 +90,7 @@ The tenant is resolved once per request from the `Host` header
 | URL | Resolves to |
 |---|---|
 | <http://diet.localhost:3000> | DIET — the first customer tenant |
-| <http://ifbash.localhost:3000> | The house brand, brick and charcoal |
+| <http://ifbash.localhost:3000> | The house brand: aubergine, paper and rose |
 | <http://srivarsity.localhost:3000> | Demonstration pack: maroon, gold, serif, rounded, lifted |
 | <http://northgate.localhost:3000> | Demonstration pack: monochrome, square, compact, flat |
 | <http://localhost:3000> | Falls back to `DEFAULT_TENANT_SUBDOMAIN` (`diet`) |

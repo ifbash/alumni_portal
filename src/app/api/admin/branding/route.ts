@@ -1,6 +1,5 @@
-import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { require as requireCap, toResponse } from '@/lib/auth/guard';
+import { require as requireCap } from '@/lib/auth/guard';
 import { getTenant } from '@/lib/tenant';
 import { validateBranding, BrandingInput } from '@/lib/branding/config';
 import { invalidateBranding } from '@/lib/branding/resolve';
@@ -9,6 +8,8 @@ import { resolvePack, listPacks } from '@/lib/branding/registry';
 import { BrandPack } from '@/lib/branding/pack';
 import { logAudit } from '@/lib/audit/log';
 import { IS_FIXTURE } from '@/lib/config';
+import { clientIp, fail, HttpError, json, limit, readJson } from '../../_lib/http';
+import { z } from 'zod';
 
 /**
  * Branding admin API.
@@ -31,20 +32,19 @@ export async function GET() {
     requireCap(session, 'tenant.configure');
 
     const tenant = await getTenant();
-    if (!tenant) return NextResponse.json({ error: 'Unknown tenant' }, { status: 404 });
+    if (!tenant) throw new HttpError(404, 'unknown_tenant', 'Unknown tenant');
 
     const pack = resolvePack({ packId: tenant.packId });
     const tokens = buildTokens(pack);
 
-    return NextResponse.json({
+    return json({
       pack,
       basePacks: listPacks(),
       report: contrastReport(pack),
       tokens: { light: tokens.light, dark: tokens.dark, base: tokens.base },
     });
   } catch (err) {
-    const { status, body } = toResponse(err);
-    return NextResponse.json(body, { status });
+    return fail(err);
   }
 }
 
@@ -54,22 +54,22 @@ export async function POST(request: Request) {
     requireCap(session, 'tenant.configure');
 
     const tenant = await getTenant();
-    if (!tenant) return NextResponse.json({ error: 'Unknown tenant' }, { status: 404 });
+    if (!tenant) throw new HttpError(404, 'unknown_tenant', 'Unknown tenant');
 
     const url = new URL(request.url);
     const isPreview = url.searchParams.get('preview') === '1';
 
-    const payload = await request.json();
+    const payload = await readJson(request, z.unknown());
     const result = validateBranding(payload);
 
     if (result.report === null) {
-      return NextResponse.json({ error: 'Invalid branding', fieldErrors: result.fieldErrors }, { status: 422 });
+      throw new HttpError(422, 'invalid_input', 'Invalid branding', { fieldErrors: result.fieldErrors });
     }
 
     // Preview never persists and never blocks — an admin has to be able
     // to *see* the failing combination in order to understand the report.
     if (isPreview) {
-      return NextResponse.json({
+      return json({
         css: result.css,
         fontHref: result.fontHref,
         report: result.report,
@@ -77,20 +77,34 @@ export async function POST(request: Request) {
       });
     }
 
+    // Publishing is rate limited; previewing is not, because the Branding Studio
+    // previews as the administrator moves a colour.
+    limit(
+      `branding:${session.memberId}`,
+      60,
+      60 * 60,
+      'Sixty published branding changes an hour is the limit. Previewing is not counted - keep adjusting, and publish when it looks right.',
+    );
+
     if (!result.ok) {
-      return NextResponse.json(
-        { error: 'These colours fail accessibility checks and cannot be published.', report: result.report },
-        { status: 422 },
-      );
+      throw new HttpError(422, 'contrast_failure', 'These colours fail accessibility checks and cannot be published.', {
+        report: result.report,
+      });
     }
 
+    // `validateBranding` has already accepted this payload, so this parse
+    // cannot fail on shape - it narrows the type.
     const parsed = BrandingInput.parse(payload);
 
     if (!IS_FIXTURE) {
-      const { prisma } = await import('@/lib/db/client');
-      const before = await prisma.tenantBranding.findUnique({ where: { tenantId: tenant.id } });
+      // Through withTenant: tenant_branding is under row-level security, and
+      // a read or write with no tenant context sees and changes nothing.
+      const { withTenant } = await import('@/lib/db/client');
+      const before = await withTenant(tenant.id, (tx) =>
+        tx.tenantBranding.findUnique({ where: { tenantId: tenant.id } }),
+      );
 
-      await prisma.tenantBranding.upsert({
+      await withTenant(tenant.id, (tx) => tx.tenantBranding.upsert({
         where: { tenantId: tenant.id },
         create: {
           tenantId: tenant.id,
@@ -132,7 +146,7 @@ export async function POST(request: Request) {
           published: true,
           updatedAt: new Date(),
         },
-      });
+      }));
 
       await logAudit({
         tenantId: tenant.id,
@@ -142,7 +156,7 @@ export async function POST(request: Request) {
         resourceId: tenant.id,
         before,
         after: parsed,
-        ip: request.headers.get('x-forwarded-for'),
+        ip: request.headers.get('x-forwarded-for') ?? clientIp(request),
       });
     } else {
       await logAudit({
@@ -152,19 +166,19 @@ export async function POST(request: Request) {
         resource: 'tenant_branding',
         resourceId: tenant.id,
         after: parsed,
+        ip: request.headers.get('x-forwarded-for') ?? clientIp(request),
       });
     }
 
     invalidateBranding(tenant.id);
 
-    return NextResponse.json({
+    return json({
       ok: true,
       report: result.report,
       css: result.css,
     });
   } catch (err) {
-    const { status, body } = toResponse(err);
-    return NextResponse.json(body, { status });
+    return fail(err);
   }
 }
 
@@ -182,31 +196,26 @@ export async function PUT(request: Request) {
     requireCap(session, 'tenant.configure');
 
     const tenant = await getTenant();
-    if (!tenant) return NextResponse.json({ error: 'Unknown tenant' }, { status: 404 });
+    if (!tenant) throw new HttpError(404, 'unknown_tenant', 'Unknown tenant');
 
-    const body = await request.json();
+    const body = await readJson(request, z.unknown());
     const parsed = BrandPack.safeParse(body);
 
     if (!parsed.success) {
-      return NextResponse.json(
-        {
-          error: 'That is not a valid brand pack.',
-          issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
-        },
-        { status: 422 },
-      );
+      throw new HttpError(422, 'invalid_pack', 'That is not a valid brand pack.', {
+        issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      });
     }
 
     const tokens = buildTokens(parsed.data);
 
-    return NextResponse.json({
+    return json({
       ok: !tokens.blocking,
       pack: parsed.data,
       css: tokensToCss(tokens),
       report: contrastReport(parsed.data),
     });
   } catch (err) {
-    const { status, body } = toResponse(err);
-    return NextResponse.json(body, { status });
+    return fail(err);
   }
 }

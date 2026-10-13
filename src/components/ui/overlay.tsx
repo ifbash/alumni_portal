@@ -382,7 +382,7 @@ export function MenuSeparator() {
 }
 
 export function MenuLabel({ children }: { children: React.ReactNode }) {
-  return <p className="px-2.5 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted">{children}</p>;
+  return <p className="px-2.5 py-1.5 text-xs font-semibold uppercase tracking-wide text-secondary">{children}</p>;
 }
 
 // ---------------------------------------------------------------
@@ -431,14 +431,17 @@ export function Disclosure({
   children,
   defaultOpen = false,
   className,
+  id,
 }: {
   summary: React.ReactNode;
   children: React.ReactNode;
   defaultOpen?: boolean;
   className?: string;
+  /** Lets a link elsewhere on the page target it (`#roll-number-help`). */
+  id?: string;
 }) {
   return (
-    <details open={defaultOpen} className={cn('group rounded-lg border border-line bg-surface-raised', className)}>
+    <details id={id} open={defaultOpen} className={cn('group rounded-lg border border-line bg-surface-raised', className)}>
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4 text-sm font-medium marker:hidden">
         {summary}
         <svg

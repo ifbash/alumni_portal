@@ -245,6 +245,10 @@ export function roleHas(role: Role, cap: Capability): boolean {
  * department against the grant's department_id.
  */
 export const DEPARTMENT_SCOPED: ReadonlySet<Capability> = new Set<Capability>([
+  // An HOD holds this to look after their own branch. Without the scope it
+  // opened every branch's members - roll numbers, employment, verification
+  // evidence - to anyone holding the capability.
+  'profile.read.any',
   'verification.review.department',
   'connection.stats.department',
   'event.create.department',

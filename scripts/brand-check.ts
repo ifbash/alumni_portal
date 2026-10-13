@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { BrandPack } from '../src/lib/branding/pack';
 import { buildTokens, contrastReport } from '../src/lib/branding/tokens';
@@ -47,6 +47,11 @@ const PAIRS: Array<{ fg: string; bg: string; required: number; what: string }> =
   { fg: '--brand-soft-fg', bg: '--brand-soft', required: 4.5, what: 'text on a brand tint' },
   { fg: '--button-primary-fg', bg: '--button-primary-bg', required: 4.5, what: 'primary button label' },
   { fg: '--focus-ring', bg: '--surface', required: 3, what: 'keyboard focus ring' },
+  // The ring is drawn on the header bar, cards, chips and inputs far more
+  // often than on the bare page. Auditing only `--surface` passed a dark
+  // ring at 2.83:1 on every raised control. buildTokens audits this pair as
+  // an error too, so a failure here also blocks publication.
+  { fg: '--focus-ring', bg: '--surface-raised', required: 3, what: 'focus ring on a raised surface' },
   { fg: '--danger-fg', bg: '--surface', required: 4.5, what: 'error text' },
   { fg: '--success-on', bg: '--success', required: 4.5, what: 'text on a success fill' },
 
@@ -61,7 +66,34 @@ const PAIRS: Array<{ fg: string; bg: string; required: number; what: string }> =
   { fg: '--danger-fg', bg: '--danger-soft', required: 4.5, what: 'error text inside its own panel' },
   { fg: '--info-fg', bg: '--info-soft', required: 4.5, what: 'info text inside its own panel' },
   { fg: '--text-on-inverse', bg: '--surface-inverse', required: 4.5, what: 'text on dark bands' },
+
+  // The college band: header strip, landing hero, footer, sign-in panel.
+  // Band text is held to AAA like body copy — it is the first thing on
+  // the page. The scrim composite (band text over a white photo pixel) is
+  // not a token pair, so buildTokens audits it and it lands in the report.
+  { fg: '--band-fg', bg: '--band', required: 7, what: 'text on the college band' },
+  { fg: '--band-muted', bg: '--band', required: 4.5, what: 'secondary text on the band' },
+  { fg: '--band-accent', bg: '--band', required: 4.5, what: 'accent text on the band' },
+
+  // Chart bars are graphical objects on a card (WCAG 1.4.11). buildTokens
+  // audits both as errors, so a failure here also blocks publication.
+  { fg: '--chart-bar', bg: '--surface-raised', required: 3, what: 'chart bars on a card' },
+  { fg: '--chart-bar-highlight', bg: '--surface-raised', required: 3, what: 'highlighted chart bars' },
 ];
+
+const PUBLIC_DIR = join(process.cwd(), 'public');
+const KB = 1024;
+const IMAGE_BUDGET = 350 * KB;
+const VIDEO_BUDGET = 8 * KB * KB;
+
+/** A site-relative asset's file under public/, or null for a URL or data URI. */
+function localFile(ref: string | undefined): string | null {
+  if (!ref || !ref.startsWith('/')) return null;
+  return join(PUBLIC_DIR, (ref.split(/[?#]/)[0] ?? ref).replace(/^\/+/, ''));
+}
+
+const size = (bytes: number) =>
+  bytes >= KB * KB ? `${(bytes / KB / KB).toFixed(1)} MB` : `${Math.round(bytes / KB)} KB`;
 
 let errors = 0;
 let warnings = 0;
@@ -126,6 +158,76 @@ for (const file of files) {
   errors += report.errors.length;
   warnings += report.warnings.length;
 
+  // ── Content ──────────────────────────────────────────────────────
+  // The hero copy is also the WhatsApp preview and the first screen on a
+  // 390px phone, and both cut it off without saying so.
+  const copy = pack.copy;
+  if (copy.heroSubhead && copy.heroSubhead.length > 140) {
+    console.log(
+      `  ! heroSubhead is ${copy.heroSubhead.length} characters (over 140) — cut off in WhatsApp previews and runs past four lines on a phone.`,
+    );
+    warnings++;
+  }
+  if (copy.heroHeadline && copy.heroHeadline.length > 60) {
+    console.log(`  ! heroHeadline is ${copy.heroHeadline.length} characters (over 60) — it crowds the hero on a phone.`);
+    warnings++;
+  }
+  if (copy.heroEmphasis && !(copy.heroHeadline ?? '').includes(copy.heroEmphasis)) {
+    console.log(`  ! heroEmphasis "${copy.heroEmphasis}" does not appear in heroHeadline, so nothing is emphasised.`);
+    warnings++;
+  }
+
+  // ── Media ────────────────────────────────────────────────────────
+  // Every slot renders nothing when absent, so a missing key is fine. A key
+  // that points at a file that is not there is not: it is a broken image
+  // on the first screen of the landing page.
+  const a = pack.assets;
+  if (a.heroImage && !a.heroImageAlt) {
+    console.log('  · heroImage has no heroImageAlt — treated as decorative (alt="").');
+  }
+
+  const required: Array<[string, string | undefined]> = [
+    ['logoPrimary', a.logoPrimary],
+    ['logoInverse', a.logoInverse],
+    ['logoMark', a.logoMark],
+    ['crest', a.crest],
+    ['heroImage', a.heroImage],
+    ['heroVideo', a.heroVideo],
+    ['authImage', a.authImage],
+    ...a.campusPhotos.map((p, i): [string, string] => [`campusPhotos[${i}]`, p.src]),
+  ];
+  const photos = new Set<string>(['heroImage', 'authImage', ...a.campusPhotos.map((_, i) => `campusPhotos[${i}]`)]);
+
+  for (const [slot, ref] of required) {
+    const file = localFile(ref);
+    if (!file) continue;
+    if (!existsSync(file)) {
+      console.log(`  ✗ ${slot} ${ref} does not exist under public/.`);
+      errors++;
+      continue;
+    }
+    const bytes = statSync(file).size;
+    if (photos.has(slot) && bytes > IMAGE_BUDGET) {
+      console.log(`  ! ${slot} ${ref} is ${size(bytes)} (over 350 KB) — it is downloaded on phones, often as the largest paint.`);
+      warnings++;
+    }
+    if (slot === 'heroVideo' && bytes > VIDEO_BUDGET) {
+      console.log(`  ! heroVideo ${ref} is ${size(bytes)} (over 8 MB). Aim for under 6 MB.`);
+      warnings++;
+    }
+  }
+
+  // Reported, not counted: neither is on a page's first screen, and a
+  // missing ogImage falls back to the generated card (app/opengraph-image.tsx).
+  const faviconFile = localFile(a.favicon);
+  if (faviconFile && !existsSync(faviconFile)) {
+    console.log(`  · favicon ${a.favicon} is not under public/ — browsers will show no tab icon.`);
+  }
+  const ogFile = localFile(a.ogImage);
+  if (ogFile && !existsSync(ogFile)) {
+    console.log(`  · ogImage ${a.ogImage} is not under public/ — the generated share card is used instead.`);
+  }
+
   if (pack.type.source === 'local' && pack.type.fontFaces.length === 0) {
     console.log('  ! type.source is "local" but no fontFaces are declared — the pack will fall back to system fonts.');
     warnings++;
@@ -146,6 +248,6 @@ console.log(`\n${'─'.repeat(64)}`);
 console.log(`${files.length} pack(s) · ${errors} error(s) · ${warnings} warning(s)`);
 
 if (errors > 0) {
-  console.error('\nBuild refused. A pack with contrast errors cannot be published.');
+  console.error('\nBuild refused. A pack with contrast errors or missing asset files cannot be published.');
   process.exit(1);
 }

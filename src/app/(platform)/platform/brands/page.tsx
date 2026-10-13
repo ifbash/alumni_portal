@@ -1,88 +1,100 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { ArrowRight, Building2, FileJson, Layers, Lock, Palette, Type } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, Camera, CircleCheck, Globe, Plus } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap } from '@/lib/auth/guard';
 import { getTenants } from '@/lib/data/repo';
-import {
-  listPacks,
-  getPack,
-  HOUSE_PACK_ID,
-  DEMO_PACK_IDS,
-} from '@/lib/branding/registry';
-import { OVERRIDABLE_TOKENS } from '@/lib/branding/pack';
-import { contrastRatio, readableTextOn } from '@/lib/branding/color';
-import { MarginNote, Scribble } from '@/components/brand/Marks';
+import { listPacks, getPack, HOUSE_PACK_ID, DEMO_PACK_IDS } from '@/lib/branding/registry';
+import { OVERRIDABLE_TOKENS, type BrandPack } from '@/lib/branding/pack';
+import { contrastReport } from '@/lib/branding/tokens';
+import type { TenantSummary } from '@/lib/data/types';
+import { cn } from '@/lib/cn';
 import {
   Badge,
   ButtonLink,
   Card,
   CardBody,
-  CardDescription,
   CardFooter,
-  CardHeader,
-  CardTitle,
-  DetailRow,
+  Disclosure,
   PageHeader,
   Section,
-  Separator,
-  Stat,
+  SummaryLine,
 } from '@/components/ui';
 
+import { CollegeMark } from '../_shared/CollegeMark';
+import { MediaReadiness } from '../_shared/MediaReadiness';
+import { MiniPortal, SeedSwatches } from '../_shared/MiniPortal';
+import { portalAddress, type PortalAddress } from '../_shared/portal-address';
+import { VendorTrustChip } from '../_shared/VendorTrustChip';
+
 /**
- * The brand pack registry.
+ * The brand pack registry, as each pack renders.
  *
- * This screen is documentation as much as UI. The claim it has to make
- * credible is the one the whole product is sold on: a new customer is a
- * JSON file in `brands/` plus one line in the registry — no component, no
- * stylesheet, no branch. So it shows the actual file and the actual line,
- * not a description of them.
+ * The claim this screen makes is the one the product is sold on: a new
+ * college is a JSON file in `brands/` and one line in the registry, with
+ * no component or stylesheet change. So each pack is shown as its own
+ * sign-in screen, light and dark, and the file itself stays in a
+ * disclosure for the vendor staff who write it.
  */
 
 export const metadata = { title: 'Brand packs' };
 
-const RADIUS_LABEL = {
-  none: 'square',
-  subtle: 'subtle',
-  rounded: 'rounded',
-  pill: 'pill',
-} as const;
-
+/**
+ * A pack file to copy. Placeholders, not an example college: a real
+ * college's name here would read as a customer.
+ */
 const NEW_PACK_JSON = `{
-  "id": "kakinada",
+  "id": "<subdomain>",
   "version": 1,
 
   "color": {
-    "primary": "#0F4C81",
-    "accent": "#C9772B",
-    "surface": "#FCFBF9",
-    "marker": "#C9772B"
+    "primary": "<hex from the college's style guide>",
+    "accent": "<second hex, if it has one>",
+    "surface": "#FCFBF9"
   },
 
   "copy": {
-    "portalName": "KIET Connect",
-    "institutionName": "Kakinada Institute of Engineering & Technology",
-    "shortName": "KIET",
-    "tagline": "Korangi, Kakinada · Since 1998",
-    "supportEmail": "alumni@kiet.example.ac.in"
+    "portalName": "<what alumni will call the portal>",
+    "institutionName": "<registered name, as on a degree certificate>",
+    "shortName": "<the letters on the crest>",
+    "tagline": "<town, district>"
+  },
+
+  "assets": {
+    "crest": "/brand/<subdomain>/crest.svg"
   },
 
   "features": {
-    "whatsapp": true,
     "donations": false
   }
 }`;
 
-const REGISTRY_DIFF = `// src/lib/branding/registry.ts
-
-  import dietJson from '../../../brands/diet.json';
-+ import kakinadaJson from '../../../brands/kakinada.json';
+const REGISTRY_LINE = `// src/lib/branding/registry.ts
++ import newJson from '../../../brands/<subdomain>.json';
 
   export const PACKS: Record<string, BrandPack> = {
-    ifbash: load(ifbashJson, 'ifbash'),
-    diet:   load(dietJson, 'diet'),
-+   kakinada: load(kakinadaJson, 'kakinada'),
+    …
++   '<subdomain>': load(newJson, '<subdomain>'),
   };`;
+
+const STEPS = [
+  { title: 'Collect', body: 'The crest in vector, the official colour values and three to five campus photos.' },
+  { title: 'Write the pack', body: 'One file, brands/{id}.json, and one line in the registry — no component or stylesheet change.' },
+  { title: 'Preview, then set up', body: 'Open it on its own address to check it, then set the college up with it.' },
+];
+
+type Verdict = { label: string; tone: 'success' | 'warning' | 'danger'; summary: string };
+
+function verdictFor(pack: BrandPack): Verdict {
+  const report = contrastReport(pack);
+  if (!report.passes) return { label: 'Blocked', tone: 'danger', summary: report.summary };
+  if (report.warnings.length) {
+    const n = report.warnings.length;
+    return { label: `${n} ${n === 1 ? 'warning' : 'warnings'}`, tone: 'warning', summary: report.summary };
+  }
+  return { label: 'Publishable', tone: 'success', summary: report.summary };
+}
 
 export default async function BrandPacksPage() {
   const session = await getSession();
@@ -92,317 +104,250 @@ export default async function BrandPacksPage() {
   const packs = listPacks();
   const tenants = getTenants();
 
-  const assigned = new Set(tenants.map((t) => t.packId).filter(Boolean) as string[]);
-  const customerPacks = packs.filter(
-    (p) => p.id !== HOUSE_PACK_ID && !(DEMO_PACK_IDS as readonly string[]).includes(p.id),
+  const isDemo = (id: string) => (DEMO_PACK_IDS as readonly string[]).includes(id);
+  const all = packs.map((p) => getPack(p.id)).filter((p): p is BrandPack => p !== null);
+  const colleges = all.filter((p) => p.id !== HOUSE_PACK_ID && !isDemo(p.id));
+  const templates = [
+    ...all.filter((p) => p.id === HOUSE_PACK_ID),
+    ...all.filter((p) => isDemo(p.id)),
+  ];
+
+  const addresses = new Map<string, PortalAddress>(
+    await Promise.all(all.map(async (p) => [p.id, await portalAddress(p.id)] as const)),
   );
 
+  // A lone card in a group takes the full row, laid out wide rather than leaving half the row empty.
+  const card = (pack: BrandPack, _i: number, group: BrandPack[]) => (
+    <li key={pack.id} id={pack.id} className={group.length === 1 ? 'min-w-0 scroll-mt-20 xl:col-span-2' : 'min-w-0 scroll-mt-20'}>
+      <PackCard
+        wide={group.length === 1}
+        pack={pack}
+        house={pack.id === HOUSE_PACK_ID}
+        demo={isDemo(pack.id)}
+        users={tenants.filter((t) => t.packId === pack.id)}
+        address={addresses.get(pack.id)!}
+      />
+    </li>
+  );
+
+  const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
-        eyebrow="ifBash platform"
         title="Brand packs"
-        description="One object per customer, holding the whole visual identity: colour seeds, typography, shape, assets, copy, feature flags and locale. Everything the UI renders that could differ between colleges is named here and nowhere else."
+        description="Each college’s look — colours, crest, type, photos and wording — lives in one file. This is how each one renders."
+        meta={<VendorTrustChip />}
         actions={
-          <ButtonLink variant="secondary" href="/platform">
-            <Building2 className="size-4" aria-hidden="true" />
-            Colleges
+          <ButtonLink href="/platform/new">
+            <Plus className="size-4" aria-hidden="true" />
+            Set up a college
           </ButtonLink>
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Stat
-          label="Packs in the registry"
-          value={packs.length}
-          icon={<Layers className="size-4" />}
-          hint={`${customerPacks.length} customer, ${DEMO_PACK_IDS.length} demonstration, 1 house`}
-        />
-        <Stat
-          label="Assigned to a tenant"
-          value={assigned.size}
-          icon={<Building2 className="size-4" />}
-          hint="a pack with no tenant still previews on its own subdomain"
-        />
-        <Stat
-          label="Overridable tokens"
-          value={OVERRIDABLE_TOKENS.length}
-          icon={<Lock className="size-4" />}
-          hint="named tokens only — there is no free-form CSS seam"
-        />
-      </div>
+      <SummaryLine
+        className="-mt-4"
+        items={[
+          { value: all.length, label: plural(all.length, 'pack', 'packs') },
+          { value: colleges.length, label: plural(colleges.length, 'college', 'colleges'), href: '#colleges' },
+          { value: templates.length - 1, label: plural(templates.length - 1, 'template', 'templates'), href: '#templates' },
+          { value: 1, label: 'house' },
+        ]}
+      />
+
+      {colleges.length ? (
+        <Section id="colleges" title="Colleges" description="Packs written for a college from its own crest, colours and wording.">
+          <ul className="grid grid-cols-1 gap-6 xl:grid-cols-2">{colleges.map(card)}</ul>
+        </Section>
+      ) : null}
 
       <Section
-        title="Every pack in the registry"
-        description="Swatches are the pack’s own seed colours, rendered from the file. The ramps, hover states, tinted fills and text-on-brand pairings under them are derived, not supplied."
+        id="templates"
+        title="Starting templates"
+        description="The platform’s own look and two illustrative packs, for a college whose own is not written yet."
       >
-        <ul className="grid gap-6 lg:grid-cols-2">
-          {packs.map((summary) => {
-            const pack = getPack(summary.id);
-            if (!pack) return null;
-
-            const isHouse = pack.id === HOUSE_PACK_ID;
-            const isDemo = (DEMO_PACK_IDS as readonly string[]).includes(pack.id);
-            const users = tenants.filter((t) => t.packId === pack.id);
-
-            const onPrimary = readableTextOn(pack.color.primary);
-            const ratio = contrastRatio(pack.color.primary, onPrimary);
-            const featuresOn = Object.entries(pack.features).filter(([, v]) => v === true);
-
-            return (
-              <li key={pack.id}>
-                <Card className="h-full overflow-hidden">
-                  {/* The band is the pack's own primary; its text colour is chosen
-                      by the same contrast rule the button tokens use. */}
-                  <div
-                    className="flex flex-wrap items-end justify-between gap-3 p-card"
-                    style={{ backgroundColor: pack.color.primary, color: onPrimary }}
-                  >
-                    <div className="min-w-0 space-y-1">
-                      <p className="font-display text-xl font-bold">{pack.copy.portalName}</p>
-                      <p className="text-sm">{pack.copy.institutionName}</p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1.5" aria-hidden="true">
-                      <span
-                        className="size-8 rounded-full border border-[color-mix(in_srgb,currentColor_40%,transparent)]"
-                        style={{ backgroundColor: pack.color.primary }}
-                      />
-                      <span
-                        className="size-8 rounded-full border border-[color-mix(in_srgb,currentColor_40%,transparent)]"
-                        style={{ backgroundColor: pack.color.accent ?? pack.color.primary }}
-                      />
-                      <span
-                        className="size-8 rounded-full border border-[color-mix(in_srgb,currentColor_40%,transparent)]"
-                        style={{ backgroundColor: pack.color.surface }}
-                      />
-                    </div>
-                  </div>
-
-                  <CardBody className="space-y-4">
-                    <div className="flex flex-wrap gap-2">
-                      <Badge tone="brand">
-                        <FileJson className="size-3" aria-hidden="true" />
-                        <span className="font-mono">brands/{pack.id}.json</span>
-                      </Badge>
-                      {isHouse ? <Badge tone="accent">House pack</Badge> : null}
-                      {isDemo ? <Badge tone="warning">Demonstration only</Badge> : null}
-                      {users.length ? (
-                        <Badge tone="success">
-                          In use by {users.length} {users.length === 1 ? 'tenant' : 'tenants'}
-                        </Badge>
-                      ) : (
-                        <Badge tone="neutral">Not assigned</Badge>
-                      )}
-                    </div>
-
-                    <dl className="divide-y divide-line">
-                      <DetailRow label="Primary">
-                        <span className="font-mono text-xs">
-                          {pack.color.primary.toUpperCase()}
-                        </span>{' '}
-                        <span className="text-xs font-normal text-muted">
-                          text on it resolves to{' '}
-                          <span className="font-mono">{onPrimary}</span> at {ratio.toFixed(1)}:1
-                        </span>{' '}
-                        {ratio >= 4.5 ? (
-                          <Badge tone="success">WCAG AA</Badge>
-                        ) : (
-                          <Badge tone="warning">Below 4.5:1</Badge>
-                        )}
-                      </DetailRow>
-                      <DetailRow label="Accent">
-                        {pack.color.accent ? (
-                          <span className="font-mono text-xs">
-                            {pack.color.accent.toUpperCase()}
-                          </span>
-                        ) : (
-                          <span className="text-muted">
-                            None — falls back to the primary, which reads as deliberate
-                          </span>
-                        )}
-                      </DetailRow>
-                      <DetailRow label="Type">
-                        <span className="flex flex-wrap items-center gap-1.5">
-                          <Type className="size-3.5 text-muted" aria-hidden="true" />
-                          {pack.type.display} · {pack.type.body} · {pack.type.mono}
-                        </span>
-                      </DetailRow>
-                      <DetailRow label="Shape">
-                        {RADIUS_LABEL[pack.shape.radius]} corners · {pack.shape.density} density ·{' '}
-                        {pack.shape.elevation} elevation
-                      </DetailRow>
-                      <DetailRow label="Features on">
-                        <span className="tabular">{featuresOn.length}</span> of{' '}
-                        <span className="tabular">{Object.keys(pack.features).length}</span>
-                        <span className="block text-xs font-normal text-muted">
-                          {featuresOn.map(([k]) => k).join(', ')}
-                        </span>
-                      </DetailRow>
-                      <DetailRow label="Locale">
-                        <span className="font-mono text-xs">{pack.locale.locale}</span> ·{' '}
-                        {pack.locale.currency} · {pack.locale.timeZone}
-                      </DetailRow>
-                    </dl>
-                  </CardBody>
-
-                  <CardFooter>
-                    {users.length ? (
-                      <ul className="flex flex-wrap items-center gap-2">
-                        {users.map((t) => (
-                          <li key={t.id}>
-                            <ButtonLink variant="ghost" size="sm" href={`/platform/${t.id}`}>
-                              {t.shortName}
-                              <ArrowRight className="size-3.5" aria-hidden="true" />
-                            </ButtonLink>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="text-xs text-muted">
-                        No tenant row points at this pack yet.{' '}
-                        <span className="font-mono">{pack.id}.alumni.ifbash.com</span> still resolves
-                        it, so a prospect&rsquo;s portal can be previewed before anything is signed.
-                      </p>
-                    )}
-                  </CardFooter>
-                </Card>
-              </li>
-            );
-          })}
-        </ul>
+        <ul className="grid grid-cols-1 gap-6 xl:grid-cols-2">{templates.map(card)}</ul>
       </Section>
 
-      <Section
-        title="Adding a customer"
-        description="Three steps, none of which is a code change to the product."
-      >
+      <Section title="Adding a college’s brand" description="Three steps, and no component or stylesheet change.">
         <Card>
-          <CardHeader>
-            <div className="min-w-0 space-y-1">
-              <CardTitle as="h3">
-                A new college is{' '}
-                <span className="relative inline-block">
-                  one JSON file and one line
-                  <Scribble className="absolute -bottom-1 left-0" />
-                </span>
-              </CardTitle>
-              <CardDescription>
-                The person doing this at 11pm before a demo should not need to be able to write any
-                code. So there is none to write.
-              </CardDescription>
-            </div>
-          </CardHeader>
-
           <CardBody className="space-y-6">
-            <ol className="space-y-6">
-              <li className="space-y-3">
-                <p className="flex items-center gap-2 text-sm font-semibold">
-                  <span className="grid size-6 shrink-0 place-items-center rounded-full bg-brand-soft font-mono text-xs text-brand-soft-fg">
-                    1
+            <ol className="grid gap-5 md:grid-cols-3">
+              {STEPS.map((s, i) => (
+                <li key={s.title} className="flex gap-3">
+                  <span
+                    aria-hidden="true"
+                    className="grid size-7 shrink-0 place-items-center rounded-full bg-brand-soft text-sm font-semibold text-brand-soft-fg"
+                  >
+                    {i + 1}
                   </span>
-                  Drop a file in <span className="font-mono">brands/</span>
-                </p>
-                <p className="max-w-prose text-sm text-secondary">
-                  Only what differs from the defaults. A college that wants nothing but its own
-                  colour and name supplies exactly that and inherits a complete, accessible design
-                  system for everything else — the ten-stop ramps, the hover states, the tinted
-                  fills, the dark mode.
-                </p>
-                {/* Code scrolls inside its own region rather than widening the page. */}
-                <pre className="overflow-x-auto rounded-lg border border-line bg-surface-sunken p-4">
-                  <code className="font-mono text-xs leading-relaxed text-primary">
-                    {NEW_PACK_JSON}
-                  </code>
-                </pre>
-              </li>
-
-              <li className="space-y-3">
-                <p className="flex items-center gap-2 text-sm font-semibold">
-                  <span className="grid size-6 shrink-0 place-items-center rounded-full bg-brand-soft font-mono text-xs text-brand-soft-fg">
-                    2
-                  </span>
-                  Add one line to the registry
-                </p>
-                <p className="max-w-prose text-sm text-secondary">
-                  Packs are imported statically rather than read from disk, so the bundler includes
-                  them and a malformed pack fails at boot — loudly, for everyone — instead of at
-                  first render for one unlucky customer.
-                </p>
-                <pre className="overflow-x-auto rounded-lg border border-line bg-surface-sunken p-4">
-                  <code className="font-mono text-xs leading-relaxed text-primary">
-                    {REGISTRY_DIFF}
-                  </code>
-                </pre>
-              </li>
-
-              <li className="space-y-3">
-                <p className="flex items-center gap-2 text-sm font-semibold">
-                  <span className="grid size-6 shrink-0 place-items-center rounded-full bg-brand-soft font-mono text-xs text-brand-soft-fg">
-                    3
-                  </span>
-                  Point a subdomain at it
-                </p>
-                <p className="max-w-prose text-sm text-secondary">
-                  <span className="font-mono">kakinada.alumni.ifbash.com</span> resolves the pack by
-                  its slug. That is enough to demo a prospect&rsquo;s own portal before a tenant row
-                  exists. Provisioning then creates the tenant and stores{' '}
-                  <span className="font-mono">packId</span> against it.
-                </p>
-                <p>
-                  <ButtonLink href="/platform/new" size="sm">
-                    Provision a college
-                    <ArrowRight className="size-3.5" aria-hidden="true" />
-                  </ButtonLink>
-                </p>
-              </li>
+                  <div className="min-w-0 space-y-1">
+                    <p className="text-sm font-semibold text-primary">{s.title}</p>
+                    <p className="text-sm text-secondary">{s.body}</p>
+                  </div>
+                </li>
+              ))}
             </ol>
-
-            <Separator label="What a pack may not do" />
-
-            <div className="grid gap-5 md:grid-cols-3">
-              <div className="space-y-1.5">
-                <p className="text-sm font-semibold">No free-form CSS</p>
-                <p className="text-sm text-secondary">
-                  <span className="font-mono text-xs">overrides</span> accepts values for{' '}
-                  {OVERRIDABLE_TOKENS.length} named tokens and rejects anything else at parse time.
-                  Unbounded theming turns every support ticket into CSS archaeology.
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <p className="text-sm font-semibold">Light and dark are separate</p>
-                <p className="text-sm text-secondary">
-                  <span className="font-mono text-xs">darkOverrides</span> is its own map. An ink a
-                  brand guideline fixes for headings on paper is, applied unchanged to a dark
-                  ground, ink on ink.
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <p className="text-sm font-semibold">Features are gates, not styling</p>
-                <p className="text-sm text-secondary">
-                  <span className="font-mono text-xs">features.donations</span> stays false until a
-                  college confirms FCRA registration. The navigation and every route guard read it;
-                  no CSS class is involved.
-                </p>
-              </div>
+            <div className="flex flex-wrap items-center gap-3 border-t border-line pt-5">
+              <ButtonLink href="/platform/new">
+                Set up a college
+                <ArrowRight className="size-4" aria-hidden="true" />
+              </ButtonLink>
+              <p className="text-sm text-secondary">Pick a starting template there if the college’s own pack is not ready.</p>
             </div>
-
-            <MarginNote className="max-w-prose">
-              The packs marked “demonstration only” are not customers. They exist so the branding
-              studio has something to switch between on a sales call, and so the contrast checker
-              exercises hues, shapes and densities the two real packs never touch.
-            </MarginNote>
           </CardBody>
-
-          <CardFooter>
-            <p className="flex items-center gap-2 text-xs text-muted">
-              <Palette className="size-3.5 shrink-0" aria-hidden="true" />
-              Colleges edit their own pack from the college console under Branding. Platform admins
-              hold <span className="font-mono">tenant.configure</span>; they do not hold anything
-              that reads what the branding is applied to.
-            </p>
-          </CardFooter>
         </Card>
+
+        <Disclosure summary="How to add a college’s brand (vendor staff)" id="how-to">
+          <div className="space-y-5">
+            <div className="space-y-2">
+              <p className="font-medium text-primary">1. Write the pack file</p>
+              <p>
+                Only what differs from the defaults. The ten-stop colour ramps, hover states, tinted fills, dark mode
+                and every text-on-colour pairing are derived from the seeds and contrast-checked; run{' '}
+                <code className="font-mono text-xs text-primary">npm run brand:check</code> before publishing.
+              </p>
+              <pre className="overflow-x-auto rounded-lg border border-line bg-surface-sunken p-4">
+                <code className="font-mono text-xs leading-relaxed text-primary">{NEW_PACK_JSON}</code>
+              </pre>
+            </div>
+            <div className="space-y-2">
+              <p className="font-medium text-primary">2. Add one line to the registry</p>
+              <p>Packs are imported statically, so a malformed one fails at boot for everyone rather than at first render for one college.</p>
+              <pre className="overflow-x-auto rounded-lg border border-line bg-surface-sunken p-4">
+                <code className="font-mono text-xs leading-relaxed text-primary">{REGISTRY_LINE}</code>
+              </pre>
+            </div>
+            <div className="space-y-2">
+              <p className="font-medium text-primary">3. Preview on its address, then set up</p>
+              <p>
+                A pack answers on its own subdomain before any college row exists, so the college can see its portal
+                before anything is signed. Setting the college up then stores the pack against it.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <p className="font-medium text-primary">What a pack cannot do</p>
+              <ul className="list-disc space-y-1 pl-4">
+                <li>
+                  No free-form CSS: <code className="font-mono text-xs">overrides</code> accepts {OVERRIDABLE_TOKENS.length}{' '}
+                  named tokens and rejects anything else.
+                </li>
+                <li>
+                  Light and dark are separate: <code className="font-mono text-xs">darkOverrides</code> is its own map.
+                </li>
+                <li>
+                  Giving stays off (<code className="font-mono text-xs">features.donations</code>) until the college
+                  confirms its FCRA registration.
+                </li>
+              </ul>
+            </div>
+          </div>
+        </Disclosure>
       </Section>
     </div>
   );
 }
+
+function PackCard({
+  pack,
+  house,
+  demo,
+  users,
+  address,
+  wide = false,
+}: {
+  pack: BrandPack;
+  house: boolean;
+  demo: boolean;
+  users: TenantSummary[];
+  address: PortalAddress;
+  /** At xl: the preview on the left, colours and media on the right. */
+  wide?: boolean;
+}) {
+  const verdict = verdictFor(pack);
+
+  const details = (
+    <div className={cn('grid gap-5', wide ? 'sm:grid-cols-2 xl:grid-cols-1' : 'sm:grid-cols-2')}>
+      <div className="space-y-2">
+        <p className="text-xs font-semibold uppercase tracking-wider text-secondary">Colours</p>
+        <SeedSwatches pack={pack} />
+      </div>
+      <div className="space-y-2">
+        <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-secondary">
+          <Camera className="size-3.5" aria-hidden="true" />
+          Media
+        </p>
+        <MediaReadiness pack={pack} variant="row" />
+      </div>
+    </div>
+  );
+
+  return (
+    <Card className="flex h-full flex-col">
+      <CardBody className="flex-1 space-y-5">
+        <div className="flex items-start gap-3">
+          <CollegeMark pack={pack} name={pack.copy.shortName} size={44} />
+          <div className="min-w-0 flex-1">
+            <h3 className="font-display text-lg font-semibold leading-snug">{pack.copy.portalName}</h3>
+            <p className="text-sm text-secondary">{pack.copy.institutionName}</p>
+            {house || demo ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {house ? <Badge tone="outline">The platform’s own look</Badge> : null}
+                {demo ? <Badge tone="outline">Illustrative — not a real college</Badge> : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className={cn(wide && 'grid gap-6 xl:grid-cols-[minmax(0,1fr)_18rem]')}>
+          <div className="min-w-0 space-y-3">
+            <MiniPortal pack={pack} />
+            <p className="flex flex-wrap items-center gap-2 text-xs text-secondary">
+              <Badge tone={verdict.tone}>
+                {verdict.tone === 'success' ? <CircleCheck className="size-3" aria-hidden="true" /> : null}
+                {verdict.label}
+              </Badge>
+              {verdict.summary}
+            </p>
+          </div>
+          {wide ? <div className="mt-5 min-w-0 xl:mt-0">{details}</div> : null}
+        </div>
+
+        {wide ? null : details}
+      </CardBody>
+
+      <CardFooter className="flex-wrap justify-between gap-x-4 gap-y-2">
+        <ul className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          {users.length ? (
+            users.map((t) => (
+              <li key={t.id}>
+                <Link
+                  href={`/platform/${t.id}`}
+                  className="inline-flex min-h-11 items-center gap-1 text-sm font-medium text-brand-fg underline-offset-4 hover:underline"
+                >
+                  Used by {t.shortName}
+                  <ArrowRight className="size-3.5" aria-hidden="true" />
+                </Link>
+              </li>
+            ))
+          ) : (
+            <li className="text-sm text-secondary">Not used by a college yet</li>
+          )}
+        </ul>
+        <a
+          href={address.href}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex min-h-11 items-center gap-1.5 text-sm font-medium text-secondary underline-offset-4 hover:text-brand-fg hover:underline"
+        >
+          <Globe className="size-3.5" aria-hidden="true" />
+          Open live preview
+          <ArrowUpRight className="size-3.5" aria-hidden="true" />
+          <span className="sr-only">(opens {address.host} in a new tab)</span>
+        </a>
+      </CardFooter>
+    </Card>
+  );
+}
+

@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, MessageSquare, ShieldCheck, X } from 'lucide-react';
+import { Check, Copy, Eye, MessageSquare, MoreHorizontal, Send, X } from 'lucide-react';
 
 import {
   Alert,
@@ -12,12 +12,14 @@ import {
   Dialog,
   Field,
   Fieldset,
+  MenuItem,
   Radio,
   Textarea,
   describedBy,
   useToast,
 } from '@/components/ui';
 import { api, outcomeToast } from '@/lib/client/api';
+import { cn } from '@/lib/cn';
 
 /**
  * The decision on a contributed album.
@@ -25,8 +27,7 @@ import { api, outcomeToast } from '@/lib/client/api';
  * Three outcomes, and every one of them is written back to the person who
  * sent the photographs in. A contribution that leaves this queue silently
  * is a contributor who assumes the college lost it, and they do not send a
- * second batch — which is the only reason there is anything in the archive
- * from before the portal existed.
+ * second batch.
  *
  * "Ask for changes" is the outcome most contributions actually need: a
  * missing year, a caption naming someone who has not agreed to be named.
@@ -110,6 +111,8 @@ export function ReviewActions({
   const declineText = reason === 'other' ? otherNote.trim() : (chosen?.text ?? '');
   const declineBlocked = !reason || (reason === 'other' && otherNote.trim().length < 12);
   const changesBlocked = changeNote.trim().length < 12;
+  const changesShort = changeNote.trim().length > 0 && changesBlocked;
+  const otherShort = otherNote.trim().length > 0 && otherNote.trim().length < 12;
 
   /**
    * One call for all three outcomes. The endpoint decides what each one
@@ -157,65 +160,51 @@ export function ReviewActions({
   };
 
   if (settled) {
-    const tone = settled.outcome === 'published' ? 'success' : settled.outcome === 'changes' ? 'info' : 'danger';
-    const label =
-      settled.outcome === 'published'
+    const label = !settled.persisted
+      ? 'Not saved'
+      : settled.outcome === 'published'
         ? 'Published'
         : settled.outcome === 'changes'
           ? 'Sent back for changes'
           : 'Not published';
+    const tone = !settled.persisted
+      ? 'neutral'
+      : settled.outcome === 'published'
+        ? 'success'
+        : settled.outcome === 'changes'
+          ? 'brand'
+          : 'danger';
 
     return (
-      <Settled tone={tone} label={label}>
-        <p>{settled.note}</p>
-
+      <div className="min-w-0 space-y-2 border-t border-line pt-4" role="status">
+        <Badge tone={tone} dot={settled.persisted}>
+          {label}
+        </Badge>
+        {settled.persisted ? <p className="text-sm text-secondary">{settled.note}</p> : null}
         {settled.message ? (
-          <>
-            <p className="mt-2">{contributorName} receives this, as written:</p>
-            <p className="mt-2 max-w-prose rounded border border-line bg-surface-sunken p-3 text-sm text-primary">
-              {settled.message}
-            </p>
-          </>
-        ) : null}
-
-        <p className="mt-2 text-xs text-muted">
-          The decision, your name and the reason are in the audit log as{' '}
-          <code className="font-mono text-xs">gallery.{ACTION[settled.outcome]}</code>.
-          {settled.outcome === 'declined'
-            ? ' Declining is not deleting — the photographs stay on file until the contributor asks for them back.'
-            : ''}
-        </p>
-
-        {!settled.persisted ? (
-          <p className="mt-2 text-xs text-muted">
-            Recorded on this screen only. This build runs on seeded data with no database and no message provider
-            behind it: your capability was checked and the audit entry was written, but the album was not changed
-            and {contributorName} has not actually been written to.
+          <p className="max-w-prose text-sm text-secondary">
+            <span className="font-medium text-primary">To {contributorName}: </span>
+            {settled.message}
           </p>
         ) : null}
-      </Settled>
+      </div>
     );
   }
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-3 border-t border-line pt-4">
-        <p className="mr-auto max-w-prose text-xs text-muted">
-          Every outcome is a decision recorded against your name, and {contributorName} is told which of the three it
-          was. Asking for changes leaves the album in this queue until they reply.
-        </p>
-
-        <Button variant="ghost" onClick={() => setDeclineOpen(true)} disabled={pending !== null}>
+      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line pt-4">
+        <Button variant="ghost" onClick={() => setDeclineOpen(true)} disabled={pending !== null} className="min-h-11 sm:min-h-0">
           <X className="size-4" aria-hidden="true" />
           Do not publish
         </Button>
 
-        <Button variant="secondary" onClick={() => setChangesOpen(true)} disabled={pending !== null}>
+        <Button variant="secondary" onClick={() => setChangesOpen(true)} disabled={pending !== null} className="min-h-11 sm:min-h-0">
           <MessageSquare className="size-4" aria-hidden="true" />
           Ask for changes
         </Button>
 
-        <Button onClick={() => setPublishing(true)} loading={pending === 'published'}>
+        <Button onClick={() => setPublishing(true)} loading={pending === 'published'} className="min-h-11 sm:min-h-0">
           <Check className="size-4" aria-hidden="true" />
           Publish
         </Button>
@@ -239,12 +228,9 @@ export function ReviewActions({
           <div className="space-y-2">
             <p>
               All <strong className="text-primary">{photoCount.toLocaleString('en-IN')}</strong> photographs become
-              visible to every verified member, students included, the moment you confirm.
+              visible to every member, final-year students included.
             </p>
-            <p>
-              {contributorName} is credited by name on the album and is told it went live. Anyone tagged in a
-              photograph can ask to be untagged afterwards, and anyone in one can ask for it to come down.
-            </p>
+            <p>{contributorName} is credited on the album and told it went live.</p>
           </div>
         }
       />
@@ -253,7 +239,7 @@ export function ReviewActions({
         open={changesOpen}
         onClose={() => setChangesOpen(false)}
         title="Ask for changes"
-        description={`${albumTitle}, sent in by ${contributorName}.`}
+        description={`${albumTitle}, sent in by ${contributorName}. The album waits here for the reply.`}
         footer={
           <>
             <Button variant="secondary" onClick={() => setChangesOpen(false)}>
@@ -269,46 +255,30 @@ export function ReviewActions({
           </>
         }
       >
-        <div className="space-y-5">
-          <Alert tone="info" title="Most contributions need this, not a refusal">
-            <p>
-              A missing year, a caption naming somebody who has not agreed to be named, or eight photographs that
-              belong in a different album. Say what would make it publishable and the album waits here for the reply.
-            </p>
-          </Alert>
-
-          <Field
-            htmlFor={`changes-${albumId}`}
-            label="What needs to change"
-            required
-            hint="Sent to the contributor as written. A sentence they can act on beats a form letter."
-            error={
-              changeNote.trim().length > 0 && changesBlocked
-                ? 'Give them something specific enough to act on.'
-                : undefined
-            }
-          >
-            <Textarea
-              id={`changes-${albumId}`}
-              value={changeNote}
-              onChange={(e) => setChangeNote(e.target.value)}
-              rows={4}
-              placeholder="Could you tell us roughly which year the first eight photographs are from? The block was rebuilt in 2019 and we want the caption to say so."
-              invalid={changeNote.trim().length > 0 && changesBlocked}
-              aria-describedby={describedBy(`changes-${albumId}`, {
-                hint: true,
-                error: changeNote.trim().length > 0 && changesBlocked,
-              })}
-            />
-          </Field>
-        </div>
+        <Field
+          htmlFor={`changes-${albumId}`}
+          label="What needs to change"
+          required
+          hint="Sent to the contributor as written."
+          error={changesShort ? 'Give them something specific enough to act on.' : undefined}
+        >
+          <Textarea
+            id={`changes-${albumId}`}
+            value={changeNote}
+            onChange={(e) => setChangeNote(e.target.value)}
+            rows={4}
+            placeholder="e.g. Which year are the first eight photographs from?"
+            invalid={changesShort}
+            aria-describedby={describedBy(`changes-${albumId}`, { hint: true, error: changesShort })}
+          />
+        </Field>
       </Dialog>
 
       <Dialog
         open={declineOpen}
         onClose={() => setDeclineOpen(false)}
         title="Do not publish this album"
-        description={`${albumTitle}, sent in by ${contributorName}.`}
+        description={`${albumTitle}. ${contributorName} reads the reason you choose.`}
         footer={
           <>
             <Button variant="secondary" onClick={() => setDeclineOpen(false)}>
@@ -320,20 +290,13 @@ export function ReviewActions({
               loading={pending === 'declined'}
               onClick={() => void decide('declined', declineText)}
             >
-              Decline and notify
+              Decline with this reason
             </Button>
           </>
         }
       >
         <div className="space-y-5">
-          <Alert tone="info" title="The contributor reads this">
-            <p>
-              A refusal with no reason reads as the college losing the submission, and it is the last one that person
-              sends. Pick the rule it falls foul of; the wording below is what {contributorName} receives.
-            </p>
-          </Alert>
-
-          <Fieldset legend="Reason" hint="One reason is enough. The most specific one is the most useful.">
+          <Fieldset legend="Reason" hint="The most specific one is the most useful. The photographs stay on file.">
             {DECLINE_REASONS.map((r) => (
               <Radio
                 key={r.id}
@@ -352,56 +315,223 @@ export function ReviewActions({
               htmlFor={`decline-note-${albumId}`}
               label="What is wrong with it"
               required
-              hint="Written to the contributor as-is. At least a sentence."
-              error={
-                otherNote.trim().length > 0 && otherNote.trim().length < 12
-                  ? 'Give them something they can act on.'
-                  : undefined
-              }
+              hint="Sent to the contributor as written. At least a sentence."
+              error={otherShort ? 'Give them something they can act on.' : undefined}
             >
               <Textarea
                 id={`decline-note-${albumId}`}
                 value={otherNote}
                 onChange={(e) => setOtherNote(e.target.value)}
                 rows={4}
-                placeholder="The photographs are from a private function rather than a college event, so they do not belong in the college archive."
-                invalid={otherNote.trim().length > 0 && otherNote.trim().length < 12}
-                aria-describedby={describedBy(`decline-note-${albumId}`, {
-                  hint: true,
-                  error: otherNote.trim().length > 0 && otherNote.trim().length < 12,
-                })}
+                placeholder="e.g. These are from a private function rather than a college event."
+                invalid={otherShort}
+                aria-describedby={describedBy(`decline-note-${albumId}`, { hint: true, error: otherShort })}
               />
             </Field>
           ) : null}
-
-          <p className="flex items-start gap-2 text-xs text-muted">
-            <ShieldCheck className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            <span>
-              The decision, your name and this reason go to the audit log. Declining is not deleting — the
-              photographs stay on file, and the contributor can send a corrected album.
-            </span>
-          </p>
         </div>
       </Dialog>
     </>
   );
 }
 
-function Settled({
-  tone,
-  label,
-  children,
+// ---------------------------------------------------------------
+// The album tile's menu
+// ---------------------------------------------------------------
+
+/**
+ * A tile's overflow menu: open as member, publish, copy for WhatsApp, and
+ * "Add photos" shown disabled with its reason. Built here rather than on
+ * the kit's Menu, whose trigger is a `display: contents` button that
+ * browsers leave out of the tab order.
+ */
+export function AlbumActionsMenu({
+  albumId,
+  albumTitle,
+  photoCount,
+  memberHref,
+  shareText,
+  canPublish,
 }: {
-  tone: 'success' | 'info' | 'danger';
-  label: string;
-  children: React.ReactNode;
+  albumId: string;
+  albumTitle: string;
+  photoCount: number;
+  /** The member page, for a published album. */
+  memberHref: string | null;
+  /** Share text with the link, for a published album. */
+  shareText: string | null;
+  /** An unpublished album the endpoint will publish. */
+  canPublish: boolean;
 }) {
+  const toast = useToast();
+  const router = useRouter();
+  const [open, setOpen] = React.useState(false);
+  const [confirming, setConfirming] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [manual, setManual] = React.useState<string | null>(null);
+  const wrap = React.useRef<HTMLDivElement>(null);
+  const trigger = React.useRef<HTMLButtonElement>(null);
+  const menuId = React.useId();
+  const label = `More actions for ${albumTitle}`;
+
+  React.useEffect(() => {
+    if (!open) return;
+    const onPointer = (e: PointerEvent) => {
+      if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointer);
+    return () => document.removeEventListener('pointerdown', onPointer);
+  }, [open]);
+
+  const items = () =>
+    Array.from(document.getElementById(menuId)?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+
+  const focusItem = (at: 'first' | 'last') =>
+    requestAnimationFrame(() => {
+      const found = items();
+      (at === 'first' ? found[0] : found[found.length - 1])?.focus();
+    });
+
+  const onMenuKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const found = items();
+    const at = found.indexOf(document.activeElement as HTMLElement);
+    let next: number | null = null;
+    if (e.key === 'ArrowDown') next = (at + 1) % found.length;
+    else if (e.key === 'ArrowUp') next = (at - 1 + found.length) % found.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = found.length - 1;
+    else if (e.key === 'Escape' || e.key === 'Tab') {
+      if (e.key === 'Escape') e.preventDefault();
+      setOpen(false);
+      trigger.current?.focus();
+      return;
+    }
+    if (next === null) return;
+    e.preventDefault();
+    found[next]?.focus();
+  };
+
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success('Copied for WhatsApp');
+    } catch {
+      setManual(text);
+    }
+  };
+
+  const publish = async () => {
+    setBusy(true);
+    const result = await api.patch<{ note: string }>(`/api/admin/gallery/${albumId}`, { action: 'publish' });
+    setBusy(false);
+    setConfirming(false);
+    const t = outcomeToast(result, `“${albumTitle}” is live`);
+    if (t) toast.show(t);
+    if (result.status === 'ok' && result.persisted) router.refresh();
+  };
+
   return (
-    <div className="min-w-0 space-y-2 border-t border-line pt-4">
-      <Badge tone={tone} dot>
-        {label}
-      </Badge>
-      <div className="text-sm text-secondary">{children}</div>
+    <div ref={wrap} className="relative">
+      <button
+        ref={trigger}
+        type="button"
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        onClick={(e) => {
+          const opening = !open;
+          setOpen(opening);
+          if (opening && e.detail === 0) focusItem('first');
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            setOpen(true);
+            focusItem(e.key === 'ArrowDown' ? 'first' : 'last');
+          }
+        }}
+        className={cn(
+          'grid size-11 place-items-center rounded text-secondary lg:size-9',
+          'transition-colors duration-fast ease-brand hover:bg-surface-sunken hover:text-primary',
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]',
+          open && 'bg-surface-sunken text-primary',
+        )}
+      >
+        <MoreHorizontal className="size-5" aria-hidden="true" />
+      </button>
+
+      {open ? (
+        <div
+          id={menuId}
+          role="menu"
+          aria-label={label}
+          onKeyDown={onMenuKey}
+          className="absolute right-0 z-30 mt-1 w-64 animate-slide-down rounded-lg border border-line bg-surface-raised p-1 shadow-lg"
+        >
+          {memberHref ? (
+            <MenuItem href={memberHref} icon={<Eye className="size-4" />}>
+              Open as member
+            </MenuItem>
+          ) : null}
+          {canPublish ? (
+            <MenuItem
+              icon={<Send className="size-4" />}
+              onSelect={() => {
+                setOpen(false);
+                setConfirming(true);
+              }}
+            >
+              Publish
+            </MenuItem>
+          ) : null}
+          {shareText ? (
+            <MenuItem
+              icon={<Copy className="size-4" />}
+              onSelect={() => {
+                setOpen(false);
+                void copy(shareText);
+              }}
+            >
+              Copy for WhatsApp
+            </MenuItem>
+          ) : null}
+        </div>
+      ) : null}
+
+      <ConfirmDialog
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        onConfirm={() => void publish()}
+        pending={busy}
+        tone="primary"
+        confirmLabel="Publish the album"
+        title="Publish to every member?"
+        body={
+          <div className="space-y-2">
+            <p>
+              <strong className="text-primary">{albumTitle}</strong> becomes visible to every member, final-year
+              students included.
+            </p>
+            {photoCount === 0 ? <p>It has no photographs yet, so members will find it empty.</p> : null}
+          </div>
+        }
+      />
+
+      <Dialog
+        open={manual !== null}
+        onClose={() => setManual(null)}
+        title="Copy the text"
+        description="The clipboard was not available. Select the text and copy it."
+      >
+        <Textarea
+          readOnly
+          value={manual ?? ''}
+          rows={4}
+          aria-label="Text for WhatsApp"
+          onFocus={(e) => e.currentTarget.select()}
+        />
+      </Dialog>
     </div>
   );
 }

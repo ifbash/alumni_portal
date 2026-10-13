@@ -8,15 +8,10 @@ import {
   Compass,
   Earth,
   FileText,
-  GraduationCap,
   Inbox,
-  Megaphone,
   MessageSquare,
   Repeat,
   Rocket,
-  Send,
-  TriangleAlert,
-  Users,
   Wrench,
 } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
@@ -30,27 +25,36 @@ import {
 } from '@/lib/data/repo';
 import {
   getMentorTopics,
+  getMentorsByTopic,
   getMentorsForDepartment,
   getMentorshipStats,
   type MentorTopic,
 } from '@/lib/data/content';
 import {
-  Alert,
+  Avatar,
   Badge,
   ButtonLink,
   Card,
   CardBody,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  CopyButton,
+  Disclosure,
   EmptyState,
-  PageHeader,
-  Progress,
   Section,
-  Stat,
 } from '@/components/ui';
-import { BarList } from '@/components/charts';
+import { BandChip, PageBand } from '@/components/brand/PageBand';
 import { MemberCard } from '@/components/members/MemberCard';
-import { CircleMark, MarginNote } from '@/components/brand/Marks';
+import { RequestIntroButton } from '@/components/directory/RequestIntroButton';
+import { availabilityEntries } from '@/lib/availability-copy';
+import { joinList } from '@/lib/branding/copy';
+import { CONNECTION_LIMITS } from '@/lib/config';
 import { cn } from '@/lib/cn';
-import type { ConnectionQuota, ConnectionRequest } from '@/lib/data/types';
+import { formatRelative } from '@/lib/format';
+import { viewerBranch } from '@/lib/identity';
+import { siteOrigin } from '@/lib/share';
+import type { ConnectionKind, ConnectionQuota, ConnectionRequest, MemberSummary } from '@/lib/data/types';
 import { BecomeMentorCard } from './BecomeMentorCard';
 
 /**
@@ -62,21 +66,15 @@ import { BecomeMentorCard } from './BecomeMentorCard';
  * point on this page is therefore a question somebody actually has, and
  * the seniority of whoever answers it is a detail on their card.
  *
- * The page branches on who is looking, because the two cohorts arrive with
- * opposite problems. A student needs to know who is nearest to them and
- * how many requests they have left. An alumnus needs to know exactly what
- * they are signing up for before they flip a switch that puts their name
- * in front of four hundred final-years.
+ * The page branches on who is looking. A student starts from the
+ * questions and their own branch; a graduate or a member of faculty
+ * starts from what is waiting for them and what they are open to.
  */
 
 export const metadata: Metadata = {
   title: 'Mentorship',
-  description:
-    'Graduates who have agreed to be asked, grouped by the question a final-year actually has.',
+  description: 'Graduates who have agreed to be asked, grouped by the question a final-year actually has.',
 };
-
-/** Roughly a month, for "how busy has your inbox been" — presentation only. */
-const RECENT_WINDOW_MS = 30 * 86400000;
 
 const TOPIC_ICON: Record<string, typeof Compass> = {
   interviews: MessageSquare,
@@ -88,6 +86,9 @@ const TOPIC_ICON: Record<string, typeof Compass> = {
   resume: FileText,
   'career-change': Repeat,
 };
+
+/** Below this, "{n} work abroad" is not worth a line of its own. */
+const ABROAD_LINE_FROM = 3;
 
 export default async function MentorshipPage() {
   const session = await getSession();
@@ -107,6 +108,11 @@ export default async function MentorshipPage() {
   const topics = getMentorTopics();
   const stats = getMentorshipStats();
   const own = getOwnProfile(session);
+  const shortName = pack.copy.shortName;
+
+  // Three faces per question, projected for this viewer exactly as the
+  // directory would project them.
+  const faces = new Map(topics.map((t) => [t.id, getMentorsByTopic(session, t.id, 3)]));
 
   // The busiest topic is what a dead-end topic offers instead of nothing.
   const busiest = topics.reduce<MentorTopic | null>(
@@ -114,66 +120,178 @@ export default async function MentorshipPage() {
     null,
   );
 
+  const grid = (
+    <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {topics.map((topic) => (
+        <li key={topic.id} className="relative min-w-0">
+          <TopicCard topic={topic} faces={faces.get(topic.id) ?? []} fallback={busiest} />
+        </li>
+      ))}
+    </ul>
+  );
+
+  if (isStudent) {
+    const quota = getConnectionQuota(session);
+    const openLeft = Math.max(0, quota.openLimit - quota.openRequests);
+    const monthLeft = Math.max(0, quota.monthlyLimit - quota.usedThisMonth);
+    const available = Math.min(openLeft, monthLeft);
+
+    return (
+      <div className="space-y-8">
+        <PageBand
+          pack={pack}
+          size="compact"
+          eyebrow="Mentorship"
+          title={`Ask a ${shortName} graduate`}
+          lead={
+            stats.mentors > 0
+              ? `Pick your question. ${stats.mentors.toLocaleString('en-IN')} graduates have said yes to being asked.`
+              : 'Pick your question. Graduates appear here as they say yes to being asked.'
+          }
+          meta={
+            <BandChip href="/connections?tab=sent">
+              {available > 0
+                ? `${available} ${available === 1 ? 'request' : 'requests'} available · ${monthLeft} left this month`
+                : monthLeft === 0
+                  ? 'No requests left this month'
+                  : 'Your requests are all waiting for replies'}
+            </BandChip>
+          }
+        />
+
+        <Section title="Pick your question">
+          {grid}
+          {stats.abroad >= ABROAD_LINE_FROM ? (
+            <p className="text-sm text-secondary">
+              <Link href="/mentorship/abroad" className="link inline-flex min-h-11 items-center gap-1.5 font-medium">
+                {stats.abroad.toLocaleString('en-IN')} graduates who mentor work outside India
+                <ArrowRight className="size-3.5" aria-hidden="true" />
+              </Link>
+            </p>
+          ) : null}
+        </Section>
+
+        <StudentBranch session={session} quota={quota} openLeft={openLeft} monthLeft={monthLeft} connectionsOn={pack.features.connections} />
+
+        <p className="max-w-prose border-t border-line pt-4 text-sm text-secondary">
+          Graduates reply when they can. A short, specific question gets the fastest answer.
+        </p>
+      </div>
+    );
+  }
+
+  // ---- Graduates and faculty ----------------------------------------
+  const received: ConnectionRequest[] = can(session, 'connection.receive') ? getConnections(session, 'received') : [];
+  const isAlumnus = session.roles.some((r) => r.role === 'alumni');
+  const audience = isAlumnus ? ('alumni' as const) : ('faculty' as const);
+  const ctx = {
+    audience,
+    company: own?.currentCompany ?? null,
+    officeName: pack.copy.officeName,
+    openLimit: CONNECTION_LIMITS.studentOpenRequests,
+  };
+  const current = {
+    mentoring: own?.openToMentoring ?? false,
+    referrals: own?.openToReferrals ?? false,
+    speaking: own?.openToSpeaking ?? false,
+  };
+  const on = availabilityEntries(ctx).filter((e) => current[e.key]);
+  const lead = on.length
+    ? `You are open to ${joinList(on.map((e) => e.label.replace(/^Open to /, '')))}.`
+    : 'Switch on what you are open to, and students can find you by the question they have.';
+
+  const waiting = received.filter((c) => c.state === 'pending');
+  const oldest = waiting.reduce<ConnectionRequest | null>(
+    (o, c) => (!o || c.createdAt < o.createdAt ? c : o),
+    null,
+  );
+  const timing = { locale: pack.locale.locale, timeZone: pack.locale.timeZone };
+  const hubUrl = isAlumnus ? null : `${await siteOrigin()}/mentorship`;
+
   return (
     <div className="space-y-8">
-      <PageHeader
-        eyebrow={`${pack.copy.shortName} mentorship`}
-        title="Ask a graduate"
-        description={
-          stats.mentors > 0
-            ? `${stats.mentors} graduates have said, in writing, that final-years may write to them. They are grouped below by the question you have, not by the job title they hold — the useful person is rarely the most senior one.`
-            : 'No graduate has switched mentoring on yet, so the topics below are all empty. They are the questions this hub groups by, and they fill as batches verify their records and set their preferences.'
-        }
-        actions={
-          stats.mentors > 0 ? (
-            <ButtonLink href="/directory?mentoring=1" variant="secondary">
-              <Users className="size-4" aria-hidden="true" />
-              Browse all {stats.mentors}
-            </ButtonLink>
-          ) : (
-            <ButtonLink href="/directory" variant="secondary">
-              <Users className="size-4" aria-hidden="true" />
-              Open the directory
-            </ButtonLink>
-          )
-        }
+      <PageBand
+        pack={pack}
+        size="compact"
+        eyebrow="Mentorship"
+        title={`Help ${shortName} final-year students`}
+        lead={lead}
       />
 
-      {isStudent ? (
-        <StudentPanel
-          session={session}
-          departmentCode={session.departmentId}
-          quota={getConnectionQuota(session)}
-        />
-      ) : (
-        <AlumnusPanel
-          openToMentoring={own?.openToMentoring ?? false}
-          openToReferrals={own?.openToReferrals ?? false}
-          openToSpeaking={own?.openToSpeaking ?? false}
-          received={can(session, 'connection.receive') ? getConnections(session, 'received') : []}
-        />
-      )}
+      <div className="grid grid-cols-1 gap-gutter lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <aside
+          aria-label="Requests for you"
+          className="min-w-0 space-y-4 lg:sticky lg:top-20 lg:col-start-2 lg:row-start-1 lg:self-start"
+        >
+          <Card>
+            <CardBody className="space-y-3">
+              {waiting.length > 0 ? (
+                <>
+                  <p className="flex items-center gap-2 font-display text-lg font-semibold">
+                    <Inbox className="size-5 shrink-0 text-brand-fg" aria-hidden="true" />
+                    {waiting.length} {waiting.length === 1 ? 'request' : 'requests'} waiting
+                  </p>
+                  {oldest ? (
+                    <p className="text-sm text-secondary">The oldest arrived {formatRelative(oldest.createdAt, timing)}.</p>
+                  ) : null}
+                  <ButtonLink href="/connections?tab=received" className="min-h-11 w-full">
+                    Reply
+                  </ButtonLink>
+                </>
+              ) : current.mentoring ? (
+                <>
+                  <p className="font-display text-lg font-semibold">You are listed for final-year students.</p>
+                  <p className="text-sm text-secondary">Nothing is waiting for you right now.</p>
+                  <ButtonLink href="/profile/preview" variant="secondary" className="min-h-11 w-full">
+                    See how students see your card
+                  </ButtonLink>
+                </>
+              ) : (
+                <>
+                  <p className="font-display text-lg font-semibold">You are not listed for students yet.</p>
+                  <p className="text-sm text-secondary">Turn on mentoring and you appear under the questions your record matches.</p>
+                  <ButtonLink href="#availability" variant="secondary" className="min-h-11 w-full">
+                    Choose what you are open to
+                  </ButtonLink>
+                </>
+              )}
+            </CardBody>
+          </Card>
+
+          {hubUrl ? (
+            <Card>
+              <CardHeader variant="stack">
+                <CardTitle as="h2" className="text-md">
+                  Point your students here
+                </CardTitle>
+                <CardDescription>Students find graduates by the question they have.</CardDescription>
+              </CardHeader>
+              <CardBody>
+                <CopyButton text={hubUrl} label="Copy the link" copiedLabel="Link copied" />
+              </CardBody>
+            </Card>
+          ) : null}
+        </aside>
+
+        <div className="min-w-0 lg:col-start-1 lg:row-start-1">
+          <BecomeMentorCard
+            mentoring={current.mentoring}
+            referrals={current.referrals}
+            speaking={current.speaking}
+            audience={audience}
+            company={ctx.company}
+            officeName={ctx.officeName}
+            openLimit={ctx.openLimit}
+          />
+        </div>
+      </div>
 
       <Section
-        title="Start from the question"
-        description="Every topic below is a real question the alumni cell has been forwarded more than once. Pick the one you are actually stuck on."
+        title="The questions students pick from"
+        description="With mentoring on, you appear under each question your record matches."
       >
-        <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {topics.map((topic) => (
-            <li key={topic.id} className="relative">
-              <TopicCard topic={topic} fallback={busiest} />
-            </li>
-          ))}
-        </ul>
+        {grid}
       </Section>
-
-      <StatsStrip stats={stats} />
-
-      <MarginNote className="max-w-prose border-t border-line pt-4">
-        Nobody here is paid, rostered or obliged. A graduate who has switched mentoring on has
-        agreed to read a message — not to answer within a day, not to get you a job. Treat the
-        list as a set of people who said yes once, because that is exactly what it is.
-      </MarginNote>
     </div>
   );
 }
@@ -182,7 +300,15 @@ export default async function MentorshipPage() {
 // Topic cards
 // ---------------------------------------------------------------
 
-function TopicCard({ topic, fallback }: { topic: MentorTopic; fallback: MentorTopic | null }) {
+function TopicCard({
+  topic,
+  faces,
+  fallback,
+}: {
+  topic: MentorTopic;
+  faces: MemberSummary[];
+  fallback: MentorTopic | null;
+}) {
   const Icon = TOPIC_ICON[topic.id] ?? Compass;
   const empty = topic.mentorCount === 0;
   // Only worth offering if it actually has people behind it — pointing a
@@ -191,20 +317,16 @@ function TopicCard({ topic, fallback }: { topic: MentorTopic; fallback: MentorTo
     fallback && fallback.id !== topic.id && fallback.mentorCount > 0 ? fallback : null;
 
   return (
-    <Card
-      as="article"
-      interactive={!empty}
-      className={cn('flex h-full flex-col p-card', empty && 'border-dashed')}
-    >
-      <div className="flex items-start gap-3 pb-4">
+    <Card as="article" interactive={!empty} className="flex h-full flex-col p-card">
+      <div className="flex items-start gap-3">
         <span
           className={cn(
-            'grid size-9 shrink-0 place-items-center rounded',
-            empty ? 'bg-surface-sunken text-muted' : 'bg-brand-soft text-brand-soft-fg',
+            'grid size-10 shrink-0 place-items-center rounded',
+            empty ? 'bg-surface-sunken text-secondary' : 'bg-brand-soft text-brand-soft-fg',
           )}
           aria-hidden="true"
         >
-          <Icon className="size-4" />
+          <Icon className="size-5" />
         </span>
 
         <div className="min-w-0 flex-1">
@@ -212,10 +334,7 @@ function TopicCard({ topic, fallback }: { topic: MentorTopic; fallback: MentorTo
             {empty ? (
               topic.label
             ) : (
-              <Link
-                href={`/mentorship/${topic.id}`}
-                className="link-quiet after:absolute after:inset-0"
-              >
+              <Link href={`/mentorship/${topic.id}`} className="link-quiet after:absolute after:inset-0 after:rounded-lg">
                 {topic.label}
               </Link>
             )}
@@ -224,39 +343,31 @@ function TopicCard({ topic, fallback }: { topic: MentorTopic; fallback: MentorTo
         </div>
       </div>
 
-      <div className="mt-auto border-t border-line pt-3">
+      <div className="mt-auto pt-4">
         {empty ? (
-          // A topic nobody has been matched to is left on the page and told
-          // the truth. Hiding it would make the hub look complete and send
-          // the student who needed it straight out of the portal.
-          <p className="text-xs text-secondary">
+          <p className="relative z-10 text-sm text-secondary">
             No graduate matches this one yet.{' '}
             {alternative ? (
-              <>
-                The nearest question with people behind it is{' '}
-                <Link href={`/mentorship/${alternative.id}`} className="link">
-                  {alternative.label}
-                </Link>
-                , with {alternative.mentorCount} listed.
-              </>
-            ) : (
-              <>
-                Try the{' '}
-                <Link href="/directory?mentoring=1" className="link">
-                  full list of graduates open to mentoring
-                </Link>
-                .
-              </>
-            )}
+              <Link href={`/mentorship/${alternative.id}`} className="link">
+                Try {alternative.label}
+              </Link>
+            ) : null}
           </p>
         ) : (
-          <p className="flex items-center justify-between gap-2 text-sm">
-            <span className="text-secondary">
-              <span className="font-semibold tabular text-primary">{topic.mentorCount}</span>{' '}
-              {topic.mentorCount === 1 ? 'graduate' : 'graduates'}
+          <div className="flex items-center justify-between gap-3">
+            <span className="flex -space-x-2" aria-hidden="true">
+              {faces.map((m) => (
+                <span key={m.id} className="rounded-full ring-2 ring-surface-raised">
+                  <Avatar name={m.fullName} src={m.photoUrl} size="sm" />
+                </span>
+              ))}
             </span>
-            <ArrowRight className="size-4 shrink-0 text-muted" aria-hidden="true" />
-          </p>
+            <span className="flex items-center gap-1.5 text-sm text-secondary">
+              <span className="font-semibold tabular text-primary">{topic.mentorCount.toLocaleString('en-IN')}</span>
+              {topic.mentorCount === 1 ? 'graduate' : 'graduates'}
+              <ArrowRight className="size-4 shrink-0 text-muted" aria-hidden="true" />
+            </span>
+          </div>
         )}
       </div>
     </Card>
@@ -264,60 +375,90 @@ function TopicCard({ topic, fallback }: { topic: MentorTopic; fallback: MentorTo
 }
 
 // ---------------------------------------------------------------
-// Student view
+// Student view: their own branch, their requests
 // ---------------------------------------------------------------
 
-/**
- * A student's own branch first.
- *
- * The strongest predictor of a reply is that the graduate sat the same
- * papers under the same lecturers. `getMentorsForDepartment` pads the list
- * with other branches when a branch is thin, so the two groups are split
- * here rather than presented as one undifferentiated wall — a MECH student
- * shown six CSE names without explanation concludes the portal is broken.
- */
-function StudentPanel({
+/** What a graduate has said yes to, in the directory's order. */
+function offeredKinds(m: MemberSummary): ConnectionKind[] {
+  const kinds: ConnectionKind[] = [];
+  if (m.openToMentoring) kinds.push('mentorship');
+  if (m.openToReferrals) kinds.push('referral');
+  if (m.openToSpeaking) kinds.push('speaking');
+  kinds.push('introduction');
+  return kinds;
+}
+
+function StudentBranch({
   session,
-  departmentCode,
   quota,
+  openLeft,
+  monthLeft,
+  connectionsOn,
 }: {
   session: Session;
-  departmentCode: string | null;
   quota: ConnectionQuota;
+  openLeft: number;
+  monthLeft: number;
+  connectionsOn: boolean;
 }) {
+  const departmentCode = viewerBranch(session);
   // The viewer is threaded through so this list narrows through the same
-  // projection the directory uses. Without it a student saw fields here
-  // that /directory withholds from them.
-  const mentors = getMentorsForDepartment(session, departmentCode, 8);
-  const ownBranch = departmentCode
-    ? mentors.filter((m) => m.departmentCode === departmentCode)
-    : [];
-  const otherBranches = mentors.filter((m) => !ownBranch.includes(m));
+  // projection the directory uses.
+  const mentors = getMentorsForDepartment(session, departmentCode, 8).filter((m) => m.id !== session.memberId);
+  const ownBranch = departmentCode ? mentors.filter((m) => m.departmentCode === departmentCode) : [];
+  // Six at most: the rest are one "See all" away in the directory.
+  const shown = (ownBranch.length > 0 ? ownBranch : mentors).slice(0, 6);
+  const branchName = getDepartments().find((d) => d.code === departmentCode)?.name ?? departmentCode;
 
-  const branchName =
-    getDepartments().find((d) => d.code === departmentCode)?.name ?? departmentCode;
+  // The same conditions the profile page applies before it offers the
+  // request button. The connections API checks all of them again.
+  const sent = getConnections(session, 'sent');
+  const asked = new Set(sent.filter((c) => c.state === 'pending').map((c) => c.to.id));
+  const connected = new Set(
+    getConnections(session, 'accepted').flatMap((c) => [c.from.id, c.to.id]),
+  );
+  const mayAsk = connectionsOn && can(session, 'connection.send') && quota.canSend;
 
-  const openLeft = Math.max(0, quota.openLimit - quota.openRequests);
-  const monthLeft = Math.max(0, quota.monthlyLimit - quota.usedThisMonth);
-  const tone = openLeft === 0 ? 'danger' : openLeft <= 1 ? 'warning' : 'brand';
+  const action = (m: MemberSummary) =>
+    asked.has(m.id) ? (
+      <Badge tone="brand">Asked</Badge>
+    ) : connected.has(m.id) ? (
+      <Badge tone="success">Connected</Badge>
+    ) : mayAsk ? (
+      <RequestIntroButton
+        toMemberId={m.id}
+        toName={m.fullName}
+        kinds={offeredKinds(m)}
+        defaultKind={offeredKinds(m)[0]!}
+        quota={quota}
+        label="Ask"
+        variant="secondary"
+        size="sm"
+        className="min-h-11 sm:min-h-0"
+      />
+    ) : null;
+
+  const inUse = Math.max(0, quota.openLimit - openLeft);
 
   return (
-    <div className="grid gap-gutter lg:grid-cols-[minmax(0,1fr)_20rem]">
+    <div className="grid grid-cols-1 gap-gutter lg:grid-cols-[minmax(0,1fr)_20rem]">
       <Section
-        title={branchName ? `Graduates of ${branchName}` : 'Graduates open to mentoring'}
+        className="min-w-0"
+        title={ownBranch.length > 0 ? 'From your branch' : 'Open to being asked'}
         description={
-          !departmentCode
-            ? 'Your branch is not on your record, so this list is not sorted by it. The alumni cell can correct your branch from your member record.'
-            : ownBranch.length > 0
-              ? 'They sat the same papers in the same building. That is usually worth more than a bigger company name.'
-              : 'Nobody from your branch has volunteered yet — these graduates from other branches have, and a question about interview preparation or higher studies rarely turns on the branch.'
+          ownBranch.length > 0
+            ? `${branchName} graduates who sat the same papers you are sitting now.`
+            : departmentCode
+              ? `Nobody from ${departmentCode} has said yes yet. These graduates from other branches have.`
+              : undefined
         }
         actions={
-          departmentCode ? (
+          departmentCode && ownBranch.length > 0 ? (
             <ButtonLink
               href={`/directory?department=${encodeURIComponent(departmentCode)}&mentoring=1`}
               variant="ghost"
               size="sm"
+              className="min-h-11 sm:min-h-0"
             >
               See all
               <ArrowRight className="size-4" aria-hidden="true" />
@@ -325,293 +466,63 @@ function StudentPanel({
           ) : null
         }
       >
-        {mentors.length === 0 ? (
+        {shown.length === 0 ? (
           <EmptyState
-            icon={<GraduationCap className="size-5" />}
-            title="No graduate has switched mentoring on yet"
-            description="Availability is opt-in, and the list fills up as graduates verify their records and set their preferences. The alumni cell is writing to the batches that are already registered."
+            variant="inline"
+            title="No graduate has said yes to being asked yet."
             action={
-              <ButtonLink href="/directory" variant="secondary">
-                Browse the directory instead
-              </ButtonLink>
+              <Link href="/directory" className="link inline-flex min-h-11 items-center">
+                Browse the directory
+              </Link>
             }
           />
         ) : (
-          <div className="space-y-5">
-            {ownBranch.length > 0 ? (
-              <ul className="grid gap-4 sm:grid-cols-2">
-                {ownBranch.map((m) => (
-                  <li key={m.id} className="relative">
-                    <MemberCard member={m} className="h-full" />
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-
-            {otherBranches.length > 0 ? (
-              <div className="space-y-3">
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted">
-                  {!departmentCode
-                    ? 'Open to being asked'
-                    : ownBranch.length > 0
-                      ? 'Also open to being asked, from other branches'
-                      : 'From other branches'}
-                </p>
-                <ul className="grid gap-4 sm:grid-cols-2">
-                  {otherBranches.map((m) => (
-                    <li key={m.id} className="relative">
-                      <MemberCard member={m} className="h-full" />
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </div>
+          // A sideways rail on a phone, two columns from sm.
+          <ul className="scroll-fade-x -mx-4 flex snap-x scroll-px-4 gap-3 overflow-x-auto px-4 pb-2 sm:mx-0 sm:grid sm:grid-cols-2 sm:gap-4 sm:overflow-visible sm:px-0 sm:pb-0">
+            {shown.map((m) => (
+              <li key={m.id} className="relative w-[17rem] shrink-0 snap-start sm:w-auto sm:min-w-0">
+                <MemberCard member={m} className="h-full" action={action(m)} />
+              </li>
+            ))}
+          </ul>
         )}
       </Section>
 
-      <div className="space-y-4">
-        <Card>
-          <CardBody className="space-y-2.5">
-            <p className="text-sm font-medium text-secondary">Requests open right now</p>
-            <p className="font-display text-display-xs font-bold tabular">
-              {quota.openRequests} <span className="text-lg font-semibold text-muted">of {quota.openLimit}</span>
-            </p>
-            <Progress
-              value={quota.openRequests}
-              max={quota.openLimit}
-              tone={tone}
-              label={`Open requests: ${quota.openRequests} of ${quota.openLimit}`}
-            />
-            <p className="text-xs text-muted">
-              {openLeft > 0
-                ? `${openLeft} more you can send today. ${monthLeft} left this month.`
-                : `Every slot is in use. A slot comes back the moment somebody replies, and ${monthLeft} of this month's allowance is still unspent.`}
-            </p>
-            <p className="border-t border-line pt-2.5 text-xs text-secondary">
-              The cap is the reason graduates still reply. It is per student, not per college —
-              an alumnus who volunteered gets three considered messages a month instead of ninety.
-            </p>
-          </CardBody>
-        </Card>
-
-        {quota.reason ? (
-          <Alert
-            tone="warning"
-            title="You cannot send another request just yet"
-            icon={<TriangleAlert className="size-4" />}
-          >
-            <p>{quota.reason}</p>
-            <p className="mt-1.5">
-              <Link href="/connections?tab=sent" className="link">
-                See what you have already sent
-              </Link>
-              .
-            </p>
-          </Alert>
-        ) : null}
-
-        <Card>
-          <CardBody className="space-y-2">
-            <p className="flex items-center gap-2 text-sm font-semibold">
-              <Send className="size-4 text-muted" aria-hidden="true" />
-              How to ask so you get an answer
-            </p>
-            <p className="text-sm leading-relaxed text-secondary">
-              Keep it to four lines — who you are, the single decision you are stuck on, and what
-              you have already tried — and send it <em>before</em> you apply somewhere, not after
-              the rejection, because that is the only point at which a graduate&apos;s answer can
-              still change anything.
-            </p>
-          </CardBody>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------
-// Alumnus view
-// ---------------------------------------------------------------
-
-function AlumnusPanel({
-  openToMentoring,
-  openToReferrals,
-  openToSpeaking,
-  received,
-}: {
-  openToMentoring: boolean;
-  openToReferrals: boolean;
-  openToSpeaking: boolean;
-  received: ConnectionRequest[];
-}) {
-  const since = Date.now() - RECENT_WINDOW_MS;
-  const recent = received.filter((c) => new Date(c.createdAt).getTime() >= since);
-  const answered = recent.filter((c) => c.respondedAt !== null);
-  const fromStudents = recent.filter((c) => c.from.isStudent).length;
-  const waiting = received.filter((c) => c.state === 'pending');
-
-  const anyOn = openToMentoring || openToReferrals || openToSpeaking;
-
-  return (
-    <div className="grid gap-gutter lg:grid-cols-[minmax(0,1fr)_22rem]">
-      <BecomeMentorCard
-        mentoring={openToMentoring}
-        referrals={openToReferrals}
-        speaking={openToSpeaking}
-      />
-
-      <div className="space-y-4">
-        <Card>
-          <CardBody className="space-y-4">
-            <div className="space-y-1">
-              <p className="text-sm font-medium text-secondary">Your last thirty days</p>
-              <p className="font-display text-display-xs font-bold tabular">
-                {recent.length}{' '}
-                <span className="text-lg font-semibold text-muted">
-                  {recent.length === 1 ? 'request' : 'requests'}
-                </span>
-              </p>
-              <p className="text-xs text-muted">
-                {recent.length === 0
-                  ? anyOn
-                    ? 'Nobody has written to you this month. That is normal outside placement season.'
-                    : 'Nobody can write to you while all three switches are off.'
-                  : fromStudents === 0
-                    ? `None of them from final-year students — these came from other graduates. You answered ${answered.length} of ${recent.length}.`
-                    : `${fromStudents} of them from final-year students. You answered ${answered.length} of ${recent.length}.`}
-              </p>
-            </div>
-
-            {recent.length > 0 ? (
-              <Progress
-                value={answered.length}
-                max={recent.length}
-                tone={answered.length === recent.length ? 'success' : 'brand'}
-                label={`Answered ${answered.length} of ${recent.length} requests in the last thirty days`}
-              />
-            ) : null}
-
-            <div className="border-t border-line pt-3">
-              {waiting.length > 0 ? (
-                <p className="text-sm text-secondary">
-                  <Link href="/connections?tab=received" className="link font-medium">
-                    {waiting.length} {waiting.length === 1 ? 'request is' : 'requests are'} still
-                    waiting on you
-                  </Link>
-                  . Declining is a complete answer; a request left alone expires quietly and the
-                  sender is never told you ignored it.
-                </p>
-              ) : (
-                <p className="flex items-start gap-2 text-sm text-secondary">
-                  <Inbox className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-                  <span>Nothing is waiting on you. Your inbox is clear.</span>
-                </p>
-              )}
-            </div>
-          </CardBody>
-        </Card>
-
-        {!anyOn ? (
-          <Alert tone="neutral" icon={<Megaphone className="size-4" />}>
-            <p>
-              With all three off you are still listed in the directory and can still be found by
-              name — you are simply not offered to a student browsing for someone to ask. Turning
-              one on adds you to that list and changes nothing else about your record.
-            </p>
-          </Alert>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------
-// Stats
-// ---------------------------------------------------------------
-
-function StatsStrip({ stats }: { stats: ReturnType<typeof getMentorshipStats> }) {
-  return (
-    <Section
-      title="What the network currently offers"
-      description="Three different commitments, counted separately, because a graduate who will read a resume is not necessarily one who will put their name on a referral."
-    >
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat
-          label="Open to mentoring"
-          value={stats.mentors.toLocaleString('en-IN')}
-          hint="Will answer a question"
-          icon={<MessageSquare className="size-4" />}
-        />
-        <Stat
-          label="Open to referrals"
-          value={stats.referrers.toLocaleString('en-IN')}
-          hint="Will put a name forward internally"
-          icon={<Briefcase className="size-4" />}
-        />
-        <Stat
-          label="Open to speaking"
-          value={stats.speakers.toLocaleString('en-IN')}
-          hint="Will come back for a session"
-          icon={<Megaphone className="size-4" />}
-        />
-        <Stat
-          label="Mentoring from abroad"
-          value={stats.abroad.toLocaleString('en-IN')}
-          hint="Outside India, reachable here"
-          icon={<Earth className="size-4" />}
-        />
-      </div>
-
-      <div className="grid gap-gutter lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <aside aria-label="Your requests" className="min-w-0 space-y-4 lg:pt-12">
         <Card>
           <CardBody className="space-y-3">
-            <div className="space-y-1">
-              <h3 className="font-display text-md font-semibold">Mentors by branch</h3>
-              <p className="text-sm text-secondary">
-                Uneven, and worth saying so: the branches that graduated first have had longer to
-                build a habit of coming back.
-              </p>
+            <p className="font-sans text-sm font-semibold">Your requests</p>
+            <div className="flex items-center gap-1.5" aria-hidden="true">
+              {Array.from({ length: quota.openLimit }, (_, i) => (
+                <span
+                  key={i}
+                  className={cn(
+                    'size-3.5 rounded-full',
+                    i < openLeft ? 'bg-[var(--button-primary-bg)]' : 'border-2 border-line-strong',
+                  )}
+                />
+              ))}
             </div>
-            <BarList
-              data={stats.byDepartment}
-              label="Graduates open to mentoring, by branch"
-              formatValue={(n) => n.toLocaleString('en-IN')}
-            />
-            {stats.byDepartment.length === 0 ? null : (
-              <p className="border-t border-line pt-3 text-xs text-muted">
-                Branch codes as they appear on the degree register.
-              </p>
-            )}
+            <p className="text-sm">
+              <span className="font-semibold">{openLeft} available</span>
+              {inUse > 0 ? <span className="text-secondary"> · {inUse} waiting for a reply</span> : null}
+            </p>
+            <p className="text-sm text-secondary">
+              A slot comes back when a graduate replies. {monthLeft} left this month.
+            </p>
+            <Link href="/connections?tab=sent" className="link inline-flex min-h-11 items-center text-sm font-medium">
+              See what you have sent
+            </Link>
           </CardBody>
         </Card>
 
-        <Card>
-          <CardBody className="flex h-full flex-col justify-center gap-3">
-            <h3 className="font-display text-md font-semibold">
-              The number that surprises people
-            </h3>
-            <p className="text-md leading-relaxed text-secondary">
-              <CircleMark className="font-semibold text-primary tabular">
-                {stats.abroad.toLocaleString('en-IN')}
-              </CircleMark>{' '}
-              of the {stats.mentors.toLocaleString('en-IN')} graduates offering mentoring are
-              working outside India.
-            </p>
-            <p className="text-sm text-secondary">
-              That is the cohort no other channel reaches. They do not come to the annual meet,
-              they are not on the batch WhatsApp group any more, and a phone call to them costs
-              somebody an awkward hour. A written question they can answer on a Sunday is the only
-              format that works — which is the entire argument for this module existing.
-            </p>
-            <p>
-              <Badge tone="accent" dot>
-                Higher studies and visas
-              </Badge>
-            </p>
-          </CardBody>
-        </Card>
-      </div>
-    </Section>
+        <Disclosure summary="How to ask">
+          <p>
+            Keep it to four lines: who you are, the one decision you are stuck on, and what you have already tried.
+            Ask before you apply somewhere, not after a rejection, while an answer can still change something.
+          </p>
+        </Disclosure>
+      </aside>
+    </div>
   );
 }

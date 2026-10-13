@@ -1,7 +1,6 @@
 'use client';
 
 import * as React from 'react';
-import Link from 'next/link';
 import {
   BadgeCheck,
   Bell,
@@ -12,44 +11,34 @@ import {
   Handshake,
   Megaphone,
 } from 'lucide-react';
-import { Alert, Badge, Button, Card, useToast } from '@/components/ui';
+import { Alert, Button, ButtonLink, Card, useToast } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import type { NotificationItem } from '@/lib/data/types';
 
 /**
- * The inbox list — the only interactive leaf on the notifications screen.
+ * The inbox: read state, the "Mark all as read" control and the rows.
  *
- * Read state is the whole point of this component, so three things are
- * deliberate:
+ * Read state is held here, in one provider, because two places change it:
+ * the header's "Mark all as read" and each row's own control. The page
+ * stays a server component and renders both inside `InboxProvider`.
  *
- *  1. **Unread is a change of substance, not a dot.** A tinted ground, a
- *     brand rule down the left edge, a heavier title *and* the word
- *     "Unread" in a badge. Somebody who cannot separate the tint from the
- *     ground still reads the word.
- *  2. **The row is marked read where it sits.** It does not vanish from
- *     under the cursor, because a list that reorders itself as you work
- *     down it is a list you lose your place in — and because the "Unread"
- *     filter would otherwise empty itself one row at a time.
- *  3. **A failed write says so and stays visible.** The notifications
- *     write API is not connected in this build. Rather than pretending the
- *     server agreed, the banner names what happened and what reloading
- *     will show.
+ *  - **Unread is said three ways.** A brand dot, a bold title and the word
+ *    "Unread", so nobody has to tell a tint from the ground.
+ *  - **A row is marked read where it sits.** It does not jump or vanish,
+ *    so a reader working down the list keeps their place.
+ *  - **A failed write says so and stays visible,** and the row goes back
+ *    to unread rather than pretending the server agreed.
  */
 
 export type NotificationKind = NotificationItem['kind'];
 
-/**
- * The word that sits in the badge on a single row — singular, and
- * deliberately not the plural tab label the page uses. A server component
- * cannot dot into a `'use client'` module, so the tab labels live in
- * `page.tsx`; these are the row's own.
- */
-const KIND_BADGE: Record<NotificationKind, string> = {
-  connection: 'Connection',
+/** The row's own word for its kind, in the filter's vocabulary. */
+const KIND_LABEL: Record<NotificationKind, string> = {
+  connection: 'Request',
   event: 'Event',
   job: 'Job',
-  verification: 'Verification',
-  system: 'Portal notice',
+  verification: 'Account',
+  system: 'Account',
 };
 
 const KIND_ICON: Record<NotificationKind, React.ComponentType<{ className?: string }>> = {
@@ -58,14 +47,6 @@ const KIND_ICON: Record<NotificationKind, React.ComponentType<{ className?: stri
   job: Briefcase,
   verification: BadgeCheck,
   system: Megaphone,
-};
-
-const KIND_TONE: Record<NotificationKind, React.ComponentProps<typeof Badge>['tone']> = {
-  connection: 'brand',
-  event: 'accent',
-  job: 'info',
-  verification: 'success',
-  system: 'neutral',
 };
 
 export interface NotificationView {
@@ -80,12 +61,15 @@ export interface NotificationView {
   read: boolean;
   /** Already formatted on the server, in the tenant's time zone. */
   stamp: string;
+  /** "5 hours ago", for today's rows. Formatted on the server against the fixture clock. */
+  relative?: string | null;
+  /** The verb on the row's link ("Reply", "See event"); null when there is no link. */
+  action?: string | null;
 }
 
 export interface NotificationGroupView {
   key: 'today' | 'yesterday' | 'earlier';
   label: string;
-  hint: string;
   items: NotificationView[];
 }
 
@@ -96,13 +80,30 @@ interface Failure {
   status?: number;
 }
 
-export function NotificationList({
-  groups,
+interface InboxState {
+  unread: number;
+  busy: string | null;
+  failure: Failure | null;
+  isRead: (n: NotificationView) => boolean;
+  markOne: (n: NotificationView) => Promise<void>;
+  markAll: () => Promise<void>;
+}
+
+const InboxContext = React.createContext<InboxState | null>(null);
+
+function useInbox(): InboxState {
+  const ctx = React.useContext(InboxContext);
+  if (!ctx) throw new Error('Inbox controls must sit inside <InboxProvider>.');
+  return ctx;
+}
+
+export function InboxProvider({
   initialUnread,
+  children,
 }: {
-  groups: NotificationGroupView[];
   /** Unread across the whole inbox, not just the rows in view. */
   initialUnread: number;
+  children: React.ReactNode;
 }) {
   const toast = useToast();
   const [readIds, setReadIds] = React.useState<ReadonlySet<string>>(() => new Set<string>());
@@ -117,26 +118,31 @@ export function NotificationList({
 
   const unread = allRead ? 0 : Math.max(0, initialUnread - readIds.size);
 
-  const markOne = async (n: NotificationView) => {
-    setBusy(n.id);
-    setReadIds((prev) => {
-      const next = new Set(prev);
-      next.add(n.id);
-      return next;
-    });
+  const markOne = React.useCallback(
+    async (n: NotificationView) => {
+      setBusy(n.id);
+      setReadIds((prev) => new Set(prev).add(n.id));
 
-    const result = await postRead({ action: 'mark_read', ids: [n.id] });
-    setBusy(null);
+      const result = await postRead({ action: 'mark_read', ids: [n.id] });
+      setBusy(null);
 
-    if (result.ok) {
-      setFailure(null);
-      return;
-    }
-    setFailure(result);
-    toast.error(FAILURE_COPY[result.reason].title, FAILURE_COPY[result.reason].body);
-  };
+      if (result.ok) {
+        setFailure(null);
+        return;
+      }
+      // Roll the row back: the server did not record it.
+      setReadIds((prev) => {
+        const next = new Set(prev);
+        next.delete(n.id);
+        return next;
+      });
+      setFailure(result);
+      toast.error(FAILURE_COPY[result.reason].title, FAILURE_COPY[result.reason].body);
+    },
+    [toast],
+  );
 
-  const markAll = async () => {
+  const markAll = React.useCallback(async () => {
     setBusy('all');
     setAllRead(true);
 
@@ -145,49 +151,52 @@ export function NotificationList({
 
     if (result.ok) {
       setFailure(null);
-      toast.success(
-        'Inbox cleared',
-        'Everything is marked read. New notifications still arrive here and by email.',
-      );
       return;
     }
+    setAllRead(false);
     setFailure(result);
     toast.error(FAILURE_COPY[result.reason].title, FAILURE_COPY[result.reason].body);
-  };
+  }, [toast]);
+
+  const value = React.useMemo(
+    () => ({ unread, busy, failure, isRead, markOne, markAll }),
+    [unread, busy, failure, isRead, markOne, markAll],
+  );
+
+  return <InboxContext.Provider value={value}>{children}</InboxContext.Provider>;
+}
+
+/** The header action. Disabled, not hidden, when nothing is unread. */
+export function MarkAllButton() {
+  const { unread, busy, markAll } = useInbox();
+  return (
+    <>
+      <Button
+        variant="secondary"
+        className="min-h-11"
+        onClick={() => void markAll()}
+        disabled={unread === 0}
+        loading={busy === 'all'}
+      >
+        {busy === 'all' ? null : <CheckCheck className="size-4" aria-hidden="true" />}
+        Mark all as read
+      </Button>
+      <span className="sr-only" role="status">
+        {unread === 0 ? 'Everything is read.' : `${unread} unread.`}
+      </span>
+    </>
+  );
+}
+
+export function NotificationList({ groups }: { groups: NotificationGroupView[] }) {
+  const { failure, isRead, busy, markOne } = useInbox();
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-secondary" role="status">
-          {unread === 0 ? (
-            'Everything in your inbox is read.'
-          ) : (
-            <>
-              <span className="tabular font-semibold text-primary">{unread}</span> unread
-            </>
-          )}
-        </p>
-
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={markAll}
-          disabled={unread === 0}
-          loading={busy === 'all'}
-        >
-          {busy === 'all' ? null : <CheckCheck className="size-4" aria-hidden="true" />}
-          Mark all as read
-        </Button>
-      </div>
-
       {failure ? (
         <Alert
           tone={failure.reason === 'refused' ? 'danger' : 'warning'}
-          title={
-            failure.reason === 'refused'
-              ? `The server refused that (HTTP ${failure.status ?? 'error'})`
-              : FAILURE_COPY[failure.reason].title
-          }
+          title={FAILURE_COPY[failure.reason].title}
           icon={<Bell className="size-4" />}
         >
           <p>{FAILURE_COPY[failure.reason].body}</p>
@@ -195,15 +204,10 @@ export function NotificationList({
       ) : null}
 
       {groups.map((group) => (
-        <section key={group.key} aria-label={group.label} className="space-y-3">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-            <h2 className="font-display text-lg font-semibold">{group.label}</h2>
-            <p className="text-xs text-muted">
-              <span className="tabular">{group.items.length}</span>
-              {group.items.length === 1 ? ' notification · ' : ' notifications · '}
-              {group.hint}
-            </p>
-          </div>
+        <section key={group.key} aria-labelledby={`group-${group.key}`} className="space-y-2">
+          <h2 id={`group-${group.key}`} className="text-sm font-semibold text-secondary">
+            {group.label}
+          </h2>
 
           <Card className="overflow-hidden">
             <ul className="divide-y divide-line">
@@ -213,7 +217,7 @@ export function NotificationList({
                   notification={n}
                   read={isRead(n)}
                   busy={busy === n.id}
-                  onMarkRead={() => markOne(n)}
+                  onMarkRead={() => void markOne(n)}
                 />
               ))}
             </ul>
@@ -238,73 +242,76 @@ function Row({
   onMarkRead: () => void;
 }) {
   const Icon = KIND_ICON[n.kind];
+  const when = n.relative ?? n.stamp;
 
   return (
-    <li
-      className={cn(
-        'flex gap-3 border-l-2 p-4 transition-colors duration-fast ease-brand sm:gap-4 sm:p-card',
-        read
-          ? 'border-l-transparent bg-surface-raised'
-          : 'border-l-[var(--button-primary-bg)] bg-brand-soft',
-      )}
-    >
-      <span
-        className={cn(
-          'mt-0.5 grid size-9 shrink-0 place-items-center rounded-full',
-          read ? 'bg-surface-sunken text-muted' : 'bg-surface-raised text-brand-fg',
+    <li className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-3 p-4 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:gap-x-4 sm:px-card">
+      <span className="relative mt-0.5" aria-hidden="true">
+        <span className="grid size-9 place-items-center rounded-full bg-surface-sunken text-secondary">
+          <Icon className="size-4" />
+        </span>
+        {read ? null : (
+          <span className="absolute -left-0.5 -top-0.5 size-2.5 rounded-full bg-[var(--button-primary-bg)] ring-2 ring-[var(--surface-raised)]" />
         )}
-        aria-hidden="true"
-      >
-        <Icon className="size-4" />
       </span>
 
-      <div className="min-w-0 flex-1 space-y-1.5">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <Badge tone={KIND_TONE[n.kind]}>{KIND_BADGE[n.kind]}</Badge>
-          {read ? null : (
-            <Badge tone="brand" dot>
-              Unread
-            </Badge>
-          )}
-          <span className="tabular text-xs text-muted">{n.stamp}</span>
-        </div>
-
-        {n.href ? (
-          <Link
-            href={n.href}
-            className={cn('link-quiet block text-sm', read ? 'font-medium text-secondary' : 'font-semibold')}
-          >
-            {n.title}
-          </Link>
-        ) : (
-          <p className={cn('text-sm', read ? 'font-medium text-secondary' : 'font-semibold')}>
-            {n.title}
-          </p>
-        )}
-
+      <div className="min-w-0 space-y-1">
+        <p className={cn('text-sm', read ? 'text-primary' : 'font-semibold text-primary')}>{n.title}</p>
         {n.body ? <p className="text-sm text-secondary">{n.body}</p> : null}
-        {n.hrefNote ? <p className="text-xs text-muted">{n.hrefNote}</p> : null}
+        <p className="text-xs text-secondary">
+          {KIND_LABEL[n.kind]}
+          <span aria-hidden="true"> · </span>
+          <span className="tabular">{when}</span>
+          {read ? null : (
+            <>
+              <span aria-hidden="true"> · </span>
+              <span className="font-semibold text-brand-fg">Unread</span>
+            </>
+          )}
+        </p>
+        {n.hrefNote ? <p className="text-xs text-secondary">{n.hrefNote}</p> : null}
       </div>
 
-      <div className="flex shrink-0 items-start">
-        {read ? (
-          <span className="inline-flex h-control-sm items-center gap-1.5 px-2 text-xs text-muted">
-            <Check className="size-3.5" aria-hidden="true" />
-            <span className="hidden sm:inline">Read</span>
-          </span>
-        ) : (
+      {n.href && n.action ? (
+        <div className="col-start-2 flex flex-wrap items-center gap-2 sm:col-start-3 sm:row-start-1 sm:self-center">
+          <ButtonLink
+            href={n.href}
+            variant="secondary"
+            size="sm"
+            className="min-h-11"
+            onClick={read ? undefined : onMarkRead}
+          >
+            {n.action}
+          </ButtonLink>
+          {read ? null : (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="min-h-11"
+              onClick={onMarkRead}
+              loading={busy}
+              aria-label={`Mark “${n.title}” as read`}
+            >
+              {busy ? null : <Check className="size-4" aria-hidden="true" />}
+              <span className="sm:sr-only">Mark read</span>
+            </Button>
+          )}
+        </div>
+      ) : read ? null : (
+        <div className="col-start-2 sm:col-start-3 sm:row-start-1 sm:self-center">
           <Button
             variant="ghost"
             size="sm"
+            className="min-h-11"
             onClick={onMarkRead}
             loading={busy}
             aria-label={`Mark “${n.title}” as read`}
           >
             {busy ? null : <Check className="size-4" aria-hidden="true" />}
-            <span className="hidden sm:inline">Mark read</span>
+            Mark read
           </Button>
-        )}
-      </div>
+        </div>
+      )}
     </li>
   );
 }
@@ -337,18 +344,15 @@ async function postRead(body: Record<string, unknown>): Promise<PostResult> {
 
 const FAILURE_COPY: Record<FailureReason, { title: string; body: string }> = {
   missing: {
-    title: 'Read state is not saved on the server yet',
-    body:
-      'The notifications write endpoint is not connected in this build, so this is recorded on this screen only. Reload the page and everything comes back unread. Nothing else about your account has changed.',
+    title: 'Read state was not saved',
+    body: 'Nothing changed on your account. Reload the page to see the true state.',
   },
   offline: {
     title: 'Nothing reached the server',
-    body:
-      'Your device looks to be offline. The rows are marked read here so you can keep reading, but reconnect and mark them again to make it stick.',
+    body: 'Your device looks to be offline. Reconnect and mark them again.',
   },
   refused: {
     title: 'The server refused that',
-    body:
-      'Nothing was changed on the server, so reload the page to see the true state. If it keeps happening, tell the alumni cell what you were doing and roughly when.',
+    body: 'Nothing changed on your account. Reload the page to see the true state.',
   },
 };

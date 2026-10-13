@@ -218,9 +218,7 @@ export function ExportApplicantsDialog({
             </Alert>
 
             <dl className="divide-y divide-line">
-              <DetailRow label="Action">
-                <span className="font-mono text-sm">job.applicants.export</span>
-              </DetailRow>
+              <DetailRow label="Action">Export of the applicant list</DetailRow>
               <DetailRow label="Posting">
                 {jobTitle} · {company}
               </DetailRow>
@@ -299,19 +297,14 @@ export function ExportApplicantsDialog({
                   ))}
                 </ul>
               ) : (
-                <p className="text-xs text-secondary">
-                  Reading the column list from the server — it is the same list the audit entry
-                  records, so it is not guessed here.
-                </p>
+                <p className="text-xs text-secondary">Reading the column list…</p>
               )}
 
               <p className="mt-3 text-xs text-secondary">
                 <span className="font-semibold text-primary">
                   Never in the file: {(preview?.neverIncluded ?? ['Email', 'Mobile']).join(' and ')}.
                 </span>{' '}
-                Bulk contact data is <span className="font-mono">member.export</span>, college admin
-                only, and it does not ride along here. To reach an applicant, message them from the
-                posting.
+                Contact data is a separate export that only the college admin can run.
               </p>
 
               <p className="mt-2 text-xs text-secondary">
@@ -329,10 +322,8 @@ export function ExportApplicantsDialog({
                 <p>{refusal.message}</p>
                 {refusal.denied ? (
                   <p className="mt-2">
-                    Downloading the list needs <span className="font-mono">job.applicants.export</span>,
-                    which the placement cell holds. Posting the role lets you read every applicant on
-                    this page; it does not let you keep a copy. Nothing was exported and no file
-                    reached this machine.
+                    Downloading the list is for the placement cell. Posting the role lets you read every
+                    applicant on this page, not keep a copy. Nothing was exported.
                   </p>
                 ) : null}
               </Alert>

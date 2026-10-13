@@ -1,15 +1,11 @@
 # =============================================================
 # Alumni Portal — production image
 #
-# PREREQUISITE: next.config.ts must set `output: 'standalone'`. It does
-# not today. Without it `next build` never writes .next/standalone and the
-# runner stage fails on a missing server.js — which reads like a broken
-# COPY path rather than a missing config line, so check that first.
-#
-#   const nextConfig: NextConfig = {
-#     output: 'standalone',
-#     ...
-#   };
+# next.config.ts only emits `output: 'standalone'` when BUILD_STANDALONE=1
+# (`next start` refuses to serve a standalone build, so it is opt-in for
+# the ordinary local loop). The builder stage below sets it. If the runner
+# stage ever fails on a missing server.js, that variable is the first thing
+# to check — it reads like a broken COPY path, not a missing flag.
 #
 # Build:  docker build -t alumni-portal .
 # Run:    docker run -p 3000:3000 --env-file .env.production alumni-portal
@@ -48,12 +44,15 @@ RUN npx prisma generate
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
+ENV BUILD_STANDALONE=1
 
-# src/lib/auth/session.ts throws at import time when SESSION_SECRET is
-# missing outside fixture mode, and `next build` imports it while
-# prerendering. A throwaway value gets the build through; the real secret
-# is injected at run time and nothing signed with this one ever exists.
-ENV SESSION_SECRET=build-only-not-used-at-runtime
+# src/lib/auth/session.ts refuses to load without a SESSION_SECRET of at
+# least 32 characters in production, and `next build` imports it while
+# prerendering. A throwaway value of that length gets the build through; the
+# real secret is injected at run time and nothing signed with this one ever
+# exists. It is an ENV in the builder stage only - the runner starts from a
+# clean base and does not inherit it.
+ENV SESSION_SECRET=build-only-placeholder-not-a-real-secret-0000
 
 RUN npm run build
 
@@ -88,5 +87,11 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modul
 
 USER nextjs
 EXPOSE 3000
+
+# /api/health needs no session. Any 2xx means the server is answering and the
+# Host header resolved; a crashed or wedged process fails it and the
+# orchestrator replaces the container.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 CMD ["node", "server.js"]

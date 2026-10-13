@@ -21,6 +21,8 @@ caches, crawlers, uptime monitoring, and any HTTP client that branches on
 | anonymous | protected page | `307` → `/login?next=…` | middleware |
 | anonymous | protected API | `401 {error, code}` | middleware |
 | signed in, no console capability | `/admin`, `/platform` | `307` → `/dashboard` | middleware |
+| signed in, vendor only (`platform_admin` and no other role) | member community: `/dashboard`, `/directory`, `/connections`, `/mentorship`, `/events`, `/jobs`, `/news`, `/gallery`, `/giving`, `/notifications` | `307` → `/platform` (`/settings` if `/platform` would refuse them too) | middleware |
+| signed in, vendor only | the `/api` twins of those (`/api/jobs`, `/api/directory`, `/api/members`, `/api/connections`, `/api/events`, `/api/donations`, `/api/notifications`, and `/api/news`, `/api/gallery` pre-emptively) | `403 {error, code}` | middleware |
 | signed in, no capability | protected API | `403 {error, code}` | route handler |
 | signed in, capability held | anything | `200` | — |
 | signed in, wrong screen inside a console | `/admin/*` | **`200`** ⚠ | page — see §5.1 |
@@ -94,8 +96,19 @@ What it costs is a storage read, so the read is charged only where it buys a
 status code:
 
 - `/admin` and `/platform` carry `requiresAnyCapability` and pay for it.
-- `/dashboard`, `/directory`, `/settings`, every other member route and every
-  `/api` route ask a question the cookie alone answers, and read nothing.
+- The member-community prefixes and their `/api` twins carry
+  `refuseVendorOnly` and pay for it too (added 2026-09-28). This one is not a
+  status-code fix: `/jobs`, `/news` and `/gallery` ask no capability, so a
+  session holding only `platform_admin` was served postings, an obituary and
+  photo credits naming alumni, and `GET /api/jobs` served the postings as
+  JSON. There is no page-side vendor refusal behind the rule on those three
+  yet, so the gate is the enforcement there, not a pre-filter. It is most of
+  the portal's page traffic, which makes this the larger cost of the two; the
+  argument for paying it rather than putting a vendor flag in the cookie is at
+  the top of `src/lib/auth/route-policy.ts`.
+- `/profile`, `/settings`, `/api/auth/me`, `/api/profile`, `/api/settings`,
+  `/api/data-requests`, `/api/admin/*` and `/api/platform/*` ask a question
+  the cookie alone answers, and read nothing.
 - Static assets never reach the gate at all (the `matcher` excludes them, and
   `isAssetPath()` excludes them a second time).
 
@@ -103,7 +116,8 @@ The module holding member data is loaded through a dynamic `import()` inside
 the gate, so a request to `/dashboard` does not evaluate it. Today
 `findMemberById()` is an in-memory `Map` lookup in fixture mode — free. **When
 the Postgres implementation lands this becomes a real query on every
-staff-console navigation**, and that is the moment to add a short-TTL
+staff-console navigation and every member-community request**, and that is the
+moment to add a short-TTL
 role cache keyed on member id (or a `roles_version` column bumped by
 `role.manage` writes) rather than to delete the gate. Console traffic is a
 small fraction of requests and every one of those requests is about to do a
@@ -165,8 +179,8 @@ redirects.
 
 `tests/route-policy.test.ts` asserts the partition, asserts that
 `holdsAnyCapability()` agrees with `can()` across the entire role ×
-capability matrix, and asserts that only `/admin` and `/platform` cost a
-lookup. The agreement test is the anti-drift device: a gate more permissive
+capability matrix, and pins exactly which prefixes cost a lookup (the two
+consoles plus the vendor-refusing member-community prefixes). The agreement test is the anti-drift device: a gate more permissive
 than the page guard is theatre, and a gate stricter than it is an outage
 caused by a status-code fix.
 
@@ -542,7 +556,10 @@ not true of 5.1, where 5.4 alone produces `500`s.
 exists gets `307 → /login` on `/admin` and `/platform` (the gate resolves the
 row, finds nothing, and answers the anonymous way — matching `getSession()`),
 `401` on `/api/*` (the handler resolves the session itself), and `200` on
-`/dashboard`, where `AppShell`'s `redirect('/login')` lands after the flush.
+`/profile` and `/settings`, where `AppShell`'s `redirect('/login')` lands after
+the flush. (Since the vendor rule, the member-community prefixes resolve the
+row as well, so `/dashboard`, `/jobs` and the rest now answer `307 → /login`
+for this case too — a side effect, not the purpose.)
 
 **Why it is not fixed here.** Closing it in middleware means resolving the
 member row on *every* protected route rather than on the two console prefixes
@@ -648,8 +665,8 @@ file was not in scope for this change.
 | File | Role |
 | --- | --- |
 | `src/lib/auth/route-policy.ts` | The prefix table, the derived console capability set, the coarse decision, the refusal targets. Pure — no Next imports, fully unit-tested. |
-| `src/middleware.ts` | Runs the gate, resolves the member for capability-gated prefixes, and applies the tenant header, CSP nonce and security headers to every response including refusals. |
-| `tests/route-policy.test.ts` | 52 tests. Prefix matching, `next=` sanitisation, cookie signature, the capability gate's agreement with `can()`, and the size and shape of the §5.1 gap. |
+| `src/middleware.ts` | Runs the gate, resolves the member for the prefixes `needsViewer()` names (capability-gated and vendor-refusing), and applies the tenant header, CSP nonce and security headers to every response including refusals. |
+| `tests/route-policy.test.ts` | 67 tests. Prefix matching, `next=` sanitisation, cookie signature, the capability gate's agreement with `can()`, the size and shape of the §5.1 gap, and the vendor rule — who it refuses, who it must not, what it costs, and a walk of every redirect chain for loops. |
 | `src/lib/auth/guard.ts` | `can()` / `require()`. **The authority.** Middleware defers to it; it does not defer to middleware. |
 | `src/lib/auth/permissions.ts` | The capability matrix the console set is derived from. |
 | `src/app/api/_lib/http.ts` | `fail()` — how route handlers put a status on the line, which has always worked. |

@@ -8,6 +8,10 @@ import type { MemberStatus } from '@/lib/data/types';
  * status in the enum is offered even where the seeded data has none — an
  * admin looking for lapsed accounts should find an empty result that says
  * so, not a missing option that looks like a bug.
+ *
+ * Colour is for exceptions. The two ordinary states read as passive
+ * (outline) or done (success); waiting reads as warning; refused as
+ * danger. No state uses the info tone, which is not used after sign-in.
  */
 
 export type StatusTone =
@@ -23,42 +27,42 @@ export const STATUS_META: Record<MemberStatus, { label: string; tone: StatusTone
   unclaimed: {
     label: 'Unclaimed',
     tone: 'outline',
-    note: 'In the degree register, no account against the row.',
+    note: 'In the degree register, with no account against the row.',
   },
   invited: {
     label: 'Invited',
-    tone: 'info',
-    note: 'An invitation has gone out and has not been acted on.',
+    tone: 'brand',
+    note: 'Invited, and has not signed in yet.',
   },
   pending: {
     label: 'Awaiting verification',
     tone: 'warning',
-    note: 'Registered and waiting on a decision. Can read their own profile and nothing else.',
+    note: 'Registered and waiting for a decision. Can see only their own profile.',
   },
   active_student: {
     label: 'Final year',
-    tone: 'info',
-    note: 'Current student. Never sees alumni contact details or the giving module.',
+    tone: 'outline',
+    note: 'A current student. Does not see the giving module.',
   },
   active_alumni: {
     label: 'Alumni',
     tone: 'success',
-    note: 'Verified against the degree register. Full member access.',
+    note: 'Verified against the degree register.',
   },
   rejected: {
     label: 'Rejected',
     tone: 'danger',
-    note: 'No matching register row. The person can appeal with a mark sheet.',
+    note: 'Registration refused. They can register again with the right details.',
   },
   lapsed: {
     label: 'Lapsed',
     tone: 'neutral',
-    note: 'Email has hard-bounced or the account has been dormant for two years.',
+    note: 'The account is no longer in use.',
   },
   deceased: {
     label: 'Deceased',
     tone: 'neutral',
-    note: 'Retained for institutional record. Excluded from every communication segment.',
+    note: 'Kept for the college record and left out of every message.',
   },
 };
 

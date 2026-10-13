@@ -1,28 +1,31 @@
 import { notFound, redirect } from 'next/navigation';
 import {
+  ArrowUpRight,
   BadgeCheck,
-  Building2,
-  Database,
-  EyeOff,
-  Globe,
+  Circle,
+  CircleCheck,
+  CircleDashed,
   GraduationCap,
+  Globe,
   Landmark,
   Lock,
+  LogIn,
   Palette,
-  Server,
   Users,
 } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap } from '@/lib/auth/guard';
 import { getTenants } from '@/lib/data/repo';
-import { getPack, HOUSE_PACK_ID, DEMO_PACK_IDS } from '@/lib/branding/registry';
-import { readableTextOn } from '@/lib/branding/color';
-import type { Feature } from '@/lib/branding/pack';
-import { formatDate, formatNumber, formatPercent, formatRelative } from '@/lib/format';
-import { ProportionBar } from '@/components/charts';
+import { getPack, HOUSE_PACK_ID, DEMO_PACK_IDS, housePack } from '@/lib/branding/registry';
+import { DEFAULT_PACK, type BrandPack, type Feature } from '@/lib/branding/pack';
+import { scopedTokensCss } from '@/lib/branding/scope';
+import { buildTokens, googleFontsHref } from '@/lib/branding/tokens';
+import { vendorLabel } from '@/lib/branding/copy';
+import { formatDate, formatNumber, formatPercent } from '@/lib/format';
+import { Logo } from '@/components/brand/Logo';
+import { BandChip, PageBand } from '@/components/brand/PageBand';
 import {
-  Alert,
   Badge,
   Breadcrumbs,
   ButtonLink,
@@ -33,57 +36,57 @@ import {
   CardHeader,
   CardTitle,
   DetailRow,
+  Disclosure,
   EmptyState,
-  PageHeader,
+  Progress,
   Section,
   Stat,
 } from '@/components/ui';
 
+import { MediaReadiness, COLLEGE_ASKS, setupSteps, type SetupStep } from '../_shared/MediaReadiness';
+import { MiniPortal, SeedSwatches } from '../_shared/MiniPortal';
+import { portalAddress } from '../_shared/portal-address';
+import { VendorTrustChip } from '../_shared/VendorTrustChip';
+
 /**
- * One tenant, as the vendor sees it.
+ * One college, as the vendor sees it.
  *
- * Configuration, branding, feature flags and health — all of it derived
- * from the tenant row and its brand pack. Not one figure on this page
- * comes from a member record, because `platform_admin` holds no
- * capability that would return one.
+ * Its set-up, its look and aggregate counts, all from the tenant row and
+ * its brand pack. Not one figure comes from a member record, and no count
+ * links to the people behind it: `platform_admin` holds no capability that
+ * would return one.
  */
 
-export const metadata = { title: 'Tenant' };
+export const metadata = { title: 'College' };
 
-const PLATFORM_DOMAIN = 'alumni.ifbash.com';
-
-const STATUS_TONE = { active: 'success', provisioning: 'info', suspended: 'danger' } as const;
-const STATUS_LABEL = {
-  active: 'Active',
-  provisioning: 'Provisioning',
-  suspended: 'Suspended',
-} as const;
-const PLAN_LABEL = { trial: 'Trial', standard: 'Standard', institution: 'Institution' } as const;
-const PLAN_NOTE = {
-  trial: 'Ninety days, full feature set, no commitment. Converts or lapses.',
-  standard: 'Per-year licence. Directory, connections, events and jobs.',
-  institution: 'Per-year licence with the whole surface, including giving and comms.',
+const STATUS = {
+  active: { label: 'Live' },
+  provisioning: { label: 'Onboarding' },
+  suspended: { label: 'Suspended' },
 } as const;
 
-const RADIUS_LABEL = {
-  none: 'square corners',
-  subtle: 'subtle corners',
-  rounded: 'rounded corners',
-  pill: 'pill corners',
+const PLAN = {
+  trial: { label: 'Trial', note: 'An evaluation licence while the college decides.' },
+  standard: { label: 'Standard', note: 'An annual licence for the core alumni network.' },
+  institution: { label: 'Institution', note: 'An annual licence for the whole portal.' },
 } as const;
 
-const FEATURES: Array<{ key: Feature; label: string; note: string }> = [
-  { key: 'directory', label: 'Directory', note: 'Search alumni by branch, batch, company, city. Never anonymous.' },
-  { key: 'connections', label: 'Connections', note: 'The student-to-alumni valve, with per-cohort quotas.' },
-  { key: 'events', label: 'Events', note: 'Reunions and department sessions, with check-in.' },
-  { key: 'jobs', label: 'Jobs', note: 'Alumni post roles; the placement cell moderates.' },
-  { key: 'mentorship', label: 'Mentorship', note: 'Availability flags and structured mentoring requests.' },
-  { key: 'donations', label: 'Giving', note: 'Blocked until FCRA registration is confirmed in writing.' },
-  { key: 'gallery', label: 'Gallery', note: 'Photo sets attached to events and batches.' },
-  { key: 'news', label: 'News', note: 'Announcements on the portal home and the public landing page.' },
-  { key: 'whatsapp', label: 'WhatsApp', note: 'Business API templates. Email open rates on alumni lists are poor.' },
-  { key: 'publicLanding', label: 'Public landing', note: 'A signed-out marketing page on the tenant subdomain.' },
+const MODULES: Array<{ key: Feature; label: string; note: string }> = [
+  { key: 'directory', label: 'Directory', note: 'Alumni find each other by branch, batch, company and city.' },
+  { key: 'connections', label: 'Requests', note: 'Final-year students ask alumni for mentoring and referrals.' },
+  { key: 'mentorship', label: 'Mentorship', note: 'Alumni say when they are open to mentoring.' },
+  { key: 'events', label: 'Events', note: 'Reunions and department sessions, with registration.' },
+  { key: 'jobs', label: 'Jobs', note: 'Alumni post roles; the placement cell checks them first.' },
+  { key: 'news', label: 'News', note: 'Stories and announcements from the college.' },
+  { key: 'gallery', label: 'Gallery', note: 'Photo albums from events and batches.' },
+  { key: 'publicLanding', label: 'Public front page', note: 'A signed-out page on the college’s address.' },
+  { key: 'whatsapp', label: 'WhatsApp messages', note: 'A WhatsApp channel for staff messages, once the college’s Business account is connected.' },
+  { key: 'donations', label: 'Giving', note: 'Campaigns and the giving form, with foreign gifts held apart.' },
 ];
+
+function coverageTone(fraction: number): 'danger' | 'warning' | 'success' {
+  return fraction < 0.2 ? 'danger' : fraction < 0.35 ? 'warning' : 'success';
+}
 
 export default async function TenantDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
@@ -95,443 +98,386 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
   if (!tenant) notFound();
 
   const pack = getPack(tenant.packId);
-  const isDemoPack = pack ? (DEMO_PACK_IDS as readonly string[]).includes(pack.id) : false;
-  const isHousePack = pack?.id === HOUSE_PACK_ID;
+  // The hero needs a band; a college with no pack is shown in the neutral one it would get.
+  const look: BrandPack = pack ?? DEFAULT_PACK;
+  const isTemplate = pack ? pack.id === HOUSE_PACK_ID || (DEMO_PACK_IDS as readonly string[]).includes(pack.id) : false;
+
+  const address = await portalAddress(tenant.subdomain);
+  const vendor = vendorLabel(housePack().copy);
+  const scope = `pack-${look.id} college-hero`;
+  const heroCss = scopedTokensCss(buildTokens(look), `.pack-${look.id}.college-hero`);
+  const heroFonts = googleFontsHref(look);
+
+  const steps = setupSteps(tenant, pack);
+  const done = steps.filter((s) => s.done).length;
+  const complete = done === steps.length;
 
   const cov = tenant.memberCount ? tenant.verifiedCount / tenant.memberCount : null;
-  const unverified = Math.max(0, tenant.memberCount - tenant.verifiedCount);
-  const host = `${tenant.subdomain}.${PLATFORM_DOMAIN}`;
+  const waiting = Math.max(0, tenant.memberCount - tenant.verifiedCount);
+
+  const heroPhoto = look.assets.heroImage
+    ? { src: look.assets.heroImage, alt: look.assets.heroImageAlt ?? '', focus: look.assets.heroFocus }
+    : null;
+
+  const checklist = (
+    <SetupChecklist tenant={tenant} pack={pack} steps={steps} done={done} complete={complete} />
+  );
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        breadcrumbs={
-          <Breadcrumbs
-            items={[
-              { label: 'Colleges', href: '/platform' },
-              { label: tenant.shortName },
-            ]}
-          />
-        }
-        eyebrow={`${PLAN_LABEL[tenant.plan]} plan`}
-        title={tenant.name}
-        description={`Provisioned ${formatRelative(tenant.createdAt)} on ${host}. Everything below is tenant configuration and aggregate counts — this console has no read path into the college's member data.`}
-        actions={
-          <>
-            <Badge tone={STATUS_TONE[tenant.status]} dot>
-              {STATUS_LABEL[tenant.status]}
-            </Badge>
-            <ButtonLink variant="secondary" href="/platform/brands">
-              <Palette className="size-4" aria-hidden="true" />
-              Brand packs
-            </ButtonLink>
-          </>
-        }
-      />
+      {/* The chip stays on the left: its explanation opens rightwards. */}
+      <div className="flex flex-col items-start gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4">
+        <Breadcrumbs items={[{ label: 'Colleges', href: '/platform' }, { label: tenant.shortName }]} />
+        <VendorTrustChip />
+      </div>
 
-      {tenant.status === 'provisioning' ? (
-        <Alert
-          tone="info"
-          title="This tenant is still provisioning"
-          icon={<Server className="size-4" />}
-        >
-          <p>
-            The tenant row, its RLS scope and the branding record exist. The degree register has
-            not been loaded and the first <code className="font-mono text-xs">college_admin</code>{' '}
-            invite has not been accepted, so there are no members to count yet. Nothing on this
-            page is missing — it has simply not happened.
-          </p>
-        </Alert>
-      ) : null}
-
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat
-          label="Members"
-          value={tenant.memberCount ? formatNumber(tenant.memberCount) : '—'}
-          icon={<Users className="size-4" />}
-          hint={tenant.memberCount ? 'students and alumni in one table' : 'no members yet'}
-        />
-        <Stat
-          label="Alumni"
-          value={tenant.alumniCount ? formatNumber(tenant.alumniCount) : '—'}
-          icon={<GraduationCap className="size-4" />}
-          hint={tenant.established ? `graduating batches since ${tenant.established + 4}` : 'across all batches'}
-        />
-        <Stat
-          label="Final-year students"
-          value={tenant.studentCount ? formatNumber(tenant.studentCount) : '—'}
-          icon={<Users className="size-4" />}
-          hint="flipped to alumni by the annual rollover"
-        />
-        <Stat
-          label="Register coverage"
-          value={cov === null ? '—' : formatPercent(cov)}
-          icon={<BadgeCheck className="size-4" />}
-          hint={
-            cov === null
-              ? 'no degree register loaded'
-              : `${formatNumber(tenant.verifiedCount)} matched to a degree record`
+      {/* The hero wears the college's own tokens; the console around it keeps the house's. */}
+      <div className={scope}>
+        <style dangerouslySetInnerHTML={{ __html: heroCss }} />
+        {heroFonts ? <link rel="stylesheet" href={heroFonts} precedence="default" /> : null}
+        <PageBand
+          pack={look}
+          photo={heroPhoto}
+          eyebrow={<Logo pack={look} variant="band" height={22} />}
+          title={tenant.name}
+          lead={look.copy.tagline}
+          meta={
+            <>
+              <BandChip>{STATUS[tenant.status].label}</BandChip>
+              <BandChip>{PLAN[tenant.plan].label} plan</BandChip>
+              <BandChip icon={<Globe />} href={address.href}>
+                <span className="font-mono">{address.host}</span>
+              </BandChip>
+            </>
+          }
+          actions={
+            <>
+              <ButtonLink href={address.href} target="_blank" rel="noreferrer" variant="band" className="min-h-11">
+                Open portal
+                <ArrowUpRight className="size-4" aria-hidden="true" />
+                <span className="sr-only">(opens in a new tab)</span>
+              </ButtonLink>
+              <ButtonLink
+                href={`${address.href}/login`}
+                target="_blank"
+                rel="noreferrer"
+                variant="band-outline"
+                className="min-h-11"
+              >
+                <LogIn className="size-4" aria-hidden="true" />
+                Preview sign-in
+                <span className="sr-only">(opens in a new tab)</span>
+              </ButtonLink>
+            </>
           }
         />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <div className="min-w-0 space-y-1">
-              <CardTitle as="h2">Configuration</CardTitle>
-              <CardDescription>
-                What the tenant row holds, and where its data physically sits.
-              </CardDescription>
+      {tenant.memberCount > 0 ? (
+        <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+          {checklist}
+          <section aria-labelledby="members-title" className="space-y-4">
+            <h2 id="members-title" className="font-display text-xl font-semibold">
+              Members
+            </h2>
+            {/* Counts only. None of these opens a list of people. */}
+            <div className="grid grid-cols-2 gap-3 sm:gap-4">
+              <Stat label="Members" value={formatNumber(tenant.memberCount)} icon={<Users className="size-4" />} />
+              {tenant.alumniCount ? (
+                <Stat label="Alumni" value={formatNumber(tenant.alumniCount)} icon={<GraduationCap className="size-4" />} />
+              ) : null}
+              {tenant.studentCount ? (
+                <Stat label="Final-year" value={formatNumber(tenant.studentCount)} icon={<Users className="size-4" />} />
+              ) : null}
+              {cov !== null ? (
+                <Stat label="Verified" value={formatPercent(cov)} icon={<BadgeCheck className="size-4" />} />
+              ) : null}
             </div>
-            <Building2 className="size-5 shrink-0 text-muted" aria-hidden="true" />
-          </CardHeader>
-          <CardBody>
-            <dl className="divide-y divide-line">
-              <DetailRow label="Tenant id">
-                <span className="font-mono text-xs">{tenant.id}</span>
-              </DetailRow>
-              <DetailRow label="Portal address">
-                <span className="font-mono text-xs">{host}</span>
-              </DetailRow>
-              <DetailRow label="Short name">{tenant.shortName}</DetailRow>
-              <DetailRow label="Established">
-                {tenant.established ? <span className="tabular">{tenant.established}</span> : 'Not recorded'}
-              </DetailRow>
-              <DetailRow label="Plan">
-                <span className="space-y-1">
-                  <span className="block">{PLAN_LABEL[tenant.plan]}</span>
-                  <span className="block text-xs font-normal text-muted">{PLAN_NOTE[tenant.plan]}</span>
-                </span>
-              </DetailRow>
-              <DetailRow label="Lifecycle state">
-                <Badge tone={STATUS_TONE[tenant.status]} dot>
-                  {STATUS_LABEL[tenant.status]}
-                </Badge>
-              </DetailRow>
-              <DetailRow label="Provisioned">
-                <span className="tabular">{formatDate(tenant.createdAt)}</span>{' '}
-                <span className="text-xs font-normal text-muted">
-                  ({formatRelative(tenant.createdAt)})
-                </span>
-              </DetailRow>
-              <DetailRow label="Data residency">
-                <span className="flex flex-wrap items-center gap-2">
-                  <Globe className="size-3.5 text-muted" aria-hidden="true" />
-                  <span className="font-mono text-xs">ap-south-1</span>
-                  <span className="text-xs font-normal text-muted">Mumbai — Postgres and S3</span>
-                </span>
-              </DetailRow>
-              <DetailRow label="Isolation">
-                <span className="space-y-1">
-                  <code className="block break-all font-mono text-xs">
-                    SET LOCAL app.tenant_id = &lsquo;{tenant.id}&rsquo;;
-                  </code>
-                  <span className="block text-xs font-normal text-muted">
-                    Set once per request. Every row-level security policy in the schema keys off it.
-                  </span>
-                </span>
-              </DetailRow>
-              <DetailRow label="FCRA">
-                {tenant.fcraRegistered ? (
-                  <Badge tone="success">
-                    <Landmark className="size-3" aria-hidden="true" />
-                    Registered
-                  </Badge>
-                ) : (
-                  <span className="space-y-1">
-                    <Badge tone="neutral">Not confirmed</Badge>
-                    <span className="block text-xs font-normal text-muted">
-                      Giving stays off. Foreign contributions must be segregated at collection or
-                      not collected at all.
-                    </span>
-                  </span>
-                )}
-              </DetailRow>
-            </dl>
-          </CardBody>
-        </Card>
+            {cov !== null ? (
+              <Card>
+                <CardBody className="space-y-2.5">
+                  <p className="text-sm font-medium text-primary">
+                    {formatNumber(tenant.verifiedCount)} of {formatNumber(tenant.memberCount)} matched to the degree register
+                  </p>
+                  <Progress
+                    value={tenant.verifiedCount}
+                    max={tenant.memberCount}
+                    tone={coverageTone(cov)}
+                    label={`${formatPercent(cov)} of ${tenant.shortName} members verified`}
+                  />
+                  <p className="text-sm text-secondary">
+                    {waiting > 0
+                      ? `${formatNumber(waiting)} waiting on the college’s reviewers. Only the college can approve them; nobody at ${vendor} can.`
+                      : 'Every member is matched to the degree register.'}
+                  </p>
+                </CardBody>
+              </Card>
+            ) : null}
+          </section>
+        </div>
+      ) : (
+        checklist
+      )}
 
-        <Card>
-          <CardHeader>
-            <div className="min-w-0 space-y-1">
-              <CardTitle as="h2">Brand pack in use</CardTitle>
-              <CardDescription>
-                Seeds in, tokens out. The college supplies colours it can name; the ramps, hovers
-                and text pairings are derived.
-              </CardDescription>
-            </div>
-            <Palette className="size-5 shrink-0 text-muted" aria-hidden="true" />
-          </CardHeader>
-
-          {pack ? (
-            <>
-              <CardBody className="space-y-5">
-                <div className="flex flex-wrap items-center gap-3">
-                  <span
-                    className="grid h-16 w-24 shrink-0 place-items-center rounded-lg border border-line font-mono text-xs font-semibold shadow-sm"
-                    style={{
-                      backgroundColor: pack.color.primary,
-                      color: readableTextOn(pack.color.primary),
-                    }}
-                    aria-hidden="true"
-                  >
-                    {pack.color.primary.toUpperCase()}
-                  </span>
-                  {pack.color.accent ? (
-                    <span
-                      className="grid h-16 w-16 shrink-0 place-items-center rounded-lg border border-line font-mono text-[10px] font-semibold shadow-sm"
-                      style={{
-                        backgroundColor: pack.color.accent,
-                        color: readableTextOn(pack.color.accent),
-                      }}
-                      aria-hidden="true"
-                    >
-                      {pack.color.accent.toUpperCase()}
-                    </span>
-                  ) : null}
-                  <div className="min-w-0 space-y-1">
-                    <p className="font-display text-lg font-semibold">{pack.copy.portalName}</p>
-                    <p className="text-sm text-secondary">
-                      Primary {pack.color.primary.toUpperCase()}
-                      {pack.color.accent ? `, accent ${pack.color.accent.toUpperCase()}` : ', no second hue — monochrome by choice'}
-                    </p>
-                    <p className="sr-only">
-                      Primary colour {pack.color.primary}
-                      {pack.color.accent ? `, accent colour ${pack.color.accent}` : ''}
-                    </p>
-                  </div>
+      <Section
+        id="look"
+        title={`How ${tenant.shortName} looks`}
+        description={
+          pack
+            ? isTemplate
+              ? `A starting template until ${tenant.shortName}’s own pack is written.`
+              : 'The college’s own pack, as its sign-in screen renders it.'
+            : undefined
+        }
+        actions={
+          pack ? (
+            <ButtonLink variant="secondary" href={`/platform/brands#${pack.id}`}>
+              <Palette className="size-4" aria-hidden="true" />
+              Edit brand pack
+            </ButtonLink>
+          ) : undefined
+        }
+      >
+        {pack ? (
+          <>
+            <Card>
+              <CardBody className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_15rem]">
+                <MiniPortal pack={pack} />
+                <div className="space-y-4">
+                  <SeedSwatches pack={pack} />
+                  <p className="text-xs text-secondary">
+                    Headings in {pack.type.display}, text in {pack.type.body}.
+                  </p>
                 </div>
-
-                <div className="flex flex-wrap gap-2">
-                  <Badge tone="brand">
-                    <span className="font-mono">brands/{pack.id}.json</span>
-                  </Badge>
-                  <Badge tone="outline">version {pack.version}</Badge>
-                  {isHousePack ? <Badge tone="accent">House pack</Badge> : null}
-                  {isDemoPack ? <Badge tone="warning">Demonstration pack</Badge> : null}
-                </div>
-
-                <dl className="divide-y divide-line">
-                  <DetailRow label="Institution">{pack.copy.institutionName}</DetailRow>
-                  <DetailRow label="Tagline">
-                    {pack.copy.tagline ?? <span className="text-muted">None set</span>}
-                  </DetailRow>
-                  <DetailRow label="Typography">
-                    {pack.type.display} display · {pack.type.body} body · {pack.type.mono} mono
-                    <span className="block text-xs font-normal text-muted">
-                      loaded from {pack.type.source}, scale {pack.type.scale}
-                    </span>
-                  </DetailRow>
-                  <DetailRow label="Shape">
-                    {RADIUS_LABEL[pack.shape.radius]} · {pack.shape.density} density ·{' '}
-                    {pack.shape.elevation} elevation
-                  </DetailRow>
-                  <DetailRow label="Locale">
-                    <span className="font-mono text-xs">{pack.locale.locale}</span> ·{' '}
-                    {pack.locale.currency} · {pack.locale.timeZone}
-                  </DetailRow>
-                  <DetailRow label="Crest">
-                    {pack.assets.crest || pack.assets.logoPrimary ? (
-                      <span className="font-mono text-xs">
-                        {pack.assets.crest ?? pack.assets.logoPrimary}
-                      </span>
-                    ) : (
-                      <span className="text-muted">
-                        Not supplied — the logo falls back to the portal name in the display face
-                      </span>
-                    )}
-                  </DetailRow>
-                </dl>
               </CardBody>
-              <CardFooter>
-                <p className="text-xs text-muted">
-                  Changing any of this is an edit to{' '}
-                  <span className="font-mono">brands/{pack.id}.json</span> or a row in{' '}
-                  <span className="font-mono">tenant_branding</span>. No component, no stylesheet,
-                  no rebuild.
-                </p>
-              </CardFooter>
-            </>
-          ) : (
-            <CardBody>
-              <EmptyState
-                icon={<Palette className="size-5" />}
-                title="No brand pack assigned"
-                description="The portal renders with the neutral default pack — plain, legible, and obviously unbranded. Assign a pack before the first demo; an unstyled portal reads as an outage."
-                action={
-                  <ButtonLink variant="secondary" href="/platform/brands">
-                    Browse brand packs
-                  </ButtonLink>
-                }
-              />
-            </CardBody>
-          )}
-        </Card>
-      </div>
-
-      <Section
-        title="Feature flags"
-        description="What this college has bought, and what it has not yet cleared legally. These are hard gates in the navigation and in every route guard, not CSS classes."
-      >
-        <Card>
-          <CardBody>
-            <ul className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-3">
-              {FEATURES.map((f) => {
-                const on = pack ? pack.features[f.key] : false;
-                const fcraBlocked = f.key === 'donations' && !tenant.fcraRegistered;
-                return (
-                  <li key={f.key} className="flex gap-3">
-                    <span className="mt-0.5 shrink-0" aria-hidden="true">
-                      {on ? (
-                        <BadgeCheck className="size-4 text-success-fg" />
-                      ) : fcraBlocked ? (
-                        <Lock className="size-4 text-warning-fg" />
-                      ) : (
-                        <EyeOff className="size-4 text-muted" />
-                      )}
-                    </span>
-                    <div className="min-w-0 space-y-0.5">
-                      <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
-                        {f.label}
-                        {on ? (
-                          <Badge tone="success">On</Badge>
-                        ) : fcraBlocked ? (
-                          <Badge tone="warning">Blocked</Badge>
-                        ) : (
-                          <Badge tone="neutral">Off</Badge>
-                        )}
-                      </p>
-                      <p className="text-xs text-secondary">{f.note}</p>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </CardBody>
-          <CardFooter>
-            <p className="text-xs text-muted">
-              {tenant.fcraRegistered
-                ? 'FCRA registration is confirmed for this trust, so giving can be switched on once the college asks for it.'
-                : 'Giving cannot be switched on for this tenant until the college confirms the trust’s FCRA registration status in writing.'}
-            </p>
-          </CardFooter>
-        </Card>
-      </Section>
-
-      <Section
-        title="Operational health"
-        description="Counts, ratios and dates. There is no row-level view behind any of these numbers."
-      >
-        {tenant.memberCount === 0 ? (
-          <EmptyState
-            icon={<Users className="size-5" />}
-            title="No members to report on yet"
-            description="Health figures appear once the degree register is loaded and the first invites go out. A tenant two days old with an empty members table is provisioning working correctly, not a fault."
-          />
+            </Card>
+            <MediaReadiness pack={pack} name={tenant.shortName} />
+          </>
         ) : (
-          <div className="grid gap-6 lg:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <div className="min-w-0 space-y-1">
-                  <CardTitle as="h3">Cohort split</CardTitle>
-                  <CardDescription>
-                    One table holds both. The annual rollover flips status; it never migrates rows.
-                  </CardDescription>
-                </div>
-              </CardHeader>
-              <CardBody>
-                <ProportionBar
-                  label={`Cohort split for ${tenant.shortName}`}
-                  segments={[
-                    { label: 'Alumni', value: tenant.alumniCount, tone: 'brand' },
-                    { label: 'Final-year students', value: tenant.studentCount, tone: 'accent' },
-                  ]}
-                />
-              </CardBody>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <div className="min-w-0 space-y-1">
-                  <CardTitle as="h3">Verification</CardTitle>
-                  <CardDescription>
-                    A member is verified when their self-registration matches a row in the college&rsquo;s
-                    own degree register.
-                  </CardDescription>
-                </div>
-              </CardHeader>
-              <CardBody className="space-y-3">
-                <ProportionBar
-                  label={`Verification status for ${tenant.shortName}`}
-                  segments={[
-                    { label: 'Matched to a degree record', value: tenant.verifiedCount, tone: 'success' },
-                    { label: 'Awaiting review', value: unverified, tone: 'warning' },
-                  ]}
-                />
-                {unverified > 0 ? (
-                  <p className="text-xs text-secondary">
-                    {formatNumber(unverified)}{' '}
-                    {unverified === 1 ? 'registration is' : 'registrations are'} waiting on the
-                    college&rsquo;s own reviewers. Nobody at ifBash can approve them — verification is a{' '}
-                    <code className="font-mono">verification.review</code> capability, and this
-                    console does not hold it.
-                  </p>
-                ) : (
-                  <p className="text-xs text-secondary">
-                    Every member is matched to a degree record. Coverage this clean usually means
-                    the register was loaded before the invites went out, which is the order that
-                    works.
-                  </p>
-                )}
-              </CardBody>
-            </Card>
-          </div>
+          <EmptyState
+            icon={<Palette className="size-5" />}
+            title="No brand pack yet"
+            description="The portal shows the neutral default until one is assigned, which reads as unfinished. Pick a starting pack before the first demo."
+            action={
+              <ButtonLink variant="secondary" href="/platform/brands">
+                See brand packs
+              </ButtonLink>
+            }
+          />
         )}
       </Section>
 
       <Card>
         <CardHeader>
           <div className="min-w-0 space-y-1">
-            <CardTitle as="h2">What this page deliberately does not have</CardTitle>
-            <CardDescription>
-              The absence is the feature. A vendor console that can open a member record is a
-              vendor console that will, eventually, be asked to.
-            </CardDescription>
+            <CardTitle as="h2">{PLAN[tenant.plan].label} plan</CardTitle>
+            <CardDescription>{PLAN[tenant.plan].note}</CardDescription>
           </div>
-          <Database className="size-5 shrink-0 text-muted" aria-hidden="true" />
         </CardHeader>
         <CardBody>
-          <dl className="grid gap-5 md:grid-cols-3">
-            <div className="space-y-1.5">
-              <dt className="text-sm font-semibold">No member list</dt>
-              <dd className="text-sm text-secondary">
-                There is no link from any count on this page to the people behind it.{' '}
-                <code className="font-mono text-xs">platform_admin</code> does not hold{' '}
-                <code className="font-mono text-xs">profile.read.any</code> or{' '}
-                <code className="font-mono text-xs">directory.search.alumni</code>, so the repository
-                has no function that would answer the request.
-              </dd>
-            </div>
-            <div className="space-y-1.5">
-              <dt className="text-sm font-semibold">No contact release</dt>
-              <dd className="text-sm text-secondary">
-                Contact details live in their own table and are released only when the viewer is
-                entitled <em>and</em> the owner has consented. A vendor role satisfies neither gate,
-                so support access is a screen-share with the college, not a back door.
-              </dd>
-            </div>
-            <div className="space-y-1.5">
-              <dt className="text-sm font-semibold">No export</dt>
-              <dd className="text-sm text-secondary">
-                Bulk contact export is <code className="font-mono text-xs">college_admin</code> only
-                and is audit-logged with actor, scope and stated reason. Not operator, not placement
-                officer, not the people who run the servers.
-              </dd>
-            </div>
-          </dl>
+          {pack ? (
+            <ul className="grid grid-cols-2 gap-x-6 gap-y-4 xl:grid-cols-3">
+              {MODULES.map((m) => {
+                const on = pack.features[m.key] === true;
+                const locked = m.key === 'donations' && !tenant.fcraRegistered;
+                return (
+                  <li key={m.key} className="flex min-w-0 gap-3">
+                    <span className="mt-0.5 shrink-0" aria-hidden="true">
+                      {on ? (
+                        <CircleCheck className="size-4 text-success-fg" />
+                      ) : locked ? (
+                        <Lock className="size-4 text-secondary" />
+                      ) : (
+                        <Circle className="size-4 text-muted" />
+                      )}
+                    </span>
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="text-sm font-medium text-primary">
+                        {m.label}
+                        <span className={on ? 'ml-2 text-xs font-semibold text-success-fg' : 'ml-2 text-xs text-secondary'}>
+                          {on ? 'On' : locked ? 'Locked until FCRA is confirmed' : 'Off'}
+                        </span>
+                      </p>
+                      <p className="hidden text-xs text-secondary sm:block">{m.note}</p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="text-sm text-secondary">Modules follow the brand pack, and this college has none yet.</p>
+          )}
         </CardBody>
       </Card>
+
+      <Disclosure summary="Technical details" id="technical">
+        <dl className="divide-y divide-line">
+          <DetailRow label="Tenant id">
+            <span className="font-mono text-xs">{tenant.id}</span>
+          </DetailRow>
+          <DetailRow label="Subdomain">
+            <span className="font-mono text-xs">{tenant.subdomain}</span>
+          </DetailRow>
+          <DetailRow label="Brand pack">
+            {pack ? (
+              <span className="font-mono text-xs">
+                brands/{pack.id}.json · version {pack.version}
+              </span>
+            ) : (
+              'None — renders the default pack'
+            )}
+          </DetailRow>
+          <DetailRow label="Isolation">
+            <span className="block space-y-1">
+              <code className="block break-all font-mono text-xs">SET LOCAL app.tenant_id = &lsquo;{tenant.id}&rsquo;;</code>
+              <span className="block text-xs font-normal text-secondary">
+                Set once per request. Every row-level security policy keys off it.
+              </span>
+            </span>
+          </DetailRow>
+          <DetailRow label="Data residency">
+            <span className="font-mono text-xs">ap-south-1</span>{' '}
+            <span className="text-xs font-normal text-secondary">(Mumbai) · Postgres and object storage</span>
+          </DetailRow>
+          <DetailRow label="Locale">
+            <span className="font-mono text-xs">
+              {look.locale.locale} · {look.locale.currency} · {look.locale.timeZone}
+            </span>
+          </DetailRow>
+          <DetailRow label="Shape">
+            {look.shape.radius} corners · {look.shape.density} density · {look.shape.elevation} elevation
+          </DetailRow>
+        </dl>
+      </Disclosure>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------
+// Set-up checklist
+// ---------------------------------------------------------------
+
+function SetupChecklist({
+  tenant,
+  pack,
+  steps,
+  done,
+  complete,
+}: {
+  tenant: { createdAt: string; memberCount: number; verifiedCount: number; fcraRegistered: boolean; shortName: string };
+  pack: BrandPack | null;
+  steps: SetupStep[];
+  done: number;
+  complete: boolean;
+}) {
+  const detail = (s: SetupStep): string | null => {
+    if (!s.done) return s.ask;
+    switch (s.key) {
+      case 'created':
+        return formatDate(tenant.createdAt);
+      case 'pack':
+        return pack ? `${pack.copy.portalName} pack` : null;
+      case 'mark':
+        return pack?.assets.crest ? 'Crest in the pack' : 'Logo in the pack';
+      case 'photos': {
+        const a = pack?.assets;
+        const n = (a?.heroImage ? 1 : 0) + (a?.authImage ? 1 : 0) + (a?.campusPhotos.length ?? 0);
+        return `${n} ${n === 1 ? 'photo' : 'photos'} in the pack`;
+      }
+      case 'members':
+        return `${formatNumber(tenant.memberCount)} so far`;
+    }
+  };
+
+  // Members matched to the register mean the register is in: asking for it
+  // beside "310 of 310 matched" would contradict the figure above.
+  const untracked = [
+    ...(tenant.verifiedCount > 0 ? [] : [COLLEGE_ASKS.register]),
+    COLLEGE_ASKS.adminAccepted,
+    COLLEGE_ASKS.previousExport,
+  ];
+
+  const list = (
+    <div className="space-y-5">
+      <ol className="space-y-3">
+        {steps.map((s) => (
+          <li key={s.key} className="flex gap-3">
+            {s.done ? (
+              <CircleCheck className="mt-0.5 size-4 shrink-0 text-success-fg" aria-hidden="true" />
+            ) : (
+              <Circle className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
+            )}
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-primary">
+                {s.label}
+                <span className="sr-only">{s.done ? ', done' : ', still open'}</span>
+              </p>
+              {detail(s) ? <p className="text-xs text-secondary">{detail(s)}</p> : null}
+            </div>
+          </li>
+        ))}
+      </ol>
+
+      <div className="space-y-3 border-t border-line pt-4">
+        <p className="text-xs font-semibold uppercase tracking-wider text-secondary">Not tracked yet</p>
+        <ul className="space-y-3">
+          {untracked.map((u) => (
+            <li key={u.title} className="flex gap-3">
+              <CircleDashed className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-primary">{u.title}</p>
+                <p className="text-xs text-secondary">{u.ask}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+
+  const giving = (
+    <p className="flex items-start gap-2 text-sm text-secondary">
+      <Landmark className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
+      {tenant.fcraRegistered
+        ? 'Giving: the trust’s FCRA registration is confirmed, so giving can be switched on.'
+        : 'Giving: locked until the trust’s FCRA registration status is confirmed in writing.'}
+    </p>
+  );
+
+  if (complete) {
+    return (
+      <section id="setup" aria-label="Setup checklist" className="scroll-mt-20 space-y-3">
+        <Disclosure
+          summary={
+            <span className="flex items-center gap-2">
+              <CircleCheck className="size-4 text-success-fg" aria-hidden="true" />
+              Setup complete · {done} of {steps.length}
+            </span>
+          }
+        >
+          {list}
+        </Disclosure>
+        {giving}
+      </section>
+    );
+  }
+
+  return (
+    <Card id="setup" className="scroll-mt-20">
+      <CardHeader>
+        <div className="min-w-0 space-y-1">
+          <CardTitle as="h2">Setup checklist</CardTitle>
+          <CardDescription>In the order each usually arrives. Open items say what to ask {tenant.shortName} for.</CardDescription>
+        </div>
+        <Badge tone="brand" className="shrink-0 whitespace-nowrap">
+          {done} of {steps.length} done
+        </Badge>
+      </CardHeader>
+      <CardBody className="space-y-4">
+        <Progress value={done} max={steps.length} label="Setup progress" />
+        {list}
+      </CardBody>
+      <CardFooter>{giving}</CardFooter>
+    </Card>
   );
 }

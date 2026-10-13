@@ -92,6 +92,8 @@ export default function GlobalError({
               Try again
             </button>
 
+            {/* A plain anchor on purpose: this boundary replaces the root layout, and the client router may be exactly what failed. */}
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a
               href="/"
               style={{

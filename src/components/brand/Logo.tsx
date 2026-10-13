@@ -15,7 +15,14 @@ import type { BrandPack } from '@/lib/branding/pack';
  * can run indefinitely as a wordmark and still look deliberate.
  */
 
-type Variant = 'primary' | 'inverse' | 'mark' | 'crest';
+/**
+ * `band` is for the college band (`.band-surface`). It takes only the
+ * reversed logo: a crest or a mark drawn for a light ground disappears on
+ * the band, so without `logoInverse` it falls through to the wordmark in
+ * the band's foreground. A crest on the band goes on a light disc instead
+ * — see `Crest`.
+ */
+type Variant = 'primary' | 'inverse' | 'mark' | 'crest' | 'band';
 
 export function Logo({
   pack,
@@ -39,17 +46,28 @@ export function Logo({
     inverse: [a.logoInverse, a.logoMark, a.crest],
     mark: [a.logoMark, a.crest, a.logoPrimary],
     crest: [a.crest, a.logoPrimary, a.logoMark],
+    band: [a.logoInverse],
   };
 
   const src = chain[variant].find(Boolean);
+
+  // A logo drawn for a light ground is ink on ink in dark mode. When the
+  // pack supplies a reversed one, both are rendered and the theme picks in
+  // CSS (`.logo-on-light` in globals.css), so it follows the OS and the
+  // toggle without a flash. Packs without one keep a single image.
+  const onDark =
+    variant === 'primary' && src === a.logoPrimary && a.logoInverse ? a.logoInverse : null;
 
   const wordmark = (
     <span
       className={cn(
         'font-display font-bold leading-none tracking-[var(--tracking-display)]',
-        variant === 'inverse' ? 'text-on-inverse' : 'text-primary',
+        variant === 'band' ? 'text-band-fg' : variant === 'inverse' ? 'text-on-inverse' : 'text-primary',
       )}
-      style={{ fontSize: height * 0.52 }}
+      // 0.72 of the slot: a 28px header slot sets the name at about 20px,
+      // clearly larger than the 14px nav beside it. At half the slot the
+      // college's name read no bigger than a nav link.
+      style={{ fontSize: height * 0.72 }}
     >
       {pack.copy.portalName}
     </span>
@@ -73,8 +91,18 @@ export function Logo({
         alt={showName ? '' : pack.copy.portalName}
         height={height}
         style={{ height, width: 'auto' }}
-        className="block object-contain"
+        className={cn('object-contain', onDark ? 'logo-on-light' : 'block')}
       />
+      {onDark ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={onDark}
+          alt={showName ? '' : pack.copy.portalName}
+          height={height}
+          style={{ height, width: 'auto' }}
+          className="logo-on-dark object-contain"
+        />
+      ) : null}
       {showName ? wordmark : null}
     </span>
   );

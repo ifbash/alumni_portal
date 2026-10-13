@@ -1,4 +1,5 @@
 import * as React from 'react';
+import Link from 'next/link';
 import { cn } from '@/lib/cn';
 
 /**
@@ -86,12 +87,19 @@ export function Sparkline({
 // Bar list
 // ---------------------------------------------------------------
 
+/** A point that may link to the filtered view behind it. */
+export type LinkedPoint = Point & { href?: string };
+
 /**
- * Horizontal bars with the label inside.
+ * Horizontal bars: label and value on one line, a 6px bar beneath.
  *
  * Preferred over a pie for "top companies" and "top cities": company
  * names are long, and a legend that has to be matched back to a wedge by
- * colour is the least readable arrangement of the same six numbers.
+ * colour is the least readable arrangement of the same six numbers. The
+ * bar is `--chart-bar`, 3:1 on a card in both modes; the old full-height
+ * tint behind the label measured about 1.1:1 and was invisible.
+ *
+ * Rows with an `href` link to the filtered view behind the figure.
  */
 export function BarList({
   data,
@@ -101,7 +109,7 @@ export function BarList({
   max: explicitMax,
   tone = 'brand',
 }: {
-  data: Point[];
+  data: LinkedPoint[];
   className?: string;
   label: string;
   formatValue?: (n: number) => string;
@@ -109,30 +117,45 @@ export function BarList({
   tone?: 'brand' | 'accent' | 'neutral';
 }) {
   const max = explicitMax ?? Math.max(...data.map((d) => d.value), 1);
-
-  const fill = {
-    brand: 'bg-brand-soft',
-    accent: 'bg-accent-soft',
-    neutral: 'bg-surface-sunken',
-  }[tone];
+  const fill = tone === 'accent' ? 'bg-chart-highlight' : 'bg-chart-bar';
 
   if (data.length === 0) {
-    return <p className={cn('text-sm text-muted', className)}>No data yet.</p>;
+    return <p className={cn('text-sm text-secondary', className)}>No figures yet.</p>;
   }
 
   return (
-    <ul className={cn('space-y-1.5', className)} aria-label={label}>
-      {data.map((d) => (
-        <li key={d.label} className="relative flex items-center justify-between gap-3 overflow-hidden rounded px-2.5 py-1.5">
-          <span
-            className={cn('absolute inset-y-0 left-0 rounded', fill)}
-            style={{ width: `${Math.max(2, (d.value / max) * 100)}%` }}
-            aria-hidden="true"
-          />
-          <span className="relative min-w-0 truncate text-sm">{d.label}</span>
-          <span className="relative shrink-0 text-sm font-semibold tabular">{formatValue(d.value)}</span>
-        </li>
-      ))}
+    <ul className={cn('space-y-1', className)} aria-label={label}>
+      {data.map((d) => {
+        const row = (
+          <>
+            <span className="flex items-baseline justify-between gap-3 text-sm">
+              <span className="min-w-0 truncate">{d.label}</span>
+              <span className="shrink-0 font-semibold tabular">{formatValue(d.value)}</span>
+            </span>
+            <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-chart-track" aria-hidden="true">
+              <span
+                className={cn('block h-full rounded-full', fill)}
+                style={{ width: `${Math.max(2, Math.min(100, (d.value / max) * 100))}%` }}
+              />
+            </span>
+          </>
+        );
+
+        return (
+          <li key={d.label} className="min-w-0">
+            {d.href ? (
+              <Link
+                href={d.href}
+                className="-mx-2 flex min-h-11 flex-col justify-center rounded px-2 py-1.5 transition-colors duration-fast ease-brand hover:bg-surface-sunken"
+              >
+                {row}
+              </Link>
+            ) : (
+              <div className="py-1.5">{row}</div>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -141,57 +164,89 @@ export function BarList({
 // Column chart
 // ---------------------------------------------------------------
 
+/**
+ * Vertical columns, one per period or category.
+ *
+ * Values print above the columns whenever there are 15 or fewer — a
+ * value you have to hover for is a value a phone never shows. The
+ * `highlight` column(s), usually the current period or the viewer's own
+ * batch, use `--chart-bar-highlight`; the page names them in text too,
+ * because colour never carries meaning alone.
+ *
+ * Columns with an `href` link to the view behind them. When any do, the
+ * chart is a group of labelled links rather than one image, so the links
+ * stay reachable.
+ */
 export function ColumnChart({
   data,
   className,
   label,
   height = 160,
   highlight,
+  showValues,
 }: {
-  data: Point[];
+  data: LinkedPoint[];
   className?: string;
   label: string;
   height?: number;
-  /** Label of a bar to pick out — usually the current period. */
-  highlight?: string;
+  /** Label(s) of the column(s) to pick out. */
+  highlight?: string | string[];
+  /** Defaults to true for 15 columns or fewer. */
+  showValues?: boolean;
 }) {
   const max = Math.max(...data.map((d) => d.value), 1);
+  const picked = new Set(highlight === undefined ? [] : Array.isArray(highlight) ? highlight : [highlight]);
+  const values = showValues ?? data.length <= 15;
+  const linked = data.some((d) => d.href);
+  const summary = `${label}. ${data.map((d) => `${d.label}: ${d.value}`).join(', ')}`;
 
   return (
     <figure className={cn('space-y-2', className)}>
       <div
         className="flex items-end gap-1"
         style={{ height }}
-        role="img"
-        aria-label={`${label}. ${data.map((d) => `${d.label}: ${d.value}`).join(', ')}`}
+        {...(linked ? { role: 'group', 'aria-label': label } : { role: 'img', 'aria-label': summary })}
       >
-        {data.map((d) => (
-          <div key={d.label} className="group flex min-w-0 flex-1 flex-col items-center justify-end gap-1">
-            <span className="text-[10px] font-semibold tabular text-muted opacity-0 transition-opacity group-hover:opacity-100">
-              {d.value}
-            </span>
-            <div
-              className={cn(
-                'w-full rounded-sm transition-colors duration-fast',
-                d.label === highlight
-                  ? 'bg-[var(--button-primary-bg)]'
-                  : // Base and hover both derive from the same semantic
-                    // token. Hovering to a raw ramp stop looked right in
-                    // light mode and jumped from a dark subtle tint to a
-                    // bright band in dark mode, because `--brand-soft`
-                    // flips between modes and `brand-300` does not.
-                    'bg-brand-soft group-hover:bg-[color-mix(in_srgb,var(--brand-soft)_55%,var(--button-primary-bg))]',
-              )}
-              // A zero-height bar and a missing bar look identical; 3px
-              // keeps "we measured this and it was nought" visible.
-              style={{ height: `${Math.max(3, (d.value / max) * (height - 20))}px` }}
-            />
-          </div>
-        ))}
+        {data.map((d) => {
+          const column = (
+            <>
+              {values ? (
+                <span className="text-xs font-semibold tabular text-secondary" aria-hidden={linked ? true : undefined}>
+                  {d.value.toLocaleString('en-IN')}
+                </span>
+              ) : null}
+              <span
+                className={cn(
+                  'block w-full rounded-sm transition-opacity duration-fast',
+                  picked.has(d.label) ? 'bg-chart-highlight' : 'bg-chart-bar',
+                  d.href && 'group-hover:opacity-80',
+                )}
+                // A zero-height bar and a missing bar look identical; 3px
+                // keeps "we measured this and it was nought" visible.
+                style={{ height: `${Math.max(3, (d.value / max) * (height - 20))}px` }}
+              />
+            </>
+          );
+
+          return d.href ? (
+            <Link
+              key={d.label}
+              href={d.href}
+              aria-label={`${d.label}: ${d.value}`}
+              className="group flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1 rounded-sm"
+            >
+              {column}
+            </Link>
+          ) : (
+            <div key={d.label} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1">
+              {column}
+            </div>
+          );
+        })}
       </div>
       <div className="flex gap-1" aria-hidden="true">
         {data.map((d) => (
-          <span key={d.label} className="min-w-0 flex-1 truncate text-center text-[10px] text-muted">
+          <span key={d.label} className="min-w-0 flex-1 truncate text-center text-[10px] text-secondary">
             {d.label}
           </span>
         ))}
@@ -243,7 +298,7 @@ export function DonutChart({
     <figure className={cn('flex flex-col items-center gap-2', className)}>
       <div className="relative" style={{ width: size, height: size }}>
         <svg viewBox="0 0 100 100" className="size-full -rotate-90" role="img" aria-label={`${label}: ${Math.round(pct * 100)}%`}>
-          <circle cx="50" cy="50" r={r} fill="none" stroke="var(--surface-sunken)" strokeWidth="10" />
+          <circle cx="50" cy="50" r={r} fill="none" stroke="var(--chart-track)" strokeWidth="10" />
           <circle
             cx="50" cy="50" r={r}
             fill="none"
@@ -285,7 +340,9 @@ export function ProportionBar({
 
   const bg = {
     brand: 'bg-[var(--button-primary-bg)]',
-    accent: 'bg-accent-600',
+    // The accent at chart strength: 3:1 on a card in both modes, where a
+    // raw ramp stop is right in one mode only.
+    accent: 'bg-chart-highlight',
     success: 'bg-success',
     warning: 'bg-warning',
     danger: 'bg-danger',

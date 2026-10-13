@@ -1,70 +1,51 @@
-import { Card, CardBody, Skeleton, TableWrap } from '@/components/ui';
+import { Card, CardBody, Skeleton } from '@/components/ui';
 
 /**
  * The staff console's fallback loading state.
  *
- * Console screens are shaped alike almost without exception: a heading, a
- * row of counts, a filter bar that is a plain GET form, and then a table.
- * This draws that, so the page settles rather than jumping — an operator
- * working a queue at speed clicks where the row was a moment ago.
- *
- * The overview, the verification queue, the register, the members list and
- * the audit log each have a closer boundary shaped like themselves; this
- * one covers everything else in the console.
+ * Drawn inside the console shell, so only the content column is missing:
+ * a breadcrumb and page header, a row of summary cards, then the work
+ * list. An operator working a queue at speed clicks where the row was a
+ * moment ago, so the shape holds still while the data arrives.
  */
 export default function AdminLoading() {
   return (
     <div className="space-y-6" aria-busy="true" aria-live="polite">
-      <span className="sr-only">Loading the console</span>
+      <span className="sr-only">Loading</span>
 
       <div className="space-y-3">
-        <Skeleton className="h-3 w-24" />
-        <Skeleton className="h-9 w-72" />
+        <Skeleton className="h-3 w-28" />
+        <Skeleton className="h-8 w-full max-w-sm" />
         <Skeleton className="h-4 w-full max-w-prose" />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
-          <Card key={i} className="p-card">
-            <Skeleton className="h-3.5 w-28" />
-            <Skeleton className="mt-3 h-8 w-14" />
-            <Skeleton className="mt-2 h-3 w-32" />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {[0, 1, 2].map((i) => (
+          <Card key={i} className={i === 2 ? 'hidden xl:block' : undefined}>
+            <CardBody className="space-y-3">
+              <Skeleton className="h-4 w-2/5" />
+              <Skeleton className="h-3 w-full" />
+              <Skeleton className="h-control-sm w-28 rounded" />
+            </CardBody>
           </Card>
         ))}
       </div>
 
-      <Card>
-        <CardBody className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_12rem_auto] sm:items-end">
-          <div className="space-y-2">
-            <Skeleton className="h-3.5 w-16" />
-            <Skeleton className="h-control w-full" />
+      <Card className="min-w-0">
+        <CardBody>
+          <Skeleton className="mb-3 h-5 w-40" />
+          <div className="divide-y divide-line">
+            {Array.from({ length: 6 }, (_, i) => (
+              <div key={i} className="flex items-center gap-4 py-3">
+                <Skeleton className="h-3.5 w-40 shrink-0" />
+                <Skeleton className="hidden h-3.5 w-28 shrink-0 md:block" />
+                <Skeleton className="h-5 w-20 shrink-0 rounded-full" />
+                <Skeleton className="ml-auto hidden h-3.5 w-20 shrink-0 sm:block" />
+              </div>
+            ))}
           </div>
-          <div className="space-y-2">
-            <Skeleton className="h-3.5 w-20" />
-            <Skeleton className="h-control w-full" />
-          </div>
-          <Skeleton className="h-control w-24" />
         </CardBody>
       </Card>
-
-      <TableWrap caption="Loading">
-        <div className="divide-y divide-line">
-          <div className="flex items-center gap-4 bg-surface-sunken px-3 py-3">
-            <Skeleton className="h-3 w-28" />
-            <Skeleton className="h-3 w-36" />
-            <Skeleton className="ml-auto h-3 w-16" />
-          </div>
-          {Array.from({ length: 8 }, (_, i) => (
-            <div key={i} className="flex items-center gap-4 px-3 py-3.5">
-              <Skeleton className="h-3.5 w-40 shrink-0" />
-              <Skeleton className="hidden h-3.5 w-24 shrink-0 md:block" />
-              <Skeleton className="hidden h-3.5 w-32 shrink-0 lg:block" />
-              <Skeleton className="h-5 w-20 shrink-0 rounded-full" />
-              <Skeleton className="ml-auto h-3.5 w-24 shrink-0" />
-            </div>
-          ))}
-        </div>
-      </TableWrap>
     </div>
   );
 }

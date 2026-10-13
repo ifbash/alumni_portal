@@ -1,12 +1,14 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { DEFAULT_TENANT, SESSION_COOKIE } from '@/lib/config';
+import { SESSION_COOKIE } from '@/lib/config';
+import { subdomainFrom } from '@/lib/host';
+import { CROSS_SITE_BODY, isCrossSiteMutation } from '@/lib/auth/origin';
 import { THEME_BOOT_CSP_HASH } from '@/lib/theme-boot';
 import {
   FORBIDDEN_BODY,
   UNAUTHENTICATED_BODY,
-  UNAUTHORISED_REDIRECT,
-  holdsAnyCapability,
+  coarseVerdict,
   loginRedirectPath,
+  needsViewer,
   policyFor,
   readSessionMemberId,
   type CoarseViewer,
@@ -27,14 +29,16 @@ import type { Role } from '@/lib/auth/permissions';
  * re-derive it, set the headers that have to vary per request, and turn
  * away callers before a render begins.
  *
- * It *does* look up the member, on exactly the two prefixes that declare
- * a capability requirement — `/admin` and `/platform`. That is a
- * deliberate, bounded exception to "no storage from middleware", argued
- * at the top of `src/lib/auth/route-policy.ts` and costed in
- * `docs/STATUS-CODES.md`. Nothing else pays for it: a request to
- * `/dashboard`, `/directory` or any `/api` route asks a question the
- * cookie alone answers, and the module holding the member data is not
- * even imported until a console request arrives.
+ * It *does* look up the member, on exactly the prefixes whose policy row
+ * needs one (`needsViewer()`): the two consoles, `/admin` and `/platform`,
+ * and the member-community surfaces that refuse a vendor-only caller —
+ * `/dashboard`, `/directory`, `/jobs`, `/news` and the rest, plus their
+ * `/api` twins. That is a deliberate, bounded exception to "no storage
+ * from middleware", argued at the top of `src/lib/auth/route-policy.ts`
+ * and costed in `docs/STATUS-CODES.md`. Nothing else pays for it:
+ * `/profile`, `/settings`, `/api/auth/me` and every other `/api` route
+ * ask a question the cookie alone answers, and the module holding the
+ * member data is not even imported until a request that needs it arrives.
  *
  * On the gate generally: see the long note at the top of
  * `src/lib/auth/route-policy.ts`. The short version is that it is a
@@ -46,36 +50,6 @@ import type { Role } from '@/lib/auth/permissions';
  */
 
 const IS_PROD = process.env.NODE_ENV === 'production';
-
-/**
- * Mirrors `subdomainFrom()` in src/lib/tenant.ts.
- *
- * Duplicated rather than imported because tenant.ts pulls in
- * `next/headers`, React `cache()` and the entire fixture dataset — none of
- * which belong in a bundle that runs on every request at the edge. The two
- * must stay in step: if you change how a host maps to a tenant in one,
- * change it in the other, or the header and the resolved tenant disagree
- * and the bug looks like a caching problem.
- */
-function subdomainFrom(host: string): string | null {
-  const clean = host.split(':')[0]?.toLowerCase() ?? '';
-  if (!clean) return null;
-
-  const isLocal =
-    clean === 'localhost' ||
-    clean.endsWith('.localhost') ||
-    clean === '127.0.0.1' ||
-    clean.endsWith('.vercel.app');
-
-  if (isLocal) {
-    const sub = clean.endsWith('.localhost') ? clean.replace('.localhost', '') : null;
-    return sub ?? DEFAULT_TENANT;
-  }
-
-  const parts = clean.split('.');
-  if (parts.length < 3) return null;
-  return parts[0] ?? null;
-}
 
 /** 128 bits, base64. Regenerated per request — a reused nonce is no nonce. */
 function makeNonce(): string {
@@ -143,6 +117,10 @@ function contentSecurityPolicy(nonce: string): string {
     // about why brand imagery bypasses next/image. An allowlist here would
     // have to be edited for every customer.
     `img-src 'self' data: blob: https:`,
+    // Tenant hero videos are self-hosted or on S3 (ap-south-1) — same
+    // reasoning as img-src. Direct files only: frame-src stays 'none', so
+    // no YouTube or Vimeo embeds.
+    `media-src 'self' https:`,
     `connect-src 'self'`,
     `object-src 'none'`,
     // Razorpay Checkout renders in an iframe. Add its origins here, not
@@ -175,9 +153,20 @@ function contentSecurityPolicy(nonce: string): string {
  * and will fail loudly if it cannot — makes the real decision.
  *
  * The import is dynamic so the member data module is not evaluated on a
- * request to `/dashboard` or `/api/notifications`. On the Node runtime
- * that is a genuine deferral: the first `/admin` request of a cold
- * process pays for it and every other path never does.
+ * request to `/settings` or `/api/auth/me`. On the Node runtime that is a
+ * genuine deferral: the first request of a cold process that needs a
+ * viewer pays for it and the paths that never do, never do.
+ *
+ * Failing open has a sharper edge on the vendor-refusing prefixes than on
+ * the consoles. Behind `/admin` there is a page guard; behind `/jobs`,
+ * `/news` and `/gallery` there is, today, no page-side vendor refusal at
+ * all, so a failed lookup there hands the vendor what they were served
+ * before the rule existed. It still fails open, for the reason above:
+ * the alternative turns a broken import into every member of every
+ * college being bounced off their own dashboard. The log line below is
+ * what makes that trade tolerable, and the status matrix in
+ * `e2e/lib/routes.ts` — which expects `307 → /platform` for the vendor —
+ * is what notices.
  */
 type ViewerLookup = CoarseViewer | 'no-member' | 'unavailable';
 
@@ -201,12 +190,14 @@ async function resolveViewer(memberId: string): Promise<ViewerLookup> {
      * at all in a production build: it passed every check in dev, and the
      * only symptom was a 200 where a 307 belonged.
      *
-     * If this line appears in the logs, the coarse gate is off and every
-     * console refusal is answering 200. Nothing leaks — the page guards
-     * still refuse — but the status line is lying.
+     * If this line appears in the logs, the coarse gate is off: every
+     * console refusal is answering 200 (the page guards still refuse, so
+     * only the status line is lying), and a vendor-only session is being
+     * let through to the member community (where, on `/jobs`, `/news` and
+     * `/gallery`, nothing else refuses it). Treat it as an incident.
      */
     console.error(
-      '[middleware] member lookup failed; the console status gate is failing open',
+      '[middleware] member lookup failed; the console and vendor gates are failing open',
       err,
     );
     return 'unavailable';
@@ -242,9 +233,10 @@ function refuseAnonymous(req: NextRequest, rule: RouteRule): NextResponse {
   return redirectTo(req, loginRedirectPath(pathname, search));
 }
 
-function refuseUnauthorised(req: NextRequest, rule: RouteRule): NextResponse {
+/** 403 for an API rule; otherwise a 307 to wherever the verdict said. */
+function refuseUnauthorised(req: NextRequest, rule: RouteRule, destination: string): NextResponse {
   if (rule.refuse === 'json') return refuseJson(FORBIDDEN_BODY, 403);
-  return redirectTo(req, UNAUTHORISED_REDIRECT);
+  return redirectTo(req, destination);
 }
 
 /**
@@ -256,9 +248,15 @@ function refuseUnauthorised(req: NextRequest, rule: RouteRule): NextResponse {
  *   no valid cookie + protected API       401 { error, code }
  *   valid cookie, no console capability
  *     + /admin or /platform               307 → /dashboard
- *   valid cookie, capability declared
- *     but /api                            403 { error, code }
+ *   valid cookie, vendor only
+ *     + a member-community page           307 → /platform
+ *   valid cookie, refused on an /api
+ *     rule for either reason              403 { error, code }
  *   otherwise                             through, and the page decides
+ *
+ * The signed-in decision itself is `coarseVerdict()` in route-policy.ts,
+ * pure and tested there; this function only fetches its inputs and turns
+ * its answer into a response.
  *
  * "Valid cookie" means the HMAC verifies and the payload has not aged out
  * — nothing more. Everything past that is resolved from storage on this
@@ -286,16 +284,17 @@ async function gate(req: NextRequest): Promise<NextResponse | null> {
   const memberId = readSessionMemberId(req.cookies.get(SESSION_COOKIE)?.value);
   if (!memberId) return refuseAnonymous(req, rule);
 
-  // Most requests stop here, having read nothing but a cookie.
-  const needs = rule.requiresAnyCapability;
-  if (!needs || needs.length === 0) return null;
+  // Requests to a rule that needs no viewer stop here, having read
+  // nothing but a cookie.
+  if (!needsViewer(rule)) return null;
 
   const viewer = await resolveViewer(memberId);
   if (viewer === 'unavailable') return null;
   if (viewer === 'no-member') return refuseAnonymous(req, rule);
 
-  if (holdsAnyCapability(viewer, needs)) return null;
-  return refuseUnauthorised(req, rule);
+  const verdict = coarseVerdict(rule, viewer);
+  if (verdict.admit) return null;
+  return refuseUnauthorised(req, rule, verdict.redirectTo);
 }
 
 export async function middleware(req: NextRequest): Promise<NextResponse> {
@@ -330,7 +329,12 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
    * like any other, and it must not be the one document on the site that
    * ships without a CSP.
    */
-  const res = (await gate(req)) ?? NextResponse.next({ request: { headers: requestHeaders } });
+  // Refuse a browser-initiated cross-site mutation before anything else looks
+  // at the request. See `lib/auth/origin.ts` for why SameSite=Lax is not enough
+  // on a subdomain-per-college deployment.
+  const res = isCrossSiteMutation(req.method, req.headers)
+    ? NextResponse.json(CROSS_SITE_BODY, { status: 403, headers: { 'cache-control': 'no-store' } })
+    : ((await gate(req)) ?? NextResponse.next({ request: { headers: requestHeaders } }));
 
   res.headers.set('content-security-policy', csp);
 

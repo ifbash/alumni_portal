@@ -5,6 +5,9 @@
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+-- member_contacts.email / alt_email and tenant_branding.support_email are
+-- citext; without this the CREATE TABLE fails with: type "citext" does not exist.
+CREATE EXTENSION IF NOT EXISTS "citext";
 
 -- ------------------------------------------------------------
 -- Enums
@@ -163,10 +166,17 @@ CREATE TABLE members (
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now(),
 
-  UNIQUE (tenant_id, roll_number)
+  UNIQUE (tenant_id, roll_number),
+  CHECK (cgpa IS NULL OR (cgpa >= 0 AND cgpa <= 10)),
+  CHECK (batch_year IS NULL OR admission_year IS NULL OR batch_year >= admission_year)
 );
 
 CREATE INDEX idx_members_directory ON members (tenant_id, status, batch_year, department_id);
+
+-- A degree-register row belongs to at most one member. Without this a second
+-- person whose claim matches an already-claimed row is matched to it too, and
+-- two accounts share one verified identity.
+CREATE UNIQUE INDEX idx_members_register_row ON members (degree_register_id) WHERE degree_register_id IS NOT NULL;
 CREATE INDEX idx_members_name_trgm ON members USING gin (full_name gin_trgm_ops);
 CREATE INDEX idx_members_company_trgm ON members USING gin (current_company gin_trgm_ops);
 CREATE INDEX idx_members_skills ON members USING gin (skills);
@@ -209,6 +219,13 @@ CREATE TABLE member_roles (
 
 CREATE INDEX idx_member_roles_active ON member_roles (member_id) WHERE revoked_at IS NULL;
 
+-- UNIQUE (member_id, role, department_id) treats two NULL departments as
+-- different, so a college-wide grant (department_id IS NULL) could be inserted
+-- twice - two college_admin rows for one person, and a "last admin" count that
+-- is wrong. This closes that for the NULL case; re-appointing someone to a
+-- department they were revoked from is an upsert that clears revoked_at.
+CREATE UNIQUE INDEX idx_member_roles_one_college_wide ON member_roles (member_id, role) WHERE department_id IS NULL;
+
 -- ------------------------------------------------------------
 -- History
 -- ------------------------------------------------------------
@@ -226,6 +243,8 @@ CREATE TABLE employment_history (
   is_current  boolean NOT NULL DEFAULT false
 );
 
+CREATE INDEX idx_employment_member ON employment_history (member_id);
+
 CREATE TABLE education_history (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id     uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -236,6 +255,8 @@ CREATE TABLE education_history (
   started_on    date,
   ended_on      date
 );
+
+CREATE INDEX idx_education_member ON education_history (member_id);
 
 -- ------------------------------------------------------------
 -- Mediated contact — the student-to-alumni valve.
@@ -280,7 +301,10 @@ CREATE TABLE events (
   published      boolean NOT NULL DEFAULT false,
   created_by     uuid REFERENCES members(id),
   created_at     timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, slug)
+  UNIQUE (tenant_id, slug),
+  CHECK (ends_at IS NULL OR ends_at >= starts_at),
+  CHECK (capacity IS NULL OR capacity >= 0),
+  CHECK (ticket_price >= 0)
 );
 
 CREATE TABLE event_registrations (
@@ -293,8 +317,12 @@ CREATE TABLE event_registrations (
   payment_ref  text,
   checked_in_at timestamptz,
   created_at   timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (event_id, member_id)
+  UNIQUE (event_id, member_id),
+  CHECK (guests >= 0),
+  CHECK (amount_paid >= 0)
 );
+
+CREATE INDEX idx_event_reg_member ON event_registrations (member_id);
 
 -- ------------------------------------------------------------
 -- Jobs — every post moderated before going live
@@ -328,6 +356,8 @@ CREATE TABLE job_applications (
   created_at  timestamptz NOT NULL DEFAULT now(),
   UNIQUE (job_id, member_id)
 );
+
+CREATE INDEX idx_job_apps_member ON job_applications (member_id);
 
 -- ------------------------------------------------------------
 -- Donations — FCRA segregation is structural, not a UI concern
@@ -368,11 +398,34 @@ CREATE TABLE donations (
   created_at        timestamptz NOT NULL DEFAULT now()
 );
 
--- A campaign's creator must not be its sole reconciler.
-ALTER TABLE donations ADD CONSTRAINT chk_reconciler_not_creator
-  CHECK (reconciled_by IS NULL OR reconciled_by <> (
-    SELECT created_by FROM donation_campaigns c WHERE c.id = campaign_id
-  )) NOT VALID;
+ALTER TABLE donations ADD CONSTRAINT chk_donation_amount_positive CHECK (amount > 0);
+
+-- FCRA segregation is structural: the foreign-contribution flag cannot
+-- contradict the country the money came from. (source_country stays nullable
+-- until the donations module is built, after the college confirms its FCRA
+-- status; once it is, make it NOT NULL.)
+ALTER TABLE donations ADD CONSTRAINT chk_donation_foreign_flag
+  CHECK (source_country IS NULL OR is_foreign_contribution = (source_country <> 'IN'));
+
+-- Separation of duties: a campaign's creator must not be the one who
+-- reconciles its money. This was a CHECK containing a subquery, which
+-- PostgreSQL does not allow (NOT VALID included), so it is a trigger.
+CREATE FUNCTION donations_reconciler_not_creator() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.reconciled_by IS NOT NULL AND EXISTS (
+    SELECT 1 FROM donation_campaigns c
+    WHERE c.id = NEW.campaign_id AND c.created_by = NEW.reconciled_by
+  ) THEN
+    RAISE EXCEPTION 'A campaign''s creator cannot reconcile its donations'
+      USING ERRCODE = '23514', CONSTRAINT = 'chk_reconciler_not_creator';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER trg_donations_reconciler_not_creator
+  BEFORE INSERT OR UPDATE OF reconciled_by, campaign_id ON donations
+  FOR EACH ROW EXECUTE FUNCTION donations_reconciler_not_creator();
 
 CREATE INDEX idx_donations_fcra ON donations (tenant_id, is_foreign_contribution, created_at DESC);
 
@@ -404,6 +457,9 @@ CREATE TABLE data_requests (
   created_at   timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE INDEX idx_data_requests_member ON data_requests (member_id);
+CREATE INDEX idx_data_requests_queue ON data_requests (tenant_id, state, created_at);
+
 -- ------------------------------------------------------------
 -- Audit — every admin mutation, with before/after
 -- ------------------------------------------------------------
@@ -432,7 +488,32 @@ CREATE INDEX idx_audit_action ON audit_log (tenant_id, action, created_at DESC);
 -- Row-level security. Tenant isolation belongs here, not in
 -- application code — one forgotten WHERE clause is a cross-college
 -- data leak.
+--
+-- The application sets the tenant per transaction:
+--     SET LOCAL app.tenant_id = '<uuid>'     (see withTenant() in lib/db/client.ts)
+--
+-- Three things make this hold rather than merely exist:
+--
+--  1. It fails CLOSED. app_tenant_id() returns NULL when the setting is
+--     absent or empty, and `tenant_id = NULL` is never true, so a query with
+--     no tenant context returns nothing and an INSERT is refused. The bare
+--     `current_setting('app.tenant_id')::uuid` form raised an error when the
+--     setting had never been set, and - worse - once a pooled connection had
+--     run any SET LOCAL transaction the setting lingers as '' and
+--     `''::uuid` errors too. NULLIF(..., '') handles both.
+--  2. Policies carry an explicit WITH CHECK, so the rule for writes does not
+--     depend on defaulting from USING.
+--  3. FORCE ROW LEVEL SECURITY, because a table's owner is otherwise exempt
+--     and Prisma connects as whoever DATABASE_URL names. The application role
+--     created at the bottom of this file is not the owner and has no
+--     BYPASSRLS; FORCE covers the day someone points DATABASE_URL at the
+--     owner anyway.
 -- ------------------------------------------------------------
+
+CREATE FUNCTION app_tenant_id() RETURNS uuid
+LANGUAGE sql STABLE PARALLEL SAFE AS $$
+  SELECT NULLIF(current_setting('app.tenant_id', true), '')::uuid
+$$;
 
 DO $$
 DECLARE t text;
@@ -444,8 +525,9 @@ BEGIN
     'donations','consent_records','data_requests','audit_log'
   ] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
     EXECUTE format(
-      'CREATE POLICY tenant_isolation ON %I USING (tenant_id = current_setting(''app.tenant_id'')::uuid)', t);
+      'CREATE POLICY tenant_isolation ON %I USING (tenant_id = app_tenant_id()) WITH CHECK (tenant_id = app_tenant_id())', t);
   END LOOP;
 END $$;
 
@@ -454,22 +536,56 @@ END $$;
 -- Admin-triggered with a dry-run preview, never automatic.
 -- ------------------------------------------------------------
 
+-- Runs as the caller (not SECURITY DEFINER), so row-level security applies to
+-- every statement in it. It also refuses outright when p_tenant is not the
+-- tenant the session is working in, so an administrator of one college cannot
+-- name another's id - and a connection that bypasses RLS cannot roll a tenant
+-- it never set a context for.
+--
+-- On a real run it does what the application's rollover does: status becomes
+-- active_alumni, the `student` role is revoked and the `alumni` role granted.
+-- Every other role a person holds (faculty, HOD) is untouched - roles are a
+-- set, separate from status. Flipping status alone would leave rolled-over
+-- alumni holding `student`, which the directory projection reads as the
+-- student tier.
 CREATE OR REPLACE FUNCTION rollover_batch(p_tenant uuid, p_batch int, p_dry_run boolean DEFAULT true)
-RETURNS TABLE (member_id uuid, full_name text, roll_number text) AS $$
+RETURNS TABLE (member_id uuid, full_name text, roll_number text)
+LANGUAGE plpgsql AS $$
+#variable_conflict use_column
 BEGIN
+  IF app_tenant_id() IS NULL OR p_tenant IS DISTINCT FROM app_tenant_id() THEN
+    RAISE EXCEPTION 'rollover_batch: tenant % is not the tenant of this session', p_tenant
+      USING ERRCODE = '42501';
+  END IF;
+
   IF p_dry_run THEN
     RETURN QUERY
       SELECT m.id, m.full_name, m.roll_number FROM members m
       WHERE m.tenant_id = p_tenant AND m.batch_year = p_batch
         AND m.status = 'active_student';
-  ELSE
-    RETURN QUERY
-      UPDATE members m SET status = 'active_alumni', updated_at = now()
-      WHERE m.tenant_id = p_tenant AND m.batch_year = p_batch
-        AND m.status = 'active_student'
-      RETURNING m.id, m.full_name, m.roll_number;
+    RETURN;
   END IF;
-END $$ LANGUAGE plpgsql;
+
+  RETURN QUERY
+  WITH moved AS (
+    UPDATE members m SET status = 'active_alumni', updated_at = now()
+    WHERE m.tenant_id = p_tenant AND m.batch_year = p_batch
+      AND m.status = 'active_student'
+    RETURNING m.id, m.full_name, m.roll_number
+  ), no_longer_students AS (
+    UPDATE member_roles r SET revoked_at = now()
+    FROM moved
+    WHERE r.member_id = moved.id AND r.role = 'student' AND r.revoked_at IS NULL
+    RETURNING r.id
+  ), now_alumni AS (
+    INSERT INTO member_roles (tenant_id, member_id, role)
+    SELECT p_tenant, moved.id, 'alumni' FROM moved
+    ON CONFLICT (member_id, role) WHERE department_id IS NULL
+      DO UPDATE SET revoked_at = NULL
+    RETURNING id
+  )
+  SELECT moved.id, moved.full_name, moved.roll_number FROM moved;
+END $$;
 
 -- ------------------------------------------------------------
 -- Tenant branding. Seeds only — ramps are derived at resolve time
@@ -497,9 +613,67 @@ CREATE TABLE tenant_branding (
   published      boolean NOT NULL DEFAULT false,
   updated_by     uuid REFERENCES members(id),
   updated_at     timestamptz NOT NULL DEFAULT now(),
-  CHECK (radius IN ('none','subtle','rounded'))
+  CHECK (radius IN ('none','subtle','rounded')),
+  -- Colours reach a <style> element. The application validates them too; this
+  -- is the second lock, on the data itself.
+  CHECK (
+    primary_hex ~ '^#[0-9a-fA-F]{6}$'
+    AND surface_hex ~ '^#[0-9a-fA-F]{6}$'
+    AND surface_dark_hex ~ '^#[0-9a-fA-F]{6}$'
+    AND (accent_hex IS NULL OR accent_hex ~ '^#[0-9a-fA-F]{6}$')
+  ),
+  CHECK (font_display ~ '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,59}$' AND font_body ~ '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,59}$')
 );
 
 ALTER TABLE tenant_branding ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_branding FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON tenant_branding
-  USING (tenant_id = current_setting('app.tenant_id')::uuid);
+  USING (tenant_id = app_tenant_id()) WITH CHECK (tenant_id = app_tenant_id());
+
+-- ------------------------------------------------------------
+-- The application role.
+--
+-- Postgres exempts a table's owner from RLS, and Prisma connects as
+-- whatever DATABASE_URL names. Point DATABASE_URL at a login role that is
+-- a member of this one - NOT at the owner that runs migrations:
+--
+--     CREATE ROLE alumni_portal LOGIN PASSWORD '...' IN ROLE alumni_app;
+--
+-- alumni_app has no BYPASSRLS and owns nothing. It can read and write
+-- tenant data (inside the tenant's own rows, by policy) but:
+--
+--   * audit_log and consent_records are append-only - SELECT and INSERT
+--     only. "Append-only" was a convention; with UPDATE and DELETE granted,
+--     anyone holding the connection could rewrite the trail the compliance
+--     argument rests on. Removing a member's data is done by anonymising
+--     the member row, not by deleting its consent history.
+--   * tenants is the one table without RLS, because a tenant must be
+--     resolved from the Host header before there is a tenant context.
+--     The role can read it and provision/configure (INSERT, UPDATE) but
+--     not delete a customer.
+-- ------------------------------------------------------------
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'alumni_app') THEN
+    CREATE ROLE alumni_app NOLOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
+  END IF;
+END $$;
+
+GRANT USAGE ON SCHEMA public TO alumni_app;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+  departments, degree_register, members, member_contacts, member_roles,
+  employment_history, education_history, connection_requests, events,
+  event_registrations, job_postings, job_applications, donation_campaigns,
+  donations, data_requests, tenant_branding
+TO alumni_app;
+
+GRANT SELECT, INSERT ON audit_log, consent_records TO alumni_app;
+GRANT SELECT, INSERT, UPDATE ON tenants TO alumni_app;
+
+-- audit_log.id is a bigserial.
+GRANT USAGE ON SEQUENCE audit_log_id_seq TO alumni_app;
+
+GRANT EXECUTE ON FUNCTION app_tenant_id() TO alumni_app;
+GRANT EXECUTE ON FUNCTION rollover_batch(uuid, int, boolean) TO alumni_app;

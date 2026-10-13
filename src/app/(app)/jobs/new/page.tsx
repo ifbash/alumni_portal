@@ -1,25 +1,19 @@
 import type { Metadata } from 'next';
 import { notFound, redirect } from 'next/navigation';
-import { Ban, Clock, Eye, ShieldCheck } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
 import { getOwnProfile } from '@/lib/data/repo';
-import {
-  Alert,
-  Breadcrumbs,
-  Card,
-  CardBody,
-  CardHeader,
-  CardTitle,
-  PageHeader,
-} from '@/components/ui';
+import type { MemberSummary } from '@/lib/data/types';
+import { Breadcrumbs, PageHeader } from '@/components/ui';
+import { jobReviewLine } from '@/lib/branding/copy';
+import { viewerBatchYear, viewerBranch } from '@/lib/identity';
 import { JobForm } from './JobForm';
 
 export const metadata: Metadata = {
   title: 'Post a role',
-  description: 'Share an opening with final-year students and alumni. Reviewed by the placement cell.',
+  description: 'Share an opening with final-year students. Checked by the placement cell before it is listed.',
 };
 
 export default async function NewJobPage() {
@@ -35,8 +29,34 @@ export default async function NewJobPage() {
   requireCap(session, 'job.post');
 
   const me = getOwnProfile(session);
-  const shortName = brand.pack.copy.shortName;
-  const supportEmail = brand.pack.copy.supportEmail ?? null;
+  const pack = brand.pack;
+  const shortName = pack.copy.shortName;
+
+  // The preview's poster, built field by field from what a posting shows
+  // (name, photo, branch, batch) and nothing else. The own-profile record
+  // carries contact details and more; none of it crosses to the client.
+  // A batch shows only for a holder of the alumni role.
+  const poster: MemberSummary = {
+    id: session.memberId,
+    slug: me?.slug ?? '',
+    fullName: me?.fullName ?? 'You',
+    photoUrl: me?.photoUrl ?? null,
+    batchYear: viewerBatchYear(session),
+    departmentCode: viewerBranch(session),
+    departmentName: null,
+    currentCompany: null,
+    designation: null,
+    industry: null,
+    city: null,
+    state: null,
+    country: null,
+    skills: [],
+    openToMentoring: false,
+    openToReferrals: false,
+    openToSpeaking: false,
+    status: session.status,
+    isStudent: false,
+  };
 
   return (
     <div className="space-y-6">
@@ -49,111 +69,18 @@ export default async function NewJobPage() {
             ]}
           />
         }
-        eyebrow="Placement & careers"
+        eyebrow="Jobs"
         title="Post a role"
-        description={`Openings you post reach final-year students and alumni of ${brand.pack.copy.institutionName}.`}
+        description={`${shortName} final-year students see it once the placement cell has checked it.`}
       />
 
-      {/* Stated before the first field, not in a footnote after the submit
-          button. Someone who fills in nine fields and only then learns their
-          posting will not appear for two days has been misled by the form. */}
-      <Alert
-        tone="info"
-        title="Every posting is read by the placement cell before it goes live"
-        icon={<ShieldCheck className="size-4" />}
-      >
-        <p>
-          Nothing you submit appears on the board straight away. A member of the placement cell
-          reads it first — usually within two working days — and either publishes it or sends it
-          back with a reason.
-        </p>
-        <p className="mt-2">
-          That review is not bureaucracy. The college is accountable for what it points its
-          students at, and a portal that publishes anything is how students end up paying a
-          &ldquo;registration fee&rdquo; to a fake recruiter. Your posting carries {shortName}&rsquo;s
-          name once it is listed.
-        </p>
-      </Alert>
-
-      <div className="grid gap-gutter lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <JobForm
-          defaultCompany={me?.currentCompany ?? ''}
-          posterName={me?.fullName ?? 'You'}
-          shortName={shortName}
-          supportEmail={supportEmail}
-        />
-
-        <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
-          <Card>
-            <CardHeader>
-              <CardTitle as="h2" className="text-md">
-                What the cell checks
-              </CardTitle>
-            </CardHeader>
-            <CardBody className="pt-1">
-              <ul className="space-y-2.5 text-sm text-secondary">
-                <li className="flex gap-2.5">
-                  <Eye className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-                  <span>
-                    That the opening is real and current, and that you are either hiring for it or
-                    can refer inside the company.
-                  </span>
-                </li>
-                <li className="flex gap-2.5">
-                  <Ban className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-                  <span>
-                    That it is not a staffing-agency listing, an unpaid &ldquo;training
-                    programme&rdquo;, or anything that asks a candidate for money.
-                  </span>
-                </li>
-                <li className="flex gap-2.5">
-                  <Clock className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-                  <span>
-                    That the closing date has not already passed, and the pay band is stated in a
-                    form a student can read.
-                  </span>
-                </li>
-              </ul>
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle as="h2" className="text-md">
-                After you submit
-              </CardTitle>
-            </CardHeader>
-            <CardBody className="pt-1">
-              <ol className="space-y-2.5 text-sm text-secondary">
-                <li>
-                  <span className="font-medium text-primary">1. With the placement cell.</span> The
-                  posting sits in your{' '}
-                  <span className="font-medium text-primary">My postings</span> tab marked
-                  &ldquo;with the placement cell&rdquo;. It is not lost and it is not public.
-                </li>
-                <li>
-                  <span className="font-medium text-primary">2. Published or sent back.</span> If it
-                  is sent back you get the reason in writing, and can correct and resubmit.
-                </li>
-                <li>
-                  <span className="font-medium text-primary">3. Applications come to you.</span>{' '}
-                  Name, branch, batch and a note — never a student&rsquo;s CGPA or contact details.
-                </li>
-              </ol>
-            </CardBody>
-          </Card>
-
-          {supportEmail ? (
-            <p className="text-xs text-muted">
-              Urgent hiring deadline? Write to{' '}
-              <a href={`mailto:${supportEmail}`} className="link">
-                {supportEmail}
-              </a>{' '}
-              and the cell will look at it the same day.
-            </p>
-          ) : null}
-        </aside>
-      </div>
+      <JobForm
+        defaultCompany={me?.currentCompany ?? ''}
+        poster={poster}
+        shortName={shortName}
+        locale={pack.locale}
+        reviewLine={jobReviewLine(pack.copy)}
+      />
     </div>
   );
 }

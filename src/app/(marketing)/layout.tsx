@@ -3,6 +3,8 @@ import { getTenantBrand } from '@/lib/tenant';
 import { getSession } from '@/lib/auth/session';
 import { SiteHeader } from '@/components/shell/SiteHeader';
 import { SiteFooter } from '@/components/shell/SiteFooter';
+import { HOUSE_PACK_ID } from '@/lib/branding/registry';
+import { ShowcaseChrome } from './ShowcaseChrome';
 
 /**
  * The public frame.
@@ -22,6 +24,9 @@ export default async function MarketingLayout({ children }: { children: React.Re
 
   const session = await getSession();
   const pack = resolved.brand.pack;
+
+  // The house tenant's public pages are ifBash's product site, not a college's.
+  if (pack.id === HOUSE_PACK_ID) return <ShowcaseChrome pack={pack}>{children}</ShowcaseChrome>;
 
   return (
     <div className="flex min-h-dvh flex-col bg-surface">

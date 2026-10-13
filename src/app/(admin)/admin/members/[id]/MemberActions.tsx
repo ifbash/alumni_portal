@@ -2,13 +2,15 @@
 
 import * as React from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { GitMerge, Pencil, RefreshCw, ShieldCheck, UserCog } from 'lucide-react';
+import { CheckCircle2, ChevronDown, GitMerge, Pencil, RefreshCw, UserCog } from 'lucide-react';
 import {
   Alert,
   Button,
   Dialog,
   Field,
   Input,
+  Menu,
+  MenuItem,
   Select,
   Textarea,
   describedBy,
@@ -19,11 +21,12 @@ import { api, outcomeToast, type ApiOutcome } from '@/lib/client/api';
 /**
  * Staff actions on one member record.
  *
- * Four things staff genuinely need to do, and nothing else. Each one is a
- * `PATCH /api/admin/members/[id]` carrying the reason typed here, and each
- * writes an `audit_log` row with the actor and a whole before/after
- * snapshot — so each panel says so before the button goes live, rather
- * than burying it in a policy document nobody reads.
+ * Four things staff genuinely need to do, and nothing else. Editing the
+ * record is the everyday one and gets the button; changing status, merging
+ * a duplicate and re-running verification sit in a menu beside it. Each
+ * is a `PATCH /api/admin/members/[id]` carrying the reason typed here, and
+ * each writes an `audit_log` row with the actor and a whole before/after
+ * snapshot.
  *
  * The reason field is not optional on any of them. A status change with no
  * reason is indistinguishable from a mistake six months later, and the two
@@ -116,8 +119,7 @@ export function MemberActions({
   const [submitting, setSubmitting] = React.useState(false);
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
   const [result, setResult] = React.useState<{
-    action: string;
-    note: string;
+    title: string;
     persisted: boolean;
   } | null>(null);
 
@@ -212,19 +214,15 @@ export function MemberActions({
       return;
     }
 
-    setResult({
-      action: outcome.data.auditedAs,
-      note: outcome.data.note,
-      persisted: outcome.persisted,
-    });
-    setPanel(null);
-
     const done: Record<Panel, string> = {
       edit: `${memberName}'s record corrected`,
       verify: `Matcher re-run for ${memberName}`,
       merge: `Duplicate folded into ${memberName}`,
       status: `${memberName}: ${currentLabel} → ${nextLabel}`,
     };
+
+    setResult({ title: done[panel], persisted: outcome.persisted });
+    setPanel(null);
 
     const t = outcomeToast(outcome, done[panel]);
     if (t) toast.show(t);
@@ -238,48 +236,54 @@ export function MemberActions({
 
   return (
     <>
-      <div className="space-y-3">
+      <div className="space-y-2">
         <div className="flex flex-wrap gap-2">
           {canWrite ? (
-            <Button variant="secondary" size="sm" onClick={() => open('edit')}>
-              <Pencil className="size-4" />
+            <Button onClick={() => open('edit')}>
+              <Pencil className="size-4" aria-hidden="true" />
               Edit record
             </Button>
           ) : null}
-          {canVerify ? (
-            <Button variant="secondary" size="sm" onClick={() => open('verify')}>
-              <RefreshCw className="size-4" />
-              Re-run verification
-            </Button>
-          ) : null}
-          {canMerge ? (
-            <Button variant="secondary" size="sm" onClick={() => open('merge')}>
-              <GitMerge className="size-4" />
-              Merge duplicate
-            </Button>
-          ) : null}
-          {canWrite ? (
-            <Button variant="secondary" size="sm" onClick={() => open('status')}>
-              <UserCog className="size-4" />
-              Change status
-            </Button>
+          {canWrite || canMerge || canVerify ? (
+            <Menu
+              label="More actions on this record"
+              align="start"
+              trigger={({ open: shown }) => (
+                <span className="inline-flex h-control items-center gap-2 rounded border border-line bg-surface-raised px-4 text-sm font-semibold text-primary transition-colors duration-fast ease-brand hover:border-line-strong hover:bg-surface-sunken">
+                  More
+                  <ChevronDown
+                    className={shown ? 'size-4 rotate-180 transition-transform' : 'size-4 transition-transform'}
+                    aria-hidden="true"
+                  />
+                </span>
+              )}
+            >
+              {canWrite ? (
+                <MenuItem icon={<UserCog className="size-4" />} onSelect={() => open('status')}>
+                  Change status
+                </MenuItem>
+              ) : null}
+              {canMerge ? (
+                <MenuItem icon={<GitMerge className="size-4" />} onSelect={() => open('merge')}>
+                  Merge duplicate
+                </MenuItem>
+              ) : null}
+              {canVerify ? (
+                <MenuItem icon={<RefreshCw className="size-4" />} onSelect={() => open('verify')}>
+                  Re-run verification
+                </MenuItem>
+              ) : null}
+            </Menu>
           ) : null}
         </div>
 
-        {result ? (
-          <Alert
-            tone={result.persisted ? 'success' : 'info'}
-            title={result.action}
-            icon={<ShieldCheck className="size-4" />}
-          >
-            <p>{result.note}</p>
-            {!result.persisted ? (
-              <p className="mt-2 text-xs">
-                This build runs on seeded data with no database behind it. The capability check, the validation and the
-                audit entry all ran against your account; the write did not, so the record above is unchanged.
-              </p>
-            ) : null}
-          </Alert>
+        {/* Saved changes say so here; an unsaved (demo) write is said once,
+            by the outcome toast. */}
+        {result?.persisted ? (
+          <p className="flex items-start gap-2 text-sm text-secondary" role="status">
+            <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success-fg" aria-hidden="true" />
+            <span>{result.title}. Recorded in the audit log.</span>
+          </p>
         ) : null}
       </div>
 
@@ -318,13 +322,9 @@ export function MemberActions({
         <div className="space-y-5">
           {panel === 'edit' ? (
             <>
-              <Alert tone="warning">
-                <p>
-                  Name and roll number are not editable here. Both come from the degree register, and
-                  changing them in the portal breaks the match that verified this person. Corrections
-                  to either go through the examinations branch first.
-                </p>
-              </Alert>
+              <p className="text-sm text-secondary">
+                Name and roll number come from the degree register and cannot be changed here.
+              </p>
 
               <Field
                 htmlFor="edit-preferred"
@@ -403,19 +403,11 @@ export function MemberActions({
           {panel === 'verify' ? (
             <>
               <p className="text-sm text-secondary">
-                Puts the record back through the degree-register matcher. It compares{' '}
-                {rollNumber ? <span className="font-mono">{rollNumber}</span> : 'this record'} and the
-                name on the account against every row in the register, and reports what it found
-                rather than deciding silently. Nothing about this member&rsquo;s access changes until
-                the result is approved in the verification queue.
+                Compares {rollNumber ? <span className="font-mono">{rollNumber}</span> : 'this record'} and the
+                name on the account with the degree register again, and reports what it finds. Nothing about
+                their access changes until the result is approved in the verification queue. Worth doing after a
+                new register file is loaded.
               </p>
-
-              <Alert tone="info">
-                <p>
-                  Worth re-running after a register import. Anyone who registered before their batch
-                  file arrived was approved manually, with no register row attached as evidence.
-                </p>
-              </Alert>
             </>
           ) : null}
 
@@ -423,18 +415,16 @@ export function MemberActions({
             <>
               <Alert tone="danger" title="This cannot be undone from the portal">
                 <p>
-                  The duplicate&rsquo;s login stops working immediately and reversing the merge needs
-                  a database restore. Check the roll numbers on both records first — two people in the
-                  same branch and year genuinely can share a name, and the server refuses a merge
-                  where the two roll numbers disagree.
+                  The duplicate&rsquo;s sign-in stops working at once. Check the roll numbers on both
+                  records first: two people in one branch and year can share a name, and a merge where the
+                  roll numbers disagree is refused.
                 </p>
               </Alert>
 
               {duplicates.length === 0 ? (
                 <p className="text-sm text-secondary">
-                  No other record in this tenant carries the same name or roll number. If you know the
-                  duplicate, open the record you intend to <em>keep</em> and start the merge from
-                  there.
+                  No other record carries the same name or roll number. If you know the duplicate, open
+                  the record you intend to <em>keep</em> and start the merge from there.
                 </p>
               ) : (
                 <Field
@@ -484,14 +474,10 @@ export function MemberActions({
 
           {panel === 'status' ? (
             <>
-              <Alert tone="warning">
-                <p>
-                  Status controls what the person can reach. Moving someone to{' '}
-                  <strong>Final year</strong> takes away contact visibility and the giving module;
-                  moving them to <strong>Alumni</strong> opens both. For a whole graduating batch use
-                  the annual rollover, which previews every row before it commits.
-                </p>
-              </Alert>
+              <p className="text-sm text-secondary">
+                Status decides what the person can reach. For a whole graduating batch, use the annual
+                rollover instead.
+              </p>
 
               <Field
                 htmlFor="status-next"
@@ -527,8 +513,8 @@ export function MemberActions({
             required
             hint={
               reasonFloor === GRAVE_REASON
-                ? 'Say who confirmed this and how. Neither of these two statuses can be argued back from inside the product, and the family or the applicant will ask.'
-                : 'Stored verbatim in the audit log beside the before and after snapshots.'
+                ? 'Say who confirmed this and how. The family or the applicant will ask.'
+                : 'Kept word for word in the audit log.'
             }
             error={
               errFor('reason') ?? (touched && reasonBad ? `Write at least ${reasonFloor} characters.` : null)
@@ -545,25 +531,20 @@ export function MemberActions({
               })}
               placeholder={
                 panel === 'merge'
-                  ? 'Duplicate from the Hoopstr import — same roll number, personal email on one record and college email on the other.'
+                  ? 'Same person registered twice: same roll number, a personal email on one record and a college email on the other.'
                   : panel === 'verify'
-                    ? '2015 batch file loaded on 14 Aug; this account was approved manually before it arrived.'
+                    ? 'The batch file has now been loaded; this account was approved by hand before it arrived.'
                     : panel === 'status'
-                      ? 'Confirmed with the department — did not graduate with this batch, moved to 2027.'
-                      : 'Member emailed the alumni cell — employer changed in June and the profile was not updated.'
+                      ? 'Confirmed with the department: did not graduate with this batch.'
+                      : 'The member wrote in: their employer changed and the profile was not updated.'
               }
               rows={2}
             />
           </Field>
 
-          <Alert tone="neutral" icon={<ShieldCheck className="size-4" />}>
-            <p>
-              Writes <span className="font-mono">{meta?.action}</span> to the audit log with your
-              name, this reason and a whole before/after snapshot of the record — not a diff, because
-              reconstructing state from a diff chain during an incident is exactly when you cannot
-              afford the extra step. Audit rows are append-only.
-            </p>
-          </Alert>
+          <p className="text-xs text-secondary">
+            Recorded in the audit log with your name, this reason and the record as it was before and after.
+          </p>
         </div>
         ) : null}
       </Dialog>

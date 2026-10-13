@@ -1,10 +1,16 @@
 import 'server-only';
 import { cookies } from 'next/headers';
 import { createHmac, timingSafeEqual, randomBytes } from 'node:crypto';
-import { SESSION_COOKIE, IS_FIXTURE } from '../config';
+import { SESSION_COOKIE } from '../config';
 import { findMemberById, findMemberByEmail } from '../data/repo';
 import type { Session } from './guard';
 import type { Role } from './permissions';
+import {
+  SESSION_MAX_AGE_SECONDS,
+  decodeSessionToken,
+  encodeSessionToken,
+  sessionSecret,
+} from './session-token';
 
 /**
  * Session cookie.
@@ -16,59 +22,25 @@ import type { Role } from './permissions';
  * on their next page load rather than whenever their cookie happens to
  * expire.
  *
+ * The wire format and the signing secret live in `session-token.ts`,
+ * shared with the middleware gate so the two cannot drift apart.
+ *
  * `HttpOnly` and `SameSite=Lax` are not negotiable. A token readable by
  * JavaScript is a token that leaves with the first XSS.
  */
 
-const SECRET = process.env.SESSION_SECRET || (IS_FIXTURE ? 'fixture-mode-development-secret' : '');
-const MAX_AGE = 60 * 60 * 24 * 14; // 14 days
-
-if (!SECRET && !IS_FIXTURE) {
-  throw new Error('SESSION_SECRET must be set outside fixture mode');
-}
-
-interface Payload {
-  memberId: string;
-  tenantId: string;
-  issuedAt: number;
-}
-
-function sign(value: string): string {
-  return createHmac('sha256', SECRET).update(value).digest('base64url');
-}
-
-function encode(payload: Payload): string {
-  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  return `${body}.${sign(body)}`;
-}
-
-function decode(token: string): Payload | null {
-  const [body, mac] = token.split('.');
-  if (!body || !mac) return null;
-
-  const expected = sign(body);
-  // Constant-time compare: a length-sensitive `===` on a MAC is a timing
-  // oracle, and forging a session is the whole game.
-  if (mac.length !== expected.length) return null;
-  if (!timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) return null;
-
-  try {
-    const payload = JSON.parse(Buffer.from(body, 'base64url').toString()) as Payload;
-    if (Date.now() - payload.issuedAt > MAX_AGE * 1000) return null;
-    return payload;
-  } catch {
-    return null;
-  }
-}
+// Fail at boot, not on the first sign-in: a missing or weak SESSION_SECRET
+// should stop the process, not surface as a 500 on the login form.
+sessionSecret();
 
 export async function createSession(memberId: string, tenantId: string): Promise<void> {
   const jar = await cookies();
-  jar.set(SESSION_COOKIE, encode({ memberId, tenantId, issuedAt: Date.now() }), {
+  jar.set(SESSION_COOKIE, encodeSessionToken({ memberId, tenantId, issuedAt: Date.now() }), {
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
     path: '/',
-    maxAge: MAX_AGE,
+    maxAge: SESSION_MAX_AGE_SECONDS,
   });
 }
 
@@ -89,7 +61,7 @@ export async function getSession(): Promise<Session | null> {
   const token = jar.get(SESSION_COOKIE)?.value;
   if (!token) return null;
 
-  const payload = decode(token);
+  const payload = decodeSessionToken(token);
   if (!payload) return null;
 
   /**
@@ -169,10 +141,42 @@ const globalForOtp = globalThis as unknown as {
 
 const otpStore = (globalForOtp.__otpStore ??= new Map<string, OtpRecord>());
 
+/**
+ * Memory bounds for the in-process stores.
+ *
+ * `issueOtp` accepts any well-formed address (the endpoint must not reveal
+ * which are members), and `rateLimit` keys on caller-chosen strings, so
+ * without a bound a script walking fresh addresses grows both Maps for as
+ * long as it runs. Expired entries are swept at most once a minute; the cap
+ * is the backstop for a flood *inside* one window, evicting oldest-first
+ * (a Map iterates in insertion order). Redis TTLs replace all of this.
+ */
+const SWEEP_INTERVAL_MS = 60_000;
+const MAX_ENTRIES = 50_000;
+let lastSweepAt = 0;
+
+function sweep(now: number): void {
+  if (now - lastSweepAt >= SWEEP_INTERVAL_MS) {
+    lastSweepAt = now;
+    for (const [key, record] of otpStore) if (now > record.expiresAt) otpStore.delete(key);
+    for (const [key, record] of attempts) if (now > record.resetAt) attempts.delete(key);
+  }
+  evictOldest(otpStore);
+  evictOldest(attempts);
+}
+
+function evictOldest(map: Map<string, unknown>): void {
+  for (const key of map.keys()) {
+    if (map.size <= MAX_ENTRIES) return;
+    map.delete(key);
+  }
+}
+
 const hashCode = (code: string, email: string) =>
-  createHmac('sha256', SECRET).update(`${email}:${code}`).digest('base64url');
+  createHmac('sha256', sessionSecret()).update(`${email}:${code}`).digest('base64url');
 
 export function issueOtp(email: string, ttlSeconds: number): { code: string; expiresAt: number } {
+  sweep(Date.now());
   const normalised = email.trim().toLowerCase();
   // 6 digits, from a CSPRNG. `Math.random()` is predictable enough that a
   // login code drawn from it is not a second factor at all.
@@ -236,6 +240,7 @@ const attempts = (globalForOtp.__rateLimits ??= new Map<string, { count: number;
 
 export function rateLimit(key: string, limit: number, windowSeconds: number): { ok: boolean; retryAfter: number } {
   const now = Date.now();
+  sweep(now);
   const rec = attempts.get(key);
 
   if (!rec || now > rec.resetAt) {

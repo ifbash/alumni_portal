@@ -121,6 +121,11 @@ test.describe('platform_admin — the vendor — cannot reach member data', () =
       ['/api/directory?cohort=students', 'the student cohort'],
       ['/api/admin/members/export', 'the bulk contact export description'],
       ['/api/admin/degree-register/search?q=a', 'the degree register'],
+      // Served the vendor 200 — every posting with its poster's name — until
+      // the route gate learned to refuse a vendor-only session on the member
+      // community. The handler asks for a session and nothing more, because
+      // "any signed-in member" is the right bar for a member.
+      ['/api/jobs', 'the jobs board, naming the alumnus behind each posting'],
     ];
 
     for (const [url, what] of endpoints) {

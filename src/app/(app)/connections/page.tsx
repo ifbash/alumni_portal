@@ -1,25 +1,11 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import {
-  ArrowRight,
-  Ban,
-  CircleCheck,
-  Clock,
-  Handshake,
-  Hourglass,
-  Inbox,
-  Lock,
-  MessageSquare,
-  Search,
-  Send,
-  TriangleAlert,
-  UserCheck,
-} from 'lucide-react';
+import { ArrowRight, Ban, Clock, Handshake, Hourglass, Inbox, Send } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap, can } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
-import { getConnections, getConnectionQuota } from '@/lib/data/repo';
+import { getConnections, getConnectionQuota, getOwnProfile, searchDirectory } from '@/lib/data/repo';
 import {
   Alert,
   Avatar,
@@ -30,13 +16,12 @@ import {
   EmptyState,
   PageHeader,
   Progress,
-  Section,
-  Separator,
   Tabs,
   type TabItem,
 } from '@/components/ui';
-import { MarginNote } from '@/components/brand/Marks';
-import { formatDate, formatRelative, memberLine } from '@/lib/format';
+import { displayNow, formatDate, formatRelative, memberLine } from '@/lib/format';
+import { firstNameOf, viewerBranch } from '@/lib/identity';
+import { REQUEST_EXPIRY_DAYS } from '@/lib/availability-copy';
 import { cn } from '@/lib/cn';
 import type {
   ConnectionKind,
@@ -45,16 +30,18 @@ import type {
   ConnectionState,
   MemberSummary,
 } from '@/lib/data/types';
+import { MemberCard } from '@/components/members/MemberCard';
+import { RequestIntroButton } from '@/components/directory/RequestIntroButton';
 import { ConnectionActions } from './ConnectionActions';
 
 /**
- * Connections — the student → alumni valve.
+ * Requests — asking for help and answering it.
  *
- * The quota is the product, not an error path. If four hundred final-years
- * can message eight thousand alumni without limit, the alumni disengage
- * inside a month and the directory is a phone book nobody answers. So the
- * meter is the first thing on the page, it is phrased as an allowance
- * rather than a restriction, and it always says what frees a slot.
+ * Ordered by what the viewer does here. Alumni and faculty mostly answer,
+ * so they open on the people waiting for them; the quota they almost
+ * never approach is a footnote until it matters. Students mostly ask, so
+ * they open on their own requests, each with its state and next step, and
+ * a one-line meter of what they have left.
  *
  * Contact details are never rendered here. An accepted request is the
  * *reason* details may appear on a profile — it is not itself permission,
@@ -62,7 +49,7 @@ import { ConnectionActions } from './ConnectionActions';
  * has no business second-guessing it.
  */
 
-export const metadata: Metadata = { title: 'Connections' };
+export const metadata: Metadata = { title: 'Requests' };
 
 type TabKey = 'received' | 'sent' | 'accepted';
 
@@ -100,14 +87,24 @@ export default async function ConnectionsPage({
   const available: TabKey[] = canReceive ? ['received', 'sent', 'accepted'] : ['sent', 'accepted'];
   const tab: TabKey = available.includes(requested as TabKey) ? (requested as TabKey) : available[0];
 
+  const { pack } = resolved.brand;
+  const timing = { locale: pack.locale.locale, timeZone: pack.locale.timeZone };
+  const now = displayNow();
+  const openSent = sent.filter((c) => c.state === 'pending');
+
+  // A student may only open profiles of alumni. A request from a student
+  // still arrives here for an alumnus, but a link to that student's
+  // profile would be a not-found page for them.
+  const canOpen = (m: MemberSummary) => !m.isStudent || can(session, 'directory.search.students');
+
   const labels: Record<TabKey, string> = {
-    received: 'Waiting on you',
-    sent: 'Sent',
+    received: 'To answer',
+    sent: isStudent ? 'Your requests' : 'You asked',
     accepted: 'Connected',
   };
   const counts: Record<TabKey, number> = {
     received: waiting.length,
-    sent: sent.length,
+    sent: openSent.length,
     accepted: accepted.length,
   };
 
@@ -118,39 +115,92 @@ export default async function ConnectionsPage({
     active: tab === key,
   }));
 
+  const resetsOn = firstOfNextMonth(timing.locale, timing.timeZone);
+  const hasAlumniRole = session.roles.some((r) => r.role === 'alumni');
+
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Mentorship, referrals and introductions"
-        title="Connections"
+        title="Requests"
         description={
           isStudent
-            ? 'Every request here goes to a real person who volunteers their evenings. You get a small number of open requests at a time — that limit is why alumni still reply.'
-            : 'Requests waiting on you, requests you have sent, and the people you are already connected to.'
+            ? 'Your requests to alumni, and what to do next with each one.'
+            : 'People asking for your help, and the requests you have sent.'
         }
+        meta={isStudent ? <StudentMeter quota={quota} resetsOn={resetsOn} /> : undefined}
         actions={
-          quota.canSend ? (
-            <ButtonLink href="/directory">
-              <Search className="size-4" aria-hidden="true" />
-              Find someone to ask
+          isStudent && quota.canSend ? (
+            <ButtonLink href="/directory?mentoring=1" className="min-h-11 sm:min-h-0">
+              Find a mentor
             </ButtonLink>
-          ) : (
-            <ButtonLink href="/directory" variant="secondary">
-              Browse the directory
+          ) : !isStudent ? (
+            <ButtonLink href="/directory" variant="secondary" className="min-h-11 sm:min-h-0">
+              Open the directory
             </ButtonLink>
-          )
+          ) : null
         }
       />
 
-      <QuotaPanel quota={quota} isStudent={isStudent} />
-
-      <Tabs items={tabs} ariaLabel="Connection views" />
-
-      {tab === 'received' ? <ReceivedTab waiting={waiting} answered={answered} /> : null}
-      {tab === 'sent' ? <SentTab sent={sent} quota={quota} /> : null}
-      {tab === 'accepted' ? (
-        <AcceptedTab accepted={accepted} viewerId={session.memberId} sentCount={sent.length} />
+      {isStudent && quota.reason ? (
+        <Alert tone="warning" title="You cannot send another request yet">
+          <p>
+            {quota.reason} A slot frees when one of your requests is answered or closes.
+          </p>
+        </Alert>
       ) : null}
+
+      <Tabs items={tabs} ariaLabel="Requests" />
+
+      {/* Held to a reading width: a request is a message to read, and a
+          150-character line across a wide screen is not. */}
+      <div className="max-w-4xl space-y-6">
+        {tab === 'received' ? (
+          <ReceivedTab
+            waiting={waiting}
+            answered={answered}
+            canOpen={canOpen}
+            timing={timing}
+            now={now}
+            hasAlumniRole={hasAlumniRole}
+            mentoringOn={getOwnProfile(session)?.openToMentoring ?? false}
+          />
+        ) : null}
+        {tab === 'sent' ? (
+          <SentTab
+            sent={sent}
+            isStudent={isStudent}
+            timing={timing}
+            now={now}
+            officeName={pack.copy.officeName}
+            suggestions={
+              isStudent && sent.length === 0
+                ? searchDirectory(session, {
+                    mentoring: true,
+                    department: viewerBranch(session) ?? undefined,
+                    perPage: 3,
+                  }).items
+                : []
+            }
+            quota={quota}
+            placeholder={
+              isStudent
+                ? `I am in final year ${viewerBranch(session) ? `${viewerBranch(session)} ` : ''}at ${pack.copy.shortName}. I would like to ask about…`
+                : undefined
+            }
+          />
+        ) : null}
+        {tab === 'accepted' ? (
+          <AcceptedTab
+            accepted={accepted}
+            viewerId={session.memberId}
+            sentCount={sent.length}
+            canOpen={canOpen}
+            timing={timing}
+          />
+        ) : null}
+
+        {!isStudent ? <QuotaFootnote quota={quota} resetsOn={resetsOn} /> : null}
+      </div>
     </div>
   );
 }
@@ -159,103 +209,45 @@ export default async function ConnectionsPage({
 // Quota
 // ---------------------------------------------------------------
 
-function QuotaPanel({ quota, isStudent }: { quota: ConnectionQuota; isStudent: boolean }) {
-  const openLeft = Math.max(0, quota.openLimit - quota.openRequests);
-  const monthLeft = Math.max(0, quota.monthlyLimit - quota.usedThisMonth);
-
-  const openTone = quota.openRequests >= quota.openLimit ? 'danger' : openLeft <= 1 ? 'warning' : 'brand';
-  const monthTone =
-    quota.usedThisMonth >= quota.monthlyLimit ? 'danger' : monthLeft <= 2 ? 'warning' : 'brand';
-
+/** A student's allowance in one line: "2 of 5 open · monthly count resets 1 September". */
+function StudentMeter({ quota, resetsOn }: { quota: ConnectionQuota; resetsOn: string }) {
+  const left = Math.max(0, quota.openLimit - quota.openRequests);
   return (
-    <Card>
-      <CardBody className="grid gap-gutter md:grid-cols-3">
-        <Meter
-          label="Open requests"
-          value={quota.openRequests}
-          limit={quota.openLimit}
-          tone={openTone}
-          hint={
-            openLeft > 0
-              ? `${openLeft} more you can send right now`
-              : 'Every slot is currently in use'
-          }
-        />
-        <Meter
-          label="Sent this month"
-          value={quota.usedThisMonth}
-          limit={quota.monthlyLimit}
-          tone={monthTone}
-          hint={monthLeft > 0 ? `${monthLeft} left before the month resets` : 'Resets on the 1st'}
-        />
-
-        <div className="space-y-2 md:border-l md:border-line md:pl-gutter">
-          <p className="text-sm font-medium text-secondary">What frees a slot</p>
-          <ul className="space-y-1.5 text-sm text-secondary">
-            <li className="flex gap-2">
-              <CircleCheck className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden="true" />
-              <span>Someone accepts or declines — either way the slot comes back.</span>
-            </li>
-            <li className="flex gap-2">
-              <Hourglass className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden="true" />
-              <span>A request nobody answers expires on its own and returns the slot.</span>
-            </li>
-            <li className="flex gap-2">
-              <Send className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden="true" />
-              <span>
-                You withdraw one from{' '}
-                <Link href="/connections?tab=sent" className="link">
-                  Sent
-                </Link>
-                .
-              </span>
-            </li>
-          </ul>
-        </div>
-      </CardBody>
-
-      {quota.reason ? (
-        <div className="border-t border-line p-card">
-          <Alert
-            tone="warning"
-            title="You cannot send another request just yet"
-            icon={<TriangleAlert className="size-4" />}
-          >
-            <p>{quota.reason}</p>
-            <p className="mt-1.5">
-              {isStudent
-                ? 'The cap is per student, not per college. It exists so that an alumnus who agreed to help gets three thoughtful messages a month instead of ninety.'
-                : 'The cap keeps the directory answerable. It is not a penalty and nothing is recorded against you.'}
-            </p>
-          </Alert>
-        </div>
-      ) : null}
-    </Card>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      <Progress
+        className="w-24"
+        value={quota.openRequests}
+        max={quota.openLimit}
+        tone={quota.openRequests >= quota.openLimit ? 'warning' : 'brand'}
+        label={`${quota.openRequests} of ${quota.openLimit} requests open`}
+      />
+      <p className="text-sm text-secondary">
+        <span className="tabular font-medium text-primary">
+          {quota.openRequests > 0
+            ? `${quota.openRequests} of ${quota.openLimit} open`
+            : `${left} requests available`}
+        </span>
+        {' · '}monthly count resets {resetsOn}
+      </p>
+    </div>
   );
 }
 
-function Meter({
-  label,
-  value,
-  limit,
-  tone,
-  hint,
-}: {
-  label: string;
-  value: number;
-  limit: number;
-  tone: 'brand' | 'warning' | 'danger';
-  hint: string;
-}) {
+/**
+ * Alumni and faculty send few requests, so their allowance stays out of
+ * the way until 60% of either limit is in use.
+ */
+function QuotaFootnote({ quota, resetsOn }: { quota: ConnectionQuota; resetsOn: string }) {
+  const openShare = quota.openRequests / Math.max(1, quota.openLimit);
+  const monthShare = quota.usedThisMonth / Math.max(1, quota.monthlyLimit);
+  if (openShare < 0.6 && monthShare < 0.6) return null;
+
   return (
-    <div className="space-y-2">
-      <p className="text-sm font-medium text-secondary">{label}</p>
-      <p className="font-display text-display-xs font-bold tabular">
-        {value} <span className="text-lg font-semibold text-muted">of {limit}</span>
-      </p>
-      <Progress value={value} max={limit} tone={tone} label={`${label}: ${value} of ${limit}`} />
-      <p className="text-xs text-muted">{hint}</p>
-    </div>
+    <p className={cn('border-t border-line pt-4 text-sm', quota.canSend ? 'text-secondary' : 'text-warning-fg')}>
+      {quota.reason ??
+        `${quota.openRequests} of ${quota.openLimit} requests open, ${quota.usedThisMonth} of ${quota.monthlyLimit} sent this month.`}{' '}
+      A slot frees when one is answered or closes; the monthly count resets {resetsOn}.
+    </p>
   );
 }
 
@@ -263,23 +255,49 @@ function Meter({
 // Received
 // ---------------------------------------------------------------
 
+interface Timing {
+  locale: string;
+  timeZone: string;
+}
+
 function ReceivedTab({
   waiting,
   answered,
+  canOpen,
+  timing,
+  now,
+  hasAlumniRole,
+  mentoringOn,
 }: {
   waiting: ConnectionRequest[];
   answered: ConnectionRequest[];
+  canOpen: (m: MemberSummary) => boolean;
+  timing: Timing;
+  now: Date;
+  hasAlumniRole: boolean;
+  mentoringOn: boolean;
 }) {
   if (waiting.length === 0 && answered.length === 0) {
     return (
       <EmptyState
         icon={<Inbox className="size-5" />}
-        title="Nobody is waiting on you"
-        description="Students find alumni through the directory, and the ones marked open to mentoring or referrals come up first. Turn those on in your profile and requests will start arriving."
+        title="No one has asked you yet"
+        description={
+          hasAlumniRole
+            ? 'Final-year students find you through the directory, and people open to mentoring come up first.'
+            : 'Final-year students can ask faculty who are open to mentoring for advice or an introduction.'
+        }
         action={
-          <ButtonLink href="/profile" variant="secondary">
-            Check what you are open to
-          </ButtonLink>
+          <div className="flex flex-wrap justify-center gap-2">
+            <ButtonLink href="/profile/preview" variant="secondary" className="min-h-11 sm:min-h-0">
+              See how students see your card
+            </ButtonLink>
+            {!mentoringOn ? (
+              <ButtonLink href="/profile/edit#availability" className="min-h-11 sm:min-h-0">
+                Turn on mentoring
+              </ButtonLink>
+            ) : null}
+          </div>
         }
       />
     );
@@ -288,100 +306,104 @@ function ReceivedTab({
   return (
     <div className="space-y-8">
       {waiting.length > 0 ? (
-        <Section
-          title={`${waiting.length} ${waiting.length === 1 ? 'request needs' : 'requests need'} a reply`}
-          description="Declining is a complete answer. A request left alone expires quietly, and the sender is never told you ignored it."
-        >
+        <section aria-labelledby="to-answer" className="space-y-4">
+          <div className="space-y-1">
+            <h2 id="to-answer" className="font-display text-xl font-semibold">
+              {waiting.length === 1 ? '1 person asked for your help' : `${waiting.length} people asked for your help`}
+            </h2>
+            <p className="text-sm text-secondary">
+              A request you leave closes by itself after {REQUEST_EXPIRY_DAYS} days.
+            </p>
+          </div>
           <div className="space-y-4">
             {waiting.map((c) => (
-              <RequestCard key={c.id} request={c} />
+              <RequestCard key={c.id} request={c} linkable={canOpen(c.from)} now={now} />
             ))}
           </div>
-        </Section>
-      ) : null}
+        </section>
+      ) : (
+        <EmptyState variant="inline" title="Nothing is waiting for you." description="Every request has an answer." />
+      )}
 
       {answered.length > 0 ? (
-        <Section
-          title="Already answered"
-          description="Kept so you can see who asked and what you decided."
-        >
+        <section aria-labelledby="answered" className="space-y-3">
+          <h2 id="answered" className="font-display text-lg font-semibold">
+            Already answered
+          </h2>
           <Card>
             <ul className="divide-y divide-line px-card">
               {answered.map((c) => (
                 <li key={c.id}>
-                  <AnsweredRow request={c} person={c.from} />
+                  <AnsweredRow request={c} person={c.from} linkable={canOpen(c.from)} timing={timing} />
                 </li>
               ))}
             </ul>
           </Card>
-        </Section>
+        </section>
       ) : null}
     </div>
   );
 }
 
-function RequestCard({ request }: { request: ConnectionRequest }) {
+function RequestCard({
+  request,
+  linkable,
+  now,
+}: {
+  request: ConnectionRequest;
+  linkable: boolean;
+  now: Date;
+}) {
   const sender = request.from;
-  const expiring = isExpiringSoon(request.expiresAt);
+  const expiring = isExpiringSoon(request.expiresAt, now);
 
   return (
-    <Card as="article" className="animate-fade-up">
-      <CardBody className="space-y-4">
-        <div className="flex flex-wrap items-start gap-3">
-          <Avatar name={sender.fullName} src={sender.photoUrl} size="lg" />
+    <Card as="article">
+      <CardBody className="space-y-3">
+        <div className="flex items-start gap-3">
+          <Avatar name={sender.fullName} src={sender.photoUrl} size="md" />
 
           <div className="min-w-0 flex-1">
             <h3 className="font-display text-md font-semibold leading-snug">
-              <Link href={`/directory/${sender.slug}`} className="link-quiet">
-                {sender.fullName}
-              </Link>
+              {linkable ? (
+                <Link href={`/directory/${sender.slug}`} className="link-quiet">
+                  {sender.fullName}
+                </Link>
+              ) : (
+                sender.fullName
+              )}
             </h3>
             <p className="mt-0.5 text-sm text-secondary">
               {memberLine([
                 sender.departmentCode,
-                sender.batchYear ? `Batch of ${sender.batchYear}` : null,
-                sender.isStudent ? 'Final year' : sender.currentCompany,
-                sender.isStudent ? null : sender.city,
-              ]) || 'No branch or batch recorded'}
+                sender.isStudent ? 'Final year' : sender.batchYear ? `Batch of ${sender.batchYear}` : null,
+              ]) || 'Branch and batch not recorded'}
             </p>
           </div>
 
-          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-            <KindBadge kind={request.kind} />
-            {sender.isStudent ? <Badge tone="info">Student</Badge> : null}
-          </div>
+          <KindBadge kind={request.kind} />
         </div>
 
         {request.message ? (
-          <blockquote className="rounded border-l-2 border-line-strong bg-surface-sunken px-4 py-3 text-sm leading-relaxed text-secondary">
-            <MessageSquare className="mb-1.5 size-3.5 text-muted" aria-hidden="true" />
-            <p>{request.message}</p>
+          <blockquote className="line-clamp-3 border-l-2 border-line-strong pl-3 text-sm leading-relaxed text-primary">
+            {request.message}
           </blockquote>
         ) : (
-          <p className="rounded bg-surface-sunken px-4 py-3 text-sm text-muted">
-            They sent no message — only the request itself. That usually means a first-timer, not
-            a mass mailing.
-          </p>
+          <p className="text-sm text-secondary">No message included.</p>
         )}
 
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+        <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-secondary">
           <span className="inline-flex items-center gap-1.5">
-            <Send className="size-3.5" aria-hidden="true" />
-            Sent {formatDate(request.createdAt)}
+            <Send className="size-3.5 text-muted" aria-hidden="true" />
+            Sent {formatRelative(request.createdAt)}
           </span>
           {request.expiresAt ? (
-            <span
-              className={cn(
-                'inline-flex items-center gap-1.5',
-                expiring ? 'font-medium text-warning-fg' : null,
-              )}
-            >
+            <span className={cn('inline-flex items-center gap-1.5', expiring && 'font-medium text-warning-fg')}>
               <Clock className="size-3.5" aria-hidden="true" />
               Closes {formatRelative(request.expiresAt)}
-              {expiring ? ' — nearly out of time' : ''}
             </span>
           ) : null}
-        </div>
+        </p>
       </CardBody>
 
       <div className="border-t border-line px-card py-3">
@@ -396,19 +418,33 @@ function RequestCard({ request }: { request: ConnectionRequest }) {
   );
 }
 
-function AnsweredRow({ request, person }: { request: ConnectionRequest; person: MemberSummary }) {
+function AnsweredRow({
+  request,
+  person,
+  linkable,
+  timing,
+}: {
+  request: ConnectionRequest;
+  person: MemberSummary;
+  linkable: boolean;
+  timing: Timing;
+}) {
   return (
     <div className="flex flex-wrap items-center gap-3 py-3">
       <Avatar name={person.fullName} src={person.photoUrl} size="sm" />
       <div className="min-w-0 flex-1">
-        <Link href={`/directory/${person.slug}`} className="block truncate text-sm font-medium link-quiet">
-          {person.fullName}
-        </Link>
-        <p className="truncate text-xs text-muted">
+        {linkable ? (
+          <Link href={`/directory/${person.slug}`} className="block truncate text-sm font-medium link-quiet">
+            {person.fullName}
+          </Link>
+        ) : (
+          <p className="truncate text-sm font-medium">{person.fullName}</p>
+        )}
+        <p className="truncate text-xs text-secondary">
           {memberLine([
             KIND_LABEL[request.kind],
-            `asked ${formatDate(request.createdAt)}`,
-            request.respondedAt ? `answered ${formatDate(request.respondedAt)}` : null,
+            `asked ${formatDate(request.createdAt, timing)}`,
+            request.respondedAt ? `answered ${formatDate(request.respondedAt, timing)}` : null,
           ])}
         </p>
       </div>
@@ -421,14 +457,78 @@ function AnsweredRow({ request, person }: { request: ConnectionRequest; person: 
 // Sent
 // ---------------------------------------------------------------
 
-function SentTab({ sent, quota }: { sent: ConnectionRequest[]; quota: ConnectionQuota }) {
+function SentTab({
+  sent,
+  isStudent,
+  timing,
+  now,
+  officeName,
+  suggestions,
+  quota,
+  placeholder,
+}: {
+  sent: ConnectionRequest[];
+  isStudent: boolean;
+  timing: Timing;
+  now: Date;
+  officeName: string;
+  suggestions: MemberSummary[];
+  quota: ConnectionQuota;
+  placeholder?: string;
+}) {
   if (sent.length === 0) {
+    if (isStudent && suggestions.length > 0) {
+      return (
+        <section aria-labelledby="start-with" className="space-y-4">
+          <div className="space-y-1">
+            <h2 id="start-with" className="font-display text-xl font-semibold">
+              Start with a mentor from your branch
+            </h2>
+            <p className="text-sm text-secondary">They have said yes to being asked.</p>
+          </div>
+          <ul className="grid grid-cols-1 gap-3">
+            {suggestions.map((m) => (
+              <li key={m.id} className="relative min-w-0">
+                <MemberCard
+                  member={m}
+                  variant="row"
+                  action={
+                    quota.canSend ? (
+                      <RequestIntroButton
+                        toMemberId={m.id}
+                        toName={m.fullName}
+                        kinds={mentorKinds(m)}
+                        defaultKind="mentorship"
+                        quota={quota}
+                        placeholder={placeholder}
+                        label="Ask"
+                        variant="secondary"
+                        size="sm"
+                        className="min-h-11 sm:min-h-0"
+                      />
+                    ) : undefined
+                  }
+                />
+              </li>
+            ))}
+          </ul>
+          <Link href="/directory?mentoring=1" className="link inline-flex min-h-11 items-center text-sm font-medium sm:min-h-0">
+            See every mentor
+          </Link>
+        </section>
+      );
+    }
+
     return (
       <EmptyState
         icon={<Send className="size-5" />}
         title="You have not asked anyone yet"
-        description="Filter the directory by branch, batch, company or city. Members who have opted into mentoring or referrals are marked — they have already said yes to being asked, so start there."
-        action={<ButtonLink href="/directory">Open the directory</ButtonLink>}
+        description="People marked Mentors in the directory have said yes to being asked."
+        action={
+          <ButtonLink href="/directory?mentoring=1" className="min-h-11 sm:min-h-0">
+            Find a mentor
+          </ButtonLink>
+        }
       />
     );
   }
@@ -439,40 +539,53 @@ function SentTab({ sent, quota }: { sent: ConnectionRequest[]; quota: Connection
   return (
     <div className="space-y-8">
       {open.length > 0 ? (
-        <Section
-          title={`${open.length} waiting for a reply`}
-          description={`Each of these is holding one of your ${quota.openLimit} open slots.`}
-        >
+        <section aria-labelledby="sent-open" className="space-y-4">
+          <h2 id="sent-open" className="font-display text-xl font-semibold">
+            Waiting for a reply
+          </h2>
           <div className="space-y-4">
             {open.map((c) => (
-              <SentCard key={c.id} request={c} />
+              <SentCard key={c.id} request={c} timing={timing} now={now} officeName={officeName} />
             ))}
           </div>
-        </Section>
+        </section>
       ) : null}
 
       {closed.length > 0 ? (
-        <Section title="Closed" description="What happened, and what you can do next.">
+        <section aria-labelledby="sent-closed" className="space-y-4">
+          <h2 id="sent-closed" className="font-display text-xl font-semibold">
+            Answered and closed
+          </h2>
           <div className="space-y-4">
             {closed.map((c) => (
-              <SentCard key={c.id} request={c} />
+              <SentCard key={c.id} request={c} timing={timing} now={now} officeName={officeName} />
             ))}
           </div>
-        </Section>
+        </section>
       ) : null}
     </div>
   );
 }
 
-function SentCard({ request }: { request: ConnectionRequest }) {
+function SentCard({
+  request,
+  timing,
+  now,
+  officeName,
+}: {
+  request: ConnectionRequest;
+  timing: Timing;
+  now: Date;
+  officeName: string;
+}) {
   const person = request.to;
-  const next = NEXT_STEP[request.state];
-  const expiring = isExpiringSoon(request.expiresAt);
+  const next = nextStep(request.state, firstNameOf(person.fullName), officeName);
+  const expiring = isExpiringSoon(request.expiresAt, now);
 
   return (
     <Card as="article">
       <CardBody className="space-y-3">
-        <div className="flex flex-wrap items-start gap-3">
+        <div className="flex items-start gap-3">
           <Avatar name={person.fullName} src={person.photoUrl} size="md" />
 
           <div className="min-w-0 flex-1">
@@ -482,57 +595,41 @@ function SentCard({ request }: { request: ConnectionRequest }) {
               </Link>
             </h3>
             <p className="mt-0.5 truncate text-sm text-secondary">
-              {memberLine([
-                person.designation,
-                person.currentCompany,
-                person.city,
-                person.batchYear ? `Batch of ${person.batchYear}` : null,
-              ]) || 'No company or city shared'}
+              {memberLine([person.designation, person.currentCompany]) ||
+                memberLine([person.departmentCode, person.batchYear ? `Batch of ${person.batchYear}` : null])}
             </p>
           </div>
 
-          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+          <div className="flex shrink-0 flex-col items-end gap-1.5 sm:flex-row sm:items-center">
             <KindBadge kind={request.kind} />
             <StateBadge state={request.state} />
           </div>
         </div>
 
         {request.message ? (
-          <p className="line-clamp-2 border-l-2 border-line pl-3 text-sm text-secondary">
-            {request.message}
-          </p>
+          <p className="line-clamp-2 border-l-2 border-line pl-3 text-sm text-secondary">{request.message}</p>
         ) : null}
 
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+        <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-secondary">
           <span className="inline-flex items-center gap-1.5">
-            <Send className="size-3.5" aria-hidden="true" />
-            Sent {formatDate(request.createdAt)}
+            <Send className="size-3.5 text-muted" aria-hidden="true" />
+            Sent {formatDate(request.createdAt, timing)}
           </span>
           {request.state === 'pending' && request.expiresAt ? (
-            <span
-              className={cn(
-                'inline-flex items-center gap-1.5',
-                expiring ? 'font-medium text-warning-fg' : null,
-              )}
-            >
+            <span className={cn('inline-flex items-center gap-1.5', expiring && 'font-medium text-warning-fg')}>
               <Hourglass className="size-3.5" aria-hidden="true" />
-              Expires {formatRelative(request.expiresAt)}
+              Closes {formatRelative(request.expiresAt)}
             </span>
           ) : null}
           {request.respondedAt ? (
             <span className="inline-flex items-center gap-1.5">
-              <Clock className="size-3.5" aria-hidden="true" />
-              Answered {formatDate(request.respondedAt)}
+              <Clock className="size-3.5 text-muted" aria-hidden="true" />
+              Answered {formatDate(request.respondedAt, timing)}
             </span>
           ) : null}
-        </div>
+        </p>
 
-        {next ? (
-          <div className="rounded bg-surface-sunken px-3.5 py-3 text-sm text-secondary">
-            <p className="font-medium text-primary">{next.title}</p>
-            <p className="mt-0.5">{next.body}</p>
-          </div>
-        ) : null}
+        {next ? <p className="rounded bg-surface-sunken px-3.5 py-2.5 text-sm text-secondary">{next}</p> : null}
       </CardBody>
 
       {request.state === 'pending' ? (
@@ -548,8 +645,8 @@ function SentCard({ request }: { request: ConnectionRequest }) {
 
       {request.state === 'accepted' ? (
         <div className="border-t border-line px-card py-3">
-          <ButtonLink href={`/directory/${person.slug}`} variant="secondary" size="sm">
-            Open their profile
+          <ButtonLink href={`/directory/${person.slug}`} variant="secondary" size="sm" className="min-h-11 sm:min-h-0">
+            Open profile
             <ArrowRight className="size-4" aria-hidden="true" />
           </ButtonLink>
         </div>
@@ -558,28 +655,27 @@ function SentCard({ request }: { request: ConnectionRequest }) {
   );
 }
 
-const NEXT_STEP: Partial<Record<ConnectionState, { title: string; body: string }>> = {
-  declined: {
-    title: 'They said no this time',
-    body: 'You will not be told why, and you should not read much into it — most declines are timing. Your slot is already back. Someone else in the same company or batch is usually the better next move.',
-  },
-  expired: {
-    title: 'It closed without an answer',
-    body: 'The slot is back. If you still need this, send it again with a shorter, more specific ask — one question, and what you have already tried.',
-  },
-  withdrawn: {
-    title: 'You withdrew this one',
-    body: 'Nothing was sent on. You can approach the same person again whenever you are ready.',
-  },
-  blocked: {
-    title: 'This member is not accepting requests from you',
-    body: 'Do not send another. If you think this is a mistake, write to the alumni cell rather than to them.',
-  },
-  accepted: {
-    title: 'Accepted',
-    body: 'Their profile is open to you now. Contact details appear there only if their own visibility setting shares them.',
-  },
-};
+/**
+ * What to do next, per state. A decline reads as "closed": the sender is
+ * told the request was answered, never that it was refused, and the
+ * person who answered is told exactly that.
+ */
+function nextStep(state: ConnectionState, first: string, officeName: string): string | null {
+  switch (state) {
+    case 'pending':
+      return null;
+    case 'accepted':
+      return `${first} accepted. Their profile shows what they share with you.`;
+    case 'declined':
+      return 'Closed without a connection. Your slot is back; someone else at the same company or batch may be the better person to ask.';
+    case 'expired':
+      return 'It closed without an answer and your slot is back. If you ask again, make it one specific question.';
+    case 'withdrawn':
+      return 'You withdrew this one. You can ask the same person again whenever you are ready.';
+    case 'blocked':
+      return `This member is not accepting requests from you. If you think that is a mistake, write to the ${officeName}.`;
+  }
+}
 
 // ---------------------------------------------------------------
 // Accepted
@@ -589,24 +685,30 @@ function AcceptedTab({
   accepted,
   viewerId,
   sentCount,
+  canOpen,
+  timing,
 }: {
   accepted: ConnectionRequest[];
   viewerId: string;
   sentCount: number;
+  canOpen: (m: MemberSummary) => boolean;
+  timing: Timing;
 }) {
   if (accepted.length === 0) {
     return (
       <EmptyState
         icon={<Handshake className="size-5" />}
-        title="No accepted connections yet"
-        description="This is where an accepted request lands — and where contact details appear, if the other person has chosen to share them on accept. Nothing here means nobody has replied yet, not that you did anything wrong."
+        title="No connections yet"
+        description="When someone accepts your request, or you accept theirs, it shows here."
         action={
           sentCount > 0 ? (
-            <ButtonLink href="/connections?tab=sent" variant="secondary">
-              See what you have sent
+            <ButtonLink href="/connections?tab=sent" variant="secondary" className="min-h-11 sm:min-h-0">
+              See what you asked
             </ButtonLink>
           ) : (
-            <ButtonLink href="/directory">Find someone to ask</ButtonLink>
+            <ButtonLink href="/directory?mentoring=1" className="min-h-11 sm:min-h-0">
+              Find a mentor
+            </ButtonLink>
           )
         }
       />
@@ -614,64 +716,56 @@ function AcceptedTab({
   }
 
   return (
-    <div className="space-y-4">
-      <Alert tone="info" title="This is where contact details unlock" icon={<Lock className="size-4" />}>
-        <p>
-          An accepted request opens the other person&apos;s profile to you. Whether their email or
-          mobile appears there is still their decision — a member who keeps contact details private
-          stays private, accepted or not. Use whatever they share for the reason you asked; the
-          college logs every release.
-        </p>
-      </Alert>
+    <ul className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      {accepted.map((c) => {
+        const person = c.from.id === viewerId ? c.to : c.from;
+        const theyAsked = c.to.id === viewerId;
+        const linkable = canOpen(person);
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        {accepted.map((c) => {
-          const person = c.from.id === viewerId ? c.to : c.from;
-          const theyAsked = c.to.id === viewerId;
-
-          return (
-            <Card key={c.id} as="article" interactive className="relative">
-              <CardBody className="space-y-3">
+        return (
+          <li key={c.id} className="min-w-0">
+            <Card as="article" className="flex h-full flex-col">
+              <CardBody className="flex-1 space-y-3">
                 <div className="flex items-start gap-3">
                   <Avatar name={person.fullName} src={person.photoUrl} size="md" />
                   <div className="min-w-0 flex-1">
-                    <h3 className="truncate font-display text-md font-semibold leading-snug">
-                      <Link
-                        href={`/directory/${person.slug}`}
-                        className="link-quiet after:absolute after:inset-0"
-                      >
-                        {person.fullName}
-                      </Link>
-                    </h3>
-                    <p className="mt-0.5 truncate text-xs text-secondary">
+                    <h3 className="truncate font-display text-md font-semibold leading-snug">{person.fullName}</h3>
+                    <p className="mt-0.5 truncate text-sm text-secondary">
                       {memberLine([
                         person.departmentCode,
-                        person.batchYear,
-                        person.currentCompany ?? (person.isStudent ? 'Final year' : null),
-                      ]) || 'No details shared yet'}
+                        person.isStudent ? 'Final year' : person.batchYear ? `Batch of ${person.batchYear}` : null,
+                        person.isStudent ? null : person.currentCompany,
+                      ])}
                     </p>
                   </div>
-                  <UserCheck className="size-4 shrink-0 text-success-fg" aria-hidden="true" />
+                  <Badge tone="success" dot>
+                    Connected
+                  </Badge>
                 </div>
 
-                <Separator />
-
-                <p className="text-xs text-muted">
-                  {theyAsked ? 'They asked you' : 'You asked'} for{' '}
-                  {KIND_LABEL[c.kind].toLowerCase()} ·{' '}
-                  {c.respondedAt ? `connected ${formatDate(c.respondedAt)}` : 'connected'}
+                <p className="text-xs text-secondary">
+                  {theyAsked ? 'They asked you' : 'You asked'} for {KIND_LABEL[c.kind].toLowerCase()}
+                  {c.respondedAt ? ` · accepted ${formatDate(c.respondedAt, timing)}` : ''}
                 </p>
-              </CardBody>
-            </Card>
-          );
-        })}
-      </div>
 
-      <MarginNote>
-        A connection is not a subscription — it does not give either of you a channel the other
-        cannot close. Either side can ask the alumni cell to end it.
-      </MarginNote>
-    </div>
+                {c.message ? (
+                  <p className="line-clamp-2 border-l-2 border-line pl-3 text-sm text-secondary">{c.message}</p>
+                ) : null}
+              </CardBody>
+
+              {linkable ? (
+                <div className="border-t border-line px-card py-3">
+                  <ButtonLink href={`/directory/${person.slug}`} variant="secondary" size="sm" className="min-h-11 sm:min-h-0">
+                    Open profile
+                    <ArrowRight className="size-4" aria-hidden="true" />
+                  </ButtonLink>
+                </div>
+              ) : null}
+            </Card>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -680,16 +774,16 @@ function AcceptedTab({
 // ---------------------------------------------------------------
 
 const KIND_LABEL: Record<ConnectionKind, string> = {
-  mentorship: 'Mentorship',
+  mentorship: 'Mentoring',
   referral: 'Referral',
   introduction: 'Introduction',
   speaking: 'Speaking invitation',
 };
 
-const KIND_TONE: Record<ConnectionKind, 'success' | 'brand' | 'info' | 'accent'> = {
+const KIND_TONE: Record<ConnectionKind, 'success' | 'brand' | 'neutral' | 'accent'> = {
   mentorship: 'success',
   referral: 'brand',
-  introduction: 'info',
+  introduction: 'neutral',
   speaking: 'accent',
 };
 
@@ -700,14 +794,15 @@ function KindBadge({ kind }: { kind: ConnectionKind }) {
 const STATE_LABEL: Record<ConnectionState, string> = {
   pending: 'Awaiting reply',
   accepted: 'Accepted',
-  declined: 'Declined',
+  // The sender is told a declined request was answered, not refused.
+  declined: 'Closed',
   expired: 'Expired',
   withdrawn: 'Withdrawn',
   blocked: 'Blocked',
 };
 
-const STATE_TONE: Record<ConnectionState, 'warning' | 'success' | 'neutral' | 'danger'> = {
-  pending: 'warning',
+const STATE_TONE: Record<ConnectionState, 'brand' | 'success' | 'neutral' | 'danger'> = {
+  pending: 'brand',
   accepted: 'success',
   declined: 'neutral',
   expired: 'neutral',
@@ -724,9 +819,28 @@ function StateBadge({ state }: { state: ConnectionState }) {
   );
 }
 
-/** Under a week left. Presentation only — the repo owns the real clock. */
-function isExpiringSoon(expiresAt: string | null): boolean {
+/** What a mentor has said yes to, for the inline request. */
+function mentorKinds(m: MemberSummary): ConnectionKind[] {
+  const kinds: ConnectionKind[] = ['mentorship'];
+  if (m.openToReferrals) kinds.push('referral');
+  kinds.push('introduction');
+  return kinds;
+}
+
+/** Under five days left, measured from the fixture clock. */
+function isExpiringSoon(expiresAt: string | null, now: Date): boolean {
   if (!expiresAt) return false;
-  const ms = new Date(expiresAt).getTime() - Date.now();
-  return ms > 0 && ms < 7 * 86400000;
+  const ms = new Date(expiresAt).getTime() - now.getTime();
+  return ms > 0 && ms < 5 * 86400000;
+}
+
+/** "1 September": when a monthly allowance starts again, in the college's time zone. */
+function firstOfNextMonth(locale: string, timeZone: string): string {
+  const now = displayNow();
+  const parts = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', timeZone }).formatToParts(now);
+  const y = Number(parts.find((p) => p.type === 'year')?.value);
+  const m = Number(parts.find((p) => p.type === 'month')?.value);
+  // Noon UTC on the 1st is the 1st in every Indian and most other zones.
+  const next = new Date(Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1, 12));
+  return new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long', timeZone }).format(next);
 }

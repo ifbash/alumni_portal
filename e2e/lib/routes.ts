@@ -7,6 +7,7 @@ import {
   OK,
   TO_DASHBOARD,
   TO_LOGIN_DYNAMIC,
+  TO_PLATFORM,
   UNAUTHENTICATED,
   seeOther,
   toLogin,
@@ -90,6 +91,23 @@ function memberPageAt(build: (ids: Ids) => string, holds: string, overrides: Ove
     // are loaded — `assertStatus()` fills it in against the URL it requested.
     expect: { default: OK, anon: TO_LOGIN_DYNAMIC, ...overrides },
   };
+}
+
+/**
+ * A member-community surface: a member page the vendor is turned away from.
+ *
+ * Every signed-in member of the college is admitted; the ifBash platform
+ * admin, who holds no college role, is refused at the route gate with a
+ * 307 to `/platform`. That refusal runs before the page, so it overrides
+ * whatever the page itself would have answered (the `/giving` feature
+ * gate included) — which is why `platform` is applied last.
+ */
+function communityPage(path: string, holds: string, overrides: Overrides = {}): RouteRow {
+  return memberPage(path, holds, { ...overrides, platform: TO_PLATFORM });
+}
+
+function communityPageAt(build: (ids: Ids) => string, holds: string, overrides: Overrides = {}): RouteRow {
+  return memberPageAt(build, holds, { ...overrides, platform: TO_PLATFORM });
 }
 
 /**
@@ -190,51 +208,55 @@ export const ROUTES: RouteRow[] = [
   },
 
   // ---- The member portal -----------------------------------------
-  memberPage('/dashboard', "the signed-in home: the viewer's own counts and notifications"),
+  //
+  // `communityPage` rows refuse the vendor at the gate (307 → /platform).
+  // The account's own pages — /profile and /settings — stay `memberPage`:
+  // the vendor keeps its own record, sign-out and session security.
+  communityPage('/dashboard', "the signed-in home: the viewer's own counts and notifications"),
   memberPage(
     '/welcome',
     'the post-verification welcome screen. NOTE: no /welcome prefix exists in ROUTE_POLICY, so the ' +
       'gate treats it as public and an anonymous caller gets 200 with a client-side redirect rather than a 307',
     { anon: OK },
   ),
-  memberPage('/directory', 'the alumni directory — 214 alumni, projected to the viewer’s tier'),
-  memberPageAt((i) => `/directory/${i.memberSlug}`, "one alumnus's profile, with or without the contact block"),
-  memberPageAt((i) => `/directory/batch/${i.batchYear}`, 'a whole graduating batch, listed'),
-  memberPageAt((i) => `/directory/branch/${i.departmentCode}`, 'a whole branch, listed'),
-  memberPage('/connections', 'introductions between named members'),
-  memberPage('/events', 'reunions, with venue and attendee counts'),
-  memberPageAt((i) => `/events/${i.eventSlug}`, 'one event, with venue and registration state'),
-  memberPageAt(
+  communityPage('/directory', 'the alumni directory — 214 alumni, projected to the viewer’s tier'),
+  communityPageAt((i) => `/directory/${i.memberSlug}`, "one alumnus's profile, with or without the contact block"),
+  communityPageAt((i) => `/directory/batch/${i.batchYear}`, 'a whole graduating batch, listed'),
+  communityPageAt((i) => `/directory/branch/${i.departmentCode}`, 'a whole branch, listed'),
+  communityPage('/connections', 'introductions between named members'),
+  communityPage('/events', 'reunions, with venue and attendee counts'),
+  communityPageAt((i) => `/events/${i.eventSlug}`, 'one event, with venue and registration state'),
+  communityPageAt(
     (i) => `/events/${i.eventSlug}/ticket`,
     "a member's own event ticket. No demo account holds a registration, so every signed-in caller gets the " +
       '"nothing on file" state — 200, deliberately, because a missing registration is an ordinary mistake ' +
       'and the answer to it is the registration form, not a refusal. The API route for the same thing answers 404',
   ),
-  memberPage('/gallery', 'photographs of identifiable students and alumni'),
-  memberPageAt((i) => `/gallery/${i.albumSlug}`, 'one album of identifiable people'),
-  memberPage(
+  communityPage('/gallery', 'photographs of identifiable students and alumni'),
+  communityPageAt((i) => `/gallery/${i.albumSlug}`, 'one album of identifiable people'),
+  communityPage(
     '/giving',
     'the donations module — off for DIET (features.donations = false) until the college confirms FCRA registration',
     { ...fill(COHORT.concat(STAFF), FEATURE_OFF) },
   ),
-  memberPageAt(
+  communityPageAt(
     (i) => `/giving/${i.campaignSlug}`,
     'one campaign — same feature gate',
     { ...fill(COHORT.concat(STAFF), FEATURE_OFF) },
   ),
-  memberPage('/jobs', 'the jobs board — postings name the alumnus referring'),
-  memberPage('/jobs/new', 'the posting form'),
-  memberPageAt((i) => `/jobs/${i.jobId}`, 'one posting'),
-  memberPageAt(
+  communityPage('/jobs', 'the jobs board — postings name the alumnus referring'),
+  communityPage('/jobs/new', 'the posting form'),
+  communityPageAt((i) => `/jobs/${i.jobId}`, 'one posting'),
+  communityPageAt(
     (i) => `/jobs/${i.jobId}/applicants`,
     'who applied to a posting — the page renders for anyone but the list is guarded server-side; ' +
       'see job-applicants.spec.ts, which is the assertion that matters here',
   ),
-  memberPage('/mentorship', 'alumni who agreed to be asked'),
-  memberPageAt((i) => `/mentorship/${i.mentorTopic}`, 'mentors for one topic'),
-  memberPage('/news', 'college notices for members'),
-  memberPageAt((i) => `/news/${i.newsSlug}`, 'one notice'),
-  memberPage('/notifications', "the viewer's own notifications"),
+  communityPage('/mentorship', 'alumni who agreed to be asked'),
+  communityPageAt((i) => `/mentorship/${i.mentorTopic}`, 'mentors for one topic'),
+  communityPage('/news', 'college notices for members'),
+  communityPageAt((i) => `/news/${i.newsSlug}`, 'one notice'),
+  communityPage('/notifications', "the viewer's own notifications"),
   memberPage('/profile', "the viewer's own record"),
   memberPage('/profile/edit', "the viewer's own record, editable"),
   memberPage('/profile/preview', 'how the viewer looks to other tiers'),
@@ -392,7 +414,10 @@ export const ROUTES: RouteRow[] = [
     platform: FORBIDDEN,
   }),
 
-  api('GET', '/api/connections', "the caller's own connection requests", { default: OK }),
+  // The vendor is refused every /api twin of a member-community page at the
+  // route gate (`refuseVendorOnly`), before the handler's own guard runs —
+  // hence `platform: FORBIDDEN` on rows whose default is 200, 404 or 422.
+  api('GET', '/api/connections', "the caller's own connection requests", { default: OK, platform: FORBIDDEN }),
   api('POST', '/api/connections', 'sending a connection request', {
     default: ADMITTED_THEN_INVALID,
     finance: FORBIDDEN,
@@ -400,13 +425,14 @@ export const ROUTES: RouteRow[] = [
   }),
   api('PATCH', (i) => `/api/connections/${i.connectionId}`, 'accepting or declining a request', {
     default: ADMITTED_THEN_INVALID,
+    platform: FORBIDDEN,
   }),
 
   api(
     'GET',
     (i) => `/api/events/${i.eventSlug}/ticket`,
     "a member's own ticket — 404 for every demo account, none of which holds a registration",
-    { default: NOT_FOUND },
+    { default: NOT_FOUND, platform: FORBIDDEN },
   ),
   api('POST', (i) => `/api/events/${i.eventSlug}/register`, 'registering for an event', {
     default: { status: 201 },
@@ -426,7 +452,10 @@ export const ROUTES: RouteRow[] = [
     admin: ADMITTED_THEN_INVALID,
   }),
 
-  api('GET', '/api/jobs', 'the jobs board as JSON', { default: OK }),
+  api('GET', '/api/jobs', 'the jobs board as JSON — every posting with the name of the alumnus who posted it', {
+    default: OK,
+    platform: FORBIDDEN,
+  }),
   api('POST', '/api/jobs', 'posting a job', {
     default: ADMITTED_THEN_INVALID,
     student: FORBIDDEN,
@@ -472,8 +501,14 @@ export const ROUTES: RouteRow[] = [
     { default: NOT_FOUND, student: FORBIDDEN, finance: FORBIDDEN, platform: FORBIDDEN },
   ),
 
-  api('GET', '/api/notifications', "the caller's notifications — see KW-NOTIFICATIONS-UNSCOPED", { default: OK }),
-  api('POST', '/api/notifications', 'marking a notification read', { default: ADMITTED_THEN_INVALID }),
+  api('GET', '/api/notifications', "the caller's notifications — see KW-NOTIFICATIONS-UNSCOPED", {
+    default: OK,
+    platform: FORBIDDEN,
+  }),
+  api('POST', '/api/notifications', 'marking a notification read', {
+    default: ADMITTED_THEN_INVALID,
+    platform: FORBIDDEN,
+  }),
   api('PATCH', '/api/settings/notifications', 'notification preferences', {
     default: ADMITTED_THEN_INVALID,
     finance: FORBIDDEN,

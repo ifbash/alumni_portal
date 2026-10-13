@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { UserX } from 'lucide-react';
-import { ButtonLink, Card, CardBody, CardTitle, EmptyState } from '@/components/ui';
+import { ButtonLink, EmptyState } from '@/components/ui';
 
 export const metadata: Metadata = {
   title: 'Profile not found',
@@ -14,53 +14,24 @@ export const metadata: Metadata = {
  * distinguished "no such person" from "not allowed" would let anyone
  * enumerate the student roll by trying URLs, which is the whole reason
  * students cannot list students in the first place.
- *
- * It still has to be useful, so it explains the ordinary reasons and puts
- * the search back in reach.
  */
 export default function MemberNotFound() {
   return (
     <div className="space-y-6">
+      {/* `EmptyState`'s title is a paragraph by design — the document still
+          owes itself exactly one h1. */}
+      <h1 className="sr-only">Profile not found</h1>
+
       <EmptyState
         icon={<UserX className="size-5" />}
         title="That profile is not available"
-        description="The link may be old, the member may have left the network, or this record may not be one you can open."
+        description="The link may be old, or the member may have left the network. Some profiles are visible only to certain members of the college."
         action={
-          <div className="flex flex-wrap justify-center gap-2">
-            <ButtonLink href="/directory">Back to the directory</ButtonLink>
-            <ButtonLink href="/connections" variant="secondary">
-              Your connections
-            </ButtonLink>
-          </div>
+          <ButtonLink href="/directory" className="min-h-11 sm:min-h-0">
+            Back to the directory
+          </ButtonLink>
         }
       />
-
-      <Card className="mx-auto max-w-prose">
-        <CardBody className="space-y-3">
-          <CardTitle as="h2">Why this happens</CardTitle>
-          <ul className="space-y-2 text-sm text-secondary">
-            <li>
-              <span className="font-medium text-primary">The link is out of date.</span> Profile
-              addresses change when a member corrects the spelling of their name against the degree
-              register.
-            </li>
-            <li>
-              <span className="font-medium text-primary">The member is no longer listed.</span>{' '}
-              Anyone can ask for their record to be removed, and the directory honours it the same
-              day.
-            </li>
-            <li>
-              <span className="font-medium text-primary">It is outside what you can see.</span>{' '}
-              Students see alumni who have opted in, not other students. Staff see their own
-              department.
-            </li>
-          </ul>
-          <p className="text-sm text-secondary">
-            If you were sent this link by someone at the college and it still does not open, the
-            alumni cell can check the record against the register.
-          </p>
-        </CardBody>
-      </Card>
     </div>
   );
 }

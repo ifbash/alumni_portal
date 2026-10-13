@@ -1,18 +1,24 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import type { ReactNode } from 'react';
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import {
-  Ban,
-  Building2,
+  Briefcase,
   CalendarDays,
-  Database,
-  Globe,
-  HardDrive,
-  IndianRupee,
-  KeyRound,
+  Check,
+  FileLock2,
+  HandHeart,
+  Image as ImageIcon,
+  Landmark,
+  MessageCircle,
+  Newspaper,
   Palette,
-  RefreshCw,
+  Search,
   Server,
-  ShieldCheck,
-  TriangleAlert,
+  UserPlus,
+  Users,
+  Globe,
 } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
 import { can, require as requireCap } from '@/lib/auth/guard';
@@ -20,57 +26,138 @@ import { getTenantBrand } from '@/lib/tenant';
 import { getDegreeRegisterStats, getDepartments, getTenants } from '@/lib/data/repo';
 import { NOTICE_VERSION, OTP_MAX_ATTEMPTS, OTP_TTL_SECONDS } from '@/lib/config';
 import {
-  Alert,
   Badge,
   ButtonLink,
   Card,
   CardBody,
-  CardDescription,
   CardHeader,
   CardTitle,
+  CardDescription,
   DetailRow,
-  Field,
-  Input,
+  Disclosure,
+  MediaFrame,
   PageHeader,
+  Progress,
   Section,
-  Switch,
-  Table,
-  TableWrap,
-  TBody,
-  TD,
-  TH,
-  THead,
-  TR,
 } from '@/components/ui';
-import { formatDate, formatNumber } from '@/lib/format';
-import type { Feature } from '@/lib/branding/pack';
+import { displayNow, formatDate, formatNumber } from '@/lib/format';
+import { capitalise, joinList, vendorLabel } from '@/lib/branding/copy';
+import type { BrandPack, Feature } from '@/lib/branding/pack';
 
-export const metadata = { title: 'Settings' };
-
-const FEATURE_LABELS: Record<Feature, { label: string; note: string }> = {
-  directory: { label: 'Alumni directory', note: 'Never anonymous. Every view requires a signed-in, verified member.' },
-  connections: { label: 'Connections and mentorship', note: 'Students are capped at five open requests; alumni at twenty-five.' },
-  events: { label: 'Events and registrations', note: 'Alumni-only events are not addressable by students anywhere.' },
-  jobs: { label: 'Jobs board', note: 'Alumni post, the placement cell moderates before anything goes live.' },
-  mentorship: { label: 'Mentorship matching', note: 'Availability flags on the profile drive the directory filters.' },
-  donations: { label: 'Giving and campaigns', note: 'Blocked until FCRA registration status is confirmed. See below.' },
-  gallery: { label: 'Photo gallery', note: 'Event photographs, uploaded by the alumni cell.' },
-  news: { label: 'News and notices', note: 'Institutional announcements on the member dashboard.' },
-  whatsapp: { label: 'WhatsApp Business messaging', note: 'Awaiting the WABA number and template approval from Meta.' },
-  publicLanding: { label: 'Public landing page', note: 'Marketing surface only. It exposes no member data and is not indexed.' },
-};
+export const metadata = { title: 'College profile · Staff console' };
 
 /**
- * Tenant settings.
+ * What each module does for members, said for its current state. A note
+ * written for "on" is wrong the moment the module is off, so each has both.
+ */
+function moduleCopy(pack: BrandPack): Record<Feature, { label: string; icon: ReactNode; on: string; off: string }> {
+  const office = pack.copy.officeName;
+  return {
+    directory: {
+      label: 'Directory',
+      icon: <Search className="size-4" />,
+      on: 'Signed-in members find each other by name, batch and branch. Never open to visitors.',
+      off: 'Members cannot search for each other.',
+    },
+    connections: {
+      label: 'Requests',
+      icon: <UserPlus className="size-4" />,
+      on: 'Students and alumni can ask each other for help, within a limit on open requests.',
+      off: 'Members cannot send each other requests.',
+    },
+    events: {
+      label: 'Events',
+      icon: <CalendarDays className="size-4" />,
+      on: 'Members see events and register for them.',
+      off: 'No events are shown to members.',
+    },
+    jobs: {
+      label: 'Jobs',
+      icon: <Briefcase className="size-4" />,
+      on: 'Alumni post openings, and the placement cell approves each one before it is shown.',
+      off: 'No job board is shown to members.',
+    },
+    mentorship: {
+      label: 'Mentorship',
+      icon: <Users className="size-4" />,
+      on: 'Alumni can say they are open to mentoring, and students can find them.',
+      off: 'Mentoring is not offered on the portal.',
+    },
+    donations: {
+      label: 'Giving',
+      icon: <HandHeart className="size-4" />,
+      on: 'Campaigns and the giving form are visible to alumni. Students never see them.',
+      off: 'Switched on once FCRA status is confirmed. Campaigns and the giving form become visible to alumni.',
+    },
+    gallery: {
+      label: 'Gallery',
+      icon: <ImageIcon className="size-4" />,
+      on: `Event photos, put up by the ${office}.`,
+      off: 'No photo albums are shown to members.',
+    },
+    news: {
+      label: 'News',
+      icon: <Newspaper className="size-4" />,
+      on: 'College notices and stories on the member home.',
+      off: 'No news is shown to members.',
+    },
+    whatsapp: {
+      label: 'WhatsApp messages',
+      icon: <MessageCircle className="size-4" />,
+      on: 'Messages to members can go out on WhatsApp.',
+      off: "Needs the college's approved WhatsApp Business number.",
+    },
+    publicLanding: {
+      label: 'Public page',
+      icon: <Globe className="size-4" />,
+      on: 'A public page introduces the portal to visitors. It shows no member data.',
+      off: 'Visitors go straight to sign-in.',
+    },
+  };
+}
+
+
+/**
+ * A pack path, or null when it names a file that is not there. Only paths
+ * under /public are checked (a remote URL is taken as given); a slot whose
+ * file is missing is something to ask for, not something to tick.
+ */
+function reachable(src: string | null | undefined): string | null {
+  if (!src) return null;
+  if (!src.startsWith('/')) return src;
+  const publicDir = path.join(process.cwd(), 'public');
+  const file = path.resolve(publicDir, (src.split('?')[0] ?? src).replace(/^\/+/, ''));
+  if (!file.startsWith(publicDir + path.sep)) return null;
+  return fs.existsSync(file) ? src : null;
+}
+
+/** The eight things a college supplies for its identity, and what to ask for when one is missing. */
+function brandAssets(pack: BrandPack): Array<{ key: string; label: string; supplied: boolean; ask: string }> {
+  const a = pack.assets;
+  return [
+    { key: 'crest', label: 'Crest', supplied: Boolean(reachable(a.crest)), ask: 'the crest in vector (SVG)' },
+    { key: 'logoPrimary', label: 'Logo', supplied: Boolean(reachable(a.logoPrimary)), ask: 'the logo for light backgrounds' },
+    { key: 'logoInverse', label: 'Reversed logo', supplied: Boolean(reachable(a.logoInverse)), ask: 'the logo for dark backgrounds' },
+    { key: 'logoMark', label: 'Logo mark', supplied: Boolean(reachable(a.logoMark)), ask: 'a square mark for small spaces' },
+    { key: 'ogImage', label: 'Share card', supplied: Boolean(reachable(a.ogImage)), ask: 'a 1200×630 share card' },
+    { key: 'heroImage', label: 'Landing photo', supplied: Boolean(reachable(a.heroImage)), ask: 'a wide campus photo for the landing page' },
+    { key: 'authImage', label: 'Sign-in photo', supplied: Boolean(reachable(a.authImage)), ask: 'a photo for the sign-in page' },
+    { key: 'campusPhotos', label: 'Campus photos', supplied: a.campusPhotos.some((p) => reachable(p.src)), ask: 'a few campus photos with captions' },
+  ];
+}
+
+/**
+ * The college profile.
  *
- * Read-only for anything the brand pack owns — a college that wants a
- * different portal name changes it in the branding console, and one
- * source of truth for copy is the reason a new customer is a JSON file
- * rather than a branch.
+ * Read-only: everything here comes from the brand pack, the tenant record
+ * and the repo, and is changed in Branding (identity) or by the vendor
+ * (modules, legal status). The order is the order a college admin checks
+ * it: who we are, what we are legally cleared for, how the college is
+ * structured, what members can use, and — collapsed — the facts an IT team
+ * or auditor asks for.
  *
- * The two things that genuinely live here are the ones with legal weight:
- * whether foreign contributions may be collected at all, and where the
- * data physically sits.
+ * The vendor holds `tenant.configure` and reads this page, so it carries
+ * no member data: counts at most.
  */
 export default async function AdminSettingsPage() {
   const session = await getSession();
@@ -86,60 +173,57 @@ export default async function AdminSettingsPage() {
   const departments = getDepartments();
   const register = getDegreeRegisterStats();
 
-  const totalIntake = departments.reduce((n, d) => n + (d.intake ?? 0), 0);
+  const fmt = { locale: pack.locale.locale, timeZone: pack.locale.timeZone };
 
-  // Indian academic sessions start in June/July. Derived rather than
-  // stored, so nobody has to remember to roll a config value over.
-  const now = new Date();
-  const sessionStart = now.getMonth() >= 5 ? now.getFullYear() : now.getFullYear() - 1;
+  // Indian academic sessions start in June/July. Derived from the portal's
+  // clock rather than stored, so nobody has to roll a config value over.
+  const now = displayNow();
+  const nowParts = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', timeZone: fmt.timeZone })
+    .format(now)
+    .split('-');
+  const year = Number(nowParts[0]);
+  const month = Number(nowParts[1]);
+  const sessionStart = month >= 6 ? year : year - 1;
   const academicYear = `${sessionStart}–${String(sessionStart + 1).slice(2)}`;
 
   const canRollover = can(session, 'rollover.execute');
+  const canDataRequests = can(session, 'data_request.manage');
   const donationsOn = pack.features.donations;
+  const fcra = tenant.fcraRegistered;
+
+  const assets = brandAssets(pack);
+  const supplied = assets.filter((x) => x.supplied).length;
+  const missing = assets.filter((x) => !x.supplied);
+  const modules = moduleCopy(pack);
+  const logo = pack.assets.logoPrimary ?? pack.assets.logoMark ?? null;
+  const photo = pack.assets.campusPhotos[0] ?? null;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-10">
       <PageHeader
         eyebrow="Governance"
-        title="Institution settings"
-        description={`Configuration for ${pack.copy.institutionName}. Branding, copy and assets live in the branding console; what remains here is what carries legal or operational weight.`}
+        title="College profile"
+        description={`What the portal holds about ${pack.copy.shortName}: identity, legal status, structure and modules.`}
         actions={
           <ButtonLink href="/admin/branding" variant="secondary">
-            <Palette className="size-4" />
-            Branding console
+            <Palette className="size-4" aria-hidden="true" />
+            Edit in Branding
           </ButtonLink>
         }
       />
 
-      {/* ---------------------------------------------------------------
-          Institution
-         --------------------------------------------------------------- */}
-      <Section
-        title="Institution"
-        description="Read from the tenant's brand pack. Editing any of this is a branding change, not a settings change."
-      >
-        <div className="grid gap-gutter lg:grid-cols-2">
+      {/* ---- 1. Profile --------------------------------------------- */}
+      <Section title="Profile">
+        <div className="grid grid-cols-1 gap-gutter lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <Card>
-            <CardHeader className="flex-col items-start gap-1">
-              <CardTitle as="h3" className="flex items-center gap-2">
-                <Building2 className="size-4 text-muted" aria-hidden="true" />
-                Identity
-              </CardTitle>
-            </CardHeader>
-            <CardBody className="pt-4">
+            <CardBody>
               <dl className="divide-y divide-line">
                 <DetailRow label="Institution">{pack.copy.institutionName}</DetailRow>
                 <DetailRow label="Short name">{pack.copy.shortName}</DetailRow>
                 <DetailRow label="Portal name">{pack.copy.portalName}</DetailRow>
-                <DetailRow label="Tagline">
-                  {pack.copy.tagline ?? <span className="font-normal text-muted">Not set</span>}
-                </DetailRow>
-                <DetailRow label="Established">
-                  {summary?.established ?? <span className="font-normal text-muted">Not supplied</span>}
-                </DetailRow>
                 <DetailRow label="Address">
                   {pack.copy.addressLines.length ? (
-                    <span className="block space-y-0.5 text-sm font-normal">
+                    <span className="block space-y-0.5 font-normal">
                       {pack.copy.addressLines.map((l) => (
                         <span key={l} className="block">
                           {l}
@@ -147,401 +231,317 @@ export default async function AdminSettingsPage() {
                       ))}
                     </span>
                   ) : (
-                    <span className="font-normal text-muted">Not supplied</span>
+                    <span className="font-normal text-secondary">Not supplied yet</span>
                   )}
                 </DetailRow>
-                <DetailRow label="Support email">
+                <DetailRow label="Email">
                   {pack.copy.supportEmail ? (
-                    <a href={`mailto:${pack.copy.supportEmail}`} className="link font-mono text-xs">
+                    <a href={`mailto:${pack.copy.supportEmail}`} className="link">
                       {pack.copy.supportEmail}
                     </a>
                   ) : (
-                    <span className="font-normal text-muted">Not supplied</span>
+                    <span className="font-normal text-secondary">Not supplied yet</span>
                   )}
                 </DetailRow>
+                <DetailRow label="Phone">
+                  {pack.copy.supportPhone ?? <span className="font-normal text-secondary">Not supplied yet</span>}
+                </DetailRow>
+                <DetailRow label="Website">
+                  {pack.copy.websiteUrl ? (
+                    <a href={pack.copy.websiteUrl} className="link break-all" target="_blank" rel="noreferrer">
+                      {pack.copy.websiteUrl.replace(/^https?:\/\//, '')}
+                      <span className="sr-only"> (opens in a new tab)</span>
+                    </a>
+                  ) : (
+                    <span className="font-normal text-secondary">Not supplied yet</span>
+                  )}
+                </DetailRow>
+                <DetailRow label="Office">{capitalise(pack.copy.officeName)}</DetailRow>
               </dl>
             </CardBody>
           </Card>
 
           <Card>
-            <CardHeader className="flex-col items-start gap-1">
-              <CardTitle as="h3" className="flex items-center gap-2">
-                <Server className="size-4 text-muted" aria-hidden="true" />
-                Tenancy
+            <CardHeader variant="stack">
+              <CardTitle as="h3">
+                Brand assets: {supplied} of {assets.length} supplied
               </CardTitle>
+              <Progress
+                value={supplied}
+                max={assets.length}
+                tone={supplied === assets.length ? 'success' : 'brand'}
+                label={`Brand assets: ${supplied} of ${assets.length} supplied`}
+                className="mt-2"
+              />
             </CardHeader>
-            <CardBody className="pt-4">
-              <dl className="divide-y divide-line">
-                <DetailRow label="Tenant ID">
-                  <span className="font-mono text-xs">{tenant.id}</span>
-                </DetailRow>
-                <DetailRow label="Portal address">
-                  <span className="font-mono text-xs">{tenant.subdomain}.portal.ifbash.com</span>
-                </DetailRow>
-                <DetailRow label="Brand pack">
-                  <span className="font-mono text-xs">brands/{tenant.packId ?? 'default'}.json</span>
-                </DetailRow>
-                <DetailRow label="Plan">
-                  <Badge tone="brand">{summary?.plan ?? 'standard'}</Badge>
-                </DetailRow>
-                <DetailRow label="Status">
-                  <Badge tone={summary?.status === 'active' ? 'success' : 'warning'}>
-                    {summary?.status ?? 'active'}
-                  </Badge>
-                </DetailRow>
-                <DetailRow label="Live since">
-                  {summary ? formatDate(summary.createdAt) : '—'}
-                </DetailRow>
-                <DetailRow label="Records held">
-                  <span className="tabular">
-                    {formatNumber(summary?.memberCount ?? 0)} members ·{' '}
-                    {formatNumber(register.total)} register rows
-                  </span>
-                </DetailRow>
-              </dl>
+            <CardBody className="space-y-4">
+              {pack.assets.crest || logo || photo ? (
+                <div className="grid grid-cols-3 gap-3">
+                  {pack.assets.crest ? (
+                    <MediaFrame
+                      aspect="1/1"
+                      caption="Crest"
+                      fallback={
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={pack.assets.crest} alt="" className="absolute inset-0 size-full object-contain p-3" />
+                      }
+                    />
+                  ) : null}
+                  {logo ? (
+                    <MediaFrame
+                      aspect="1/1"
+                      caption="Logo"
+                      fallback={
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={logo} alt="" className="absolute inset-0 size-full object-contain p-3" />
+                      }
+                    />
+                  ) : null}
+                  {photo ? (
+                    <MediaFrame src={photo.src} alt={photo.alt} focus={photo.focus} aspect="1/1" caption="Campus photo" />
+                  ) : null}
+                </div>
+              ) : null}
 
-              <Alert tone="neutral" className="mt-4" icon={<ShieldCheck className="size-4" />}>
-                <p>
-                  Every table in this tenant carries a tenant ID and a row-level security policy keyed
-                  on <span className="font-mono">app.tenant_id</span>. Isolation is enforced in
-                  Postgres, not in application code — one forgotten WHERE clause must not be able to
-                  leak across colleges.
+              {missing.length ? (
+                <ul className="divide-y divide-line rounded border border-line bg-surface text-sm">
+                  {missing.map((m) => (
+                    <li key={m.key} className="flex items-center justify-between gap-3 px-3 py-2">
+                      <span className="font-medium">{m.label}</span>
+                      <span className="text-secondary">not supplied yet</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="flex items-center gap-2 text-sm text-success-fg">
+                  <Check className="size-4" aria-hidden="true" />
+                  Every identity asset is supplied.
                 </p>
-              </Alert>
+              )}
+
+              {missing.length ? (
+                <p className="text-sm text-secondary">
+                  <span className="font-medium text-primary">Ask the college for </span>
+                  {joinList(missing.slice(0, 4).map((m) => m.ask))}
+                  {missing.length > 4 ? ', and the rest listed above' : ''}.
+                </p>
+              ) : null}
             </CardBody>
           </Card>
         </div>
       </Section>
 
-      {/* ---------------------------------------------------------------
-          Departments
-         --------------------------------------------------------------- */}
-      <Section
-        title="Departments"
-        description="Branches offered, with sanctioned intake. Department codes are what every scoped role grant is checked against."
-      >
-        <TableWrap caption="Departments and sanctioned intake">
-          <Table>
-            <THead>
-              <TR>
-                <TH>Code</TH>
-                <TH>Department</TH>
-                <TH align="right">Established</TH>
-                <TH align="right">Sanctioned intake</TH>
-              </TR>
-            </THead>
-            <TBody>
-              {departments.map((d) => (
-                <TR key={d.id} interactive>
-                  <TD className="font-mono text-xs font-semibold">{d.code}</TD>
-                  <TD>{d.name}</TD>
-                  <TD numeric>{d.established ?? '—'}</TD>
-                  <TD numeric>{d.intake ? formatNumber(d.intake) : '—'}</TD>
-                </TR>
-              ))}
-              <TR className="bg-surface-sunken">
-                <TD className="font-semibold" />
-                <TD className="font-semibold">Total across {departments.length} branches</TD>
-                <TD />
-                <TD numeric className="font-semibold">
-                  {formatNumber(totalIntake)}
-                </TD>
-              </TR>
-            </TBody>
-          </Table>
-        </TableWrap>
-
-        <Alert tone="warning" icon={<TriangleAlert className="size-4" />}>
-          <p>
-            Current enrolment and staff headcount are not on record. Both are outstanding with the
-            college and they decide how much self-service verification is worth building: a register
-            of eight thousand graduates needs a different answer from one of eight hundred.
-          </p>
-        </Alert>
-      </Section>
-
-      {/* ---------------------------------------------------------------
-          Academic year
-         --------------------------------------------------------------- */}
-      <Section title="Academic year and rollover">
-        <Card>
-          <CardHeader className="flex-col items-start gap-1">
-            <CardTitle as="h3" className="flex items-center gap-2">
-              <CalendarDays className="size-4 text-muted" aria-hidden="true" />
-              Session {academicYear}
-            </CardTitle>
-            <CardDescription>
-              Derived from the calendar rather than stored, so nobody has to remember to roll a value
-              over in June.
-            </CardDescription>
-          </CardHeader>
-          <CardBody className="space-y-4 pt-4">
-            <dl className="divide-y divide-line">
-              <DetailRow label="Current session">{academicYear}</DetailRow>
-              <DetailRow label="Graduating cohort">
-                Batch of {sessionStart + 1} — becomes alumni at the next rollover
-              </DetailRow>
-              <DetailRow label="Rollover trigger">
-                Manual, by an admin holding{' '}
-                <span className="font-mono text-xs">rollover.execute</span>
-              </DetailRow>
-              <DetailRow label="Register coverage">
-                <span className="tabular">
-                  {formatNumber(register.claimed)} of {formatNumber(register.total)} rows claimed
-                </span>
-              </DetailRow>
-            </dl>
-
-            <Alert tone="info" icon={<RefreshCw className="size-4" />}>
-              <p>
-                <span className="font-mono">rollover_batch()</span> flips the final-year cohort from{' '}
-                <span className="font-mono">active_student</span> to{' '}
-                <span className="font-mono">active_alumni</span>. It is never automatic and always
-                runs a dry run first: promoting a batch early takes away the jobs board from students
-                who still need it, and putting it back is a row-by-row correction.
-              </p>
-            </Alert>
-
-            {canRollover ? (
-              <ButtonLink href="/admin/rollover" variant="secondary">
-                Open the rollover preview
-              </ButtonLink>
-            ) : null}
-          </CardBody>
-        </Card>
-      </Section>
-
-      {/* ---------------------------------------------------------------
-          FCRA
-         --------------------------------------------------------------- */}
-      <Section
-        title="Foreign contributions"
-        description="The one setting on this page with a statute behind it."
-      >
-        <Card>
-          <CardHeader className="flex-col items-start gap-1">
-            <CardTitle as="h3" className="flex items-center gap-2">
-              <IndianRupee className="size-4 text-muted" aria-hidden="true" />
-              FCRA registration
-            </CardTitle>
-            <CardDescription>
-              Around one alumnus in eight on this portal is outside India. Their money is a foreign
-              contribution the moment it is collected, whichever campaign it lands in.
-            </CardDescription>
-          </CardHeader>
-
-          <CardBody className="space-y-5 pt-4">
-            <Alert
-              tone="danger"
-              title="Turning this on enables the giving module for every member"
-              icon={<TriangleAlert className="size-4" />}
-            >
-              <p>
-                Campaigns, the payment flow and 80G receipting all become visible to alumni, and the
-                portal starts accepting money. Donations carry{' '}
-                <span className="font-mono">source_country</span> and{' '}
-                <span className="font-mono">is_foreign_contribution</span> from the first rupee, so
-                segregation is structural rather than a report someone runs at audit time — but
-                collecting a foreign contribution without a valid FCRA registration is an offence by
-                the trust, not a configuration mistake by the portal.
-              </p>
-            </Alert>
-
-            <div className="rounded-lg border border-line bg-surface-sunken p-4">
-              <Switch
-                id="fcra-registered"
-                defaultChecked={tenant.fcraRegistered}
-                disabled
-                label="The college trust holds a valid FCRA registration"
-                hint="Locked until the registration certificate is on file. Ask the trust office for the certificate number and validity date."
-              />
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field
-                htmlFor="fcra-number"
-                label="FCRA registration number"
-                hint="Nine digits, as printed on the certificate."
-              >
-                <Input id="fcra-number" disabled placeholder="Awaiting the certificate" />
-              </Field>
-              <Field
-                htmlFor="fcra-account"
-                label="Designated FCRA bank account"
-                hint="SBI New Delhi Main Branch, as required since 2020."
-              >
-                <Input id="fcra-account" disabled placeholder="Awaiting the account details" />
-              </Field>
-            </div>
-
-            <dl className="divide-y divide-line">
-              <DetailRow label="Current state">
-                <Badge tone={tenant.fcraRegistered ? 'success' : 'warning'} dot>
-                  {tenant.fcraRegistered ? 'Registered' : 'Not confirmed'}
+      {/* ---- 2. Compliance ------------------------------------------ */}
+      <Section title="Compliance">
+        <div className="grid grid-cols-1 gap-gutter lg:grid-cols-2">
+          <Card id="fcra" className="scroll-mt-24">
+            <CardHeader variant="stack">
+              <div className="flex w-full items-start justify-between gap-3">
+                <CardTitle as="h3" className="flex items-center gap-2">
+                  <Landmark className="size-4 text-secondary" aria-hidden="true" />
+                  FCRA registration
+                </CardTitle>
+                <Badge tone={fcra ? 'success' : 'warning'} dot className="shrink-0 whitespace-nowrap">
+                  {fcra ? 'Confirmed' : 'Not confirmed'}
                 </Badge>
-              </DetailRow>
-              <DetailRow label="Giving module">
-                <Badge tone={donationsOn ? 'success' : 'neutral'}>
-                  {donationsOn ? 'Visible to alumni' : 'Hidden from every member'}
-                </Badge>
-              </DetailRow>
-              <DetailRow label="Students">
-                <span className="font-normal text-secondary">
-                  Never see the giving module, registered or not. Asking a final-year for money on the
-                  portal meant to help them find work poisons the product.
-                </span>
-              </DetailRow>
-            </dl>
-          </CardBody>
-        </Card>
-      </Section>
-
-      {/* ---------------------------------------------------------------
-          Modules
-         --------------------------------------------------------------- */}
-      <Section
-        title="Modules"
-        description="Feature flags on the brand pack. A flag that is off is off in the navigation and in the route guard, not merely hidden with CSS."
-      >
-        <TableWrap caption="Modules enabled for this tenant">
-          <Table>
-            <THead>
-              <TR>
-                <TH>Module</TH>
-                <TH>State</TH>
-                <TH>Note</TH>
-              </TR>
-            </THead>
-            <TBody>
-              {(Object.keys(FEATURE_LABELS) as Feature[]).map((key) => (
-                <TR key={key} interactive>
-                  <TD className="font-medium">{FEATURE_LABELS[key].label}</TD>
-                  <TD>
-                    <Badge tone={pack.features[key] ? 'success' : 'neutral'} dot>
-                      {pack.features[key] ? 'On' : 'Off'}
-                    </Badge>
-                  </TD>
-                  <TD className="text-secondary">{FEATURE_LABELS[key].note}</TD>
-                </TR>
-              ))}
-            </TBody>
-          </Table>
-        </TableWrap>
-      </Section>
-
-      {/* ---------------------------------------------------------------
-          Residency
-         --------------------------------------------------------------- */}
-      <Section
-        title="Data residency and retention"
-        description="Stated plainly because a college will be asked this by its own audit committee, and the answer has to be the same every time."
-      >
-        <div className="grid gap-gutter lg:grid-cols-2">
-          <Card>
-            <CardBody className="space-y-4">
-              <ul className="space-y-4">
-                <ResidencyRow
-                  icon={<Database className="size-4" />}
-                  title="PostgreSQL — ap-south-1 (Mumbai)"
-                  body="Primary and replicas. Row-level security on every table, keyed on the tenant. Automated backups stay in the same region."
-                />
-                <ResidencyRow
-                  icon={<HardDrive className="size-4" />}
-                  title="Object storage — ap-south-1 (Mumbai)"
-                  body="Profile photographs, event images, degree-register uploads and generated exports. No cross-region replication is configured."
-                />
-                <ResidencyRow
-                  icon={<Globe className="size-4" />}
-                  title="No cross-border transfer"
-                  body="Nothing about a member leaves India in the ordinary course of running the portal, which keeps DPDP cross-border transfer rules out of scope entirely."
-                />
-                <ResidencyRow
-                  icon={<Ban className="size-4" />}
-                  title="No third-party analytics"
-                  body="No advertising pixel, no session recorder, no behavioural profile. Nothing that would put a member's browsing on somebody else's server."
-                />
-              </ul>
+              </div>
+              <CardDescription>Whether the college trust may accept money from outside India.</CardDescription>
+            </CardHeader>
+            <CardBody>
+              <dl className="divide-y divide-line">
+                <DetailRow label="What it blocks">
+                  <span className="font-normal">
+                    {fcra
+                      ? donationsOn
+                        ? 'Nothing. Foreign gifts are still kept in their own ledger.'
+                        : 'Nothing legally; giving is switched off for members.'
+                      : 'Giving stays hidden from members, and foreign gifts already on record are held.'}
+                  </span>
+                </DetailRow>
+                <DetailRow label="Giving for members">{donationsOn ? 'On' : 'Off'}</DetailRow>
+                <DetailRow label="Registration number">
+                  <span className="font-normal text-secondary">{fcra ? 'Not recorded in the portal' : 'Not on file yet'}</span>
+                </DetailRow>
+                <DetailRow label="FCRA bank account">
+                  <span className="font-normal text-secondary">{fcra ? 'Not recorded in the portal' : 'Not on file yet'}</span>
+                </DetailRow>
+                {!fcra ? (
+                  <DetailRow label="Who to ask">
+                    <span className="font-normal">
+                      The trust office, for the registration certificate and the designated account at SBI, New Delhi
+                      Main Branch.
+                    </span>
+                  </DetailRow>
+                ) : null}
+              </dl>
             </CardBody>
           </Card>
 
           <Card>
-            <CardHeader className="flex-col items-start gap-1">
+            <CardHeader variant="stack">
               <CardTitle as="h3" className="flex items-center gap-2">
-                <KeyRound className="size-4 text-muted" aria-hidden="true" />
-                Credentials and consent
+                <FileLock2 className="size-4 text-secondary" aria-hidden="true" />
+                Personal data
               </CardTitle>
+              <CardDescription>What members agreed to, and where their data lives.</CardDescription>
             </CardHeader>
-            <CardBody className="pt-4">
+            <CardBody className="space-y-4">
               <dl className="divide-y divide-line">
-                <DetailRow label="Primary credential">
-                  Email one-time code. No password is stored anywhere.
-                </DetailRow>
-                <DetailRow label="Code validity">
-                  <span className="tabular">{Math.round(OTP_TTL_SECONDS / 60)} minutes</span>, single
-                  use, {OTP_MAX_ATTEMPTS} attempts
-                </DetailRow>
-                <DetailRow label="Mobile number">
-                  Verified at profile completion. Used for recovery and WhatsApp — never as the login.
-                </DetailRow>
-                <DetailRow label="Session cookie">
-                  <span className="font-mono text-xs">HttpOnly</span> ·{' '}
-                  <span className="font-mono text-xs">SameSite=Lax</span> · roles resolved from
-                  storage on every request
-                </DetailRow>
                 <DetailRow label="Privacy notice">
-                  <span className="font-mono text-xs">{NOTICE_VERSION}</span>
-                </DetailRow>
-                <DetailRow label="Consent record">
-                  Append-only, with the notice version against every entry. A withdrawn consent is a
-                  new row, never an edit.
+                  Version <span className="tabular">{NOTICE_VERSION}</span>
                 </DetailRow>
                 <DetailRow label="Data requests">
-                  <span className="font-normal text-secondary">
-                    Export, correction and deletion requests run on a thirty-day statutory clock,
-                    shown as a countdown so nothing quietly ages past it.
-                  </span>
+                  <span className="font-normal">Answered within 30 days of receipt</span>
+                </DetailRow>
+                <DetailRow label="Stored">
+                  <span className="font-normal">In India. Nothing is transferred abroad.</span>
                 </DetailRow>
               </dl>
-
-              <div className="mt-4 flex flex-wrap gap-2">
-                <ButtonLink href="/admin/data-requests" variant="secondary" size="sm">
-                  Data requests
-                </ButtonLink>
-                {can(session, 'audit.read') ? (
-                  <ButtonLink href="/admin/audit" variant="secondary" size="sm">
-                    Audit log
-                  </ButtonLink>
-                ) : null}
-              </div>
+              {canDataRequests || can(session, 'audit.read') ? (
+                <div className="flex flex-wrap gap-2">
+                  {canDataRequests ? (
+                    <ButtonLink href="/admin/data-requests" variant="secondary" size="sm">
+                      Data requests
+                    </ButtonLink>
+                  ) : null}
+                  {can(session, 'audit.read') ? (
+                    <ButtonLink href="/admin/audit" variant="secondary" size="sm">
+                      Audit log
+                    </ButtonLink>
+                  ) : null}
+                </div>
+              ) : null}
             </CardBody>
           </Card>
         </div>
       </Section>
-    </div>
-  );
-}
 
-function ResidencyRow({
-  icon,
-  title,
-  body,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  body: string;
-}) {
-  return (
-    <li className="flex gap-3">
-      <span
-        className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full bg-brand-soft text-brand-soft-fg"
-        aria-hidden="true"
+      {/* ---- 3. Academic structure ---------------------------------- */}
+      <Section title="Academic structure">
+        <Card>
+          <CardBody className="space-y-5">
+            <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-3">
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-secondary">Current session</dt>
+                <dd className="mt-1 font-display text-lg font-semibold tabular">{academicYear}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-secondary">Degree register</dt>
+                <dd className="mt-1 text-sm">
+                  <span className="font-semibold tabular">{formatNumber(register.total)}</span> graduates,{' '}
+                  <span className="tabular">{formatNumber(register.claimed)}</span> on the portal
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-secondary">Annual rollover</dt>
+                <dd className="mt-1 text-sm">
+                  Final-year students become alumni only when it is run by hand, after a dry run.
+                  {canRollover ? (
+                    <>
+                      {' '}
+                      <Link href="/admin/rollover" className="link">
+                        Open the rollover preview
+                      </Link>
+                    </>
+                  ) : null}
+                </dd>
+              </div>
+            </dl>
+
+            <div className="space-y-2">
+              <h4 className="text-sm font-semibold">
+                {departments.length} {departments.length === 1 ? 'branch' : 'branches'}
+              </h4>
+              <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                {departments.map((d) => (
+                  <li key={d.id} className="flex min-w-0 items-baseline gap-2 rounded border border-line bg-surface px-3 py-2 text-sm">
+                    <span className="shrink-0 font-semibold">{d.code}</span>
+                    <span className="min-w-0 truncate text-secondary" title={d.name}>
+                      {d.name}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+          </CardBody>
+        </Card>
+      </Section>
+
+      {/* ---- 4. Modules ---------------------------------------------- */}
+      <Section title="Modules" description={`Switched on or off for ${pack.copy.shortName} by ${vendorLabel(pack.copy)}.`}>
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {(Object.keys(modules) as Feature[]).map((key) => {
+            const m = modules[key];
+            const on = pack.features[key];
+            return (
+              <li key={key} className="min-w-0">
+                <Card className="h-full">
+                  <CardBody className="space-y-1.5 py-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="flex items-center gap-2 font-semibold">
+                        <span className={on ? 'text-brand-fg' : 'text-secondary'} aria-hidden="true">
+                          {m.icon}
+                        </span>
+                        {m.label}
+                      </p>
+                      <Badge tone={on ? 'success' : 'neutral'} dot className="shrink-0">
+                        {on ? 'On' : 'Off'}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-secondary">{on ? m.on : m.off}</p>
+                  </CardBody>
+                </Card>
+              </li>
+            );
+          })}
+        </ul>
+      </Section>
+
+      {/* ---- 5. For the IT team ------------------------------------- */}
+      <Disclosure
+        summary={
+          <span className="flex items-center gap-2">
+            <Server className="size-4 shrink-0 text-brand-fg" aria-hidden="true" />
+            Technical details for your IT team
+          </span>
+        }
       >
-        {icon}
-      </span>
-      <div className="min-w-0 space-y-0.5">
-        <p className="text-sm font-semibold">{title}</p>
-        <p className="text-sm text-secondary">{body}</p>
-      </div>
-    </li>
+        <dl className="grid grid-cols-1 gap-x-10 lg:grid-cols-2 [&>div]:border-b [&>div]:border-line">
+          <DetailRow label="Tenant ID">
+            <span className="font-mono text-xs">{tenant.id}</span>
+          </DetailRow>
+          <DetailRow label="Subdomain">
+            <span className="font-mono text-xs">{tenant.subdomain}</span>
+          </DetailRow>
+          <DetailRow label="Brand pack">
+            <span className="font-mono text-xs">brands/{tenant.packId ?? 'default'}.json</span>
+          </DetailRow>
+          <DetailRow label="Plan and status">
+            {summary ? `${capitalise(summary.plan)} · ${summary.status}` : 'Standard · active'}
+          </DetailRow>
+          <DetailRow label="Live since">{summary ? formatDate(summary.createdAt, fmt) : '—'}</DetailRow>
+          <DetailRow label="Records held">
+            <span className="tabular">
+              {formatNumber(summary?.memberCount ?? 0)} members · {formatNumber(register.total)} register rows
+            </span>
+          </DetailRow>
+          <DetailRow label="Database">PostgreSQL, ap-south-1 (Mumbai), backups in the same region</DetailRow>
+          <DetailRow label="File storage">Object storage, ap-south-1 (Mumbai), no cross-region copies</DetailRow>
+          <DetailRow label="Isolation">
+            Row-level security on every table, keyed on <span className="font-mono text-xs">app.tenant_id</span>
+          </DetailRow>
+          <DetailRow label="Sign-in">
+            Email one-time code, {Math.round(OTP_TTL_SECONDS / 60)} minutes, single use, {OTP_MAX_ATTEMPTS} attempts.
+            No passwords.
+          </DetailRow>
+          <DetailRow label="Session cookie">
+            <span className="font-mono text-xs">HttpOnly · SameSite=Lax</span>, roles re-read on every request
+          </DetailRow>
+          <DetailRow label="Consent">Append-only, with the notice version on every entry</DetailRow>
+          <DetailRow label="Analytics">None. No advertising pixel or session recorder.</DetailRow>
+        </dl>
+      </Disclosure>
+    </div>
   );
 }

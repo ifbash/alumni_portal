@@ -12,6 +12,7 @@ import {
   ConfirmDialog,
   Dialog,
   Field,
+  StickyActionBar,
   Textarea,
   useToast,
 } from '@/components/ui';
@@ -49,6 +50,12 @@ interface Props {
   /** “Overdue by 3 days”, “Due in 12 days” — repeated in the confirmation. */
   dueLabel: string;
   overdue: boolean;
+  /**
+   * Also pin the primary action to the bottom of the screen below `lg`.
+   * Same state and dialogs as the buttons in the card, so the two can
+   * never disagree about what has been done.
+   */
+  sticky?: boolean;
 }
 
 const MIN_REASON = 15;
@@ -73,7 +80,7 @@ interface PatchResult {
 
 type Pending = 'start' | 'fulfil' | 'refuse' | null;
 
-export function RequestActions({ id, memberName, kind, state: initialState, dueLabel, overdue }: Props) {
+export function RequestActions({ id, memberName, kind, state: initialState, dueLabel, overdue, sticky = false }: Props) {
   const toast = useToast();
   const router = useRouter();
 
@@ -177,9 +184,8 @@ export function RequestActions({ id, memberName, kind, state: initialState, dueL
             Refuse with a reason
           </Button>
 
-          <p className="text-xs text-muted">
-            Whichever you choose is written to <span className="font-mono">audit_log</span> with your
-            name, this request id and the reason — before the member is notified, not after.
+          <p className="text-xs text-secondary">
+            Whichever you choose is recorded in the audit log with your name and the reason.
           </p>
         </div>
       ) : (
@@ -196,16 +202,11 @@ export function RequestActions({ id, memberName, kind, state: initialState, dueL
           title={refusal.denied ? 'This queue is not yours to act on' : 'That did not go through'}
           icon={<Lock className="size-4" aria-hidden="true" />}
         >
-          <p>{refusal.message}</p>
           {refusal.denied ? (
-            <p className="mt-2">
-              Acting on a subject-rights request needs{' '}
-              <span className="font-mono">data_request.manage</span>, which the college admin holds.
-              It is deliberately not <span className="font-mono">tenant.configure</span> — the
-              vendor’s platform admin holds that one, and this queue names members alongside what
-              they have asked to have erased. Nothing on this request has changed.
-            </p>
-          ) : null}
+            <p>Only the college admin can act on data requests. Nothing on this request has changed.</p>
+          ) : (
+            <p>{refusal.message}</p>
+          )}
         </Alert>
       ) : null}
 
@@ -238,11 +239,46 @@ export function RequestActions({ id, memberName, kind, state: initialState, dueL
               <p>{outcome.retention.note}</p>
               <p className="text-xs">
                 Everything else went:{' '}
-                <span className="font-mono">{outcome.retention.erased.join(', ')}</span>.{' '}
-                {memberName} is told exactly this, in writing, in the same reply.
+                <span className="font-mono">{outcome.retention.erased.join(', ')}</span>.
               </p>
             </div>
           ) : null}
+        </div>
+      ) : null}
+
+      {sticky && open ? (
+        // The bar's own spacer would sit inside the card; the page draws one
+        // at its foot instead, so the last line is never under the bar.
+        <div className="contents [&>[aria-hidden=true]]:hidden">
+          <StickyActionBar label="Act on this request">
+            {state === 'received' ? (
+              <Button
+                onClick={() => void act('start', {}, 'Marked in progress')}
+                loading={pending === 'start'}
+                disabled={pending !== null}
+              >
+                <Play className="size-4" aria-hidden="true" />
+                Start work
+              </Button>
+            ) : (
+              <Button
+                variant={isErasure ? 'danger' : 'primary'}
+                onClick={() => setConfirmFulfil(true)}
+                disabled={pending !== null}
+              >
+                {isErasure ? (
+                  <Trash2 className="size-4" aria-hidden="true" />
+                ) : (
+                  <CircleCheck className="size-4" aria-hidden="true" />
+                )}
+                {isErasure ? 'Erase' : 'Mark fulfilled'}
+              </Button>
+            )}
+            <Button variant="secondary" onClick={() => setRefusing(true)} disabled={pending !== null}>
+              <Ban className="size-4" aria-hidden="true" />
+              Refuse
+            </Button>
+          </StickyActionBar>
         </div>
       ) : null}
 
@@ -270,22 +306,15 @@ export function RequestActions({ id, memberName, kind, state: initialState, dueL
           isErasure ? (
             <div className="space-y-3">
               <p className="text-primary">
-                This is a hard delete, not a hidden flag. The member row, contact rows, photo,
-                message history and every connection they were part of are removed. There is no
-                undo — recovery means restoring the database.
+                This deletes {memberName}&rsquo;s record, contact details, photo, messages and requests. There is
+                no undo.
               </p>
               <p className="rounded border border-[color-mix(in_srgb,var(--danger)_40%,var(--border))] bg-danger-soft p-3 text-danger-fg">
                 <strong className="block">Two things are kept, and you cannot waive them.</strong>
-                Donations, 80G receipts and any contribution reportable under FCRA stay for their
-                statutory retention period — an erasure that removed them would put the trust’s
-                registration at risk. The audit trail also stays, in reduced form: actor, action and
-                timestamp, with the personal fields stripped. An erasure that erases its own record
-                cannot be proven to have happened. The endpoint enforces both and names them back on
-                this screen the moment it is done; there is no parameter that turns them off.
+                Donation records and tax receipts, for their statutory period, and the audit trail, with personal
+                details removed.
               </p>
-              <p>
-                {memberName} is told exactly this, in writing, when the erasure completes. {dueLabel}.
-              </p>
+              <p>{dueLabel}.</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -306,7 +335,7 @@ export function RequestActions({ id, memberName, kind, state: initialState, dueL
           if (!pending) setRefusing(false);
         }}
         title="Refuse this request"
-        description="A refusal is lawful in some cases and always has to be explained. The member sees your words verbatim."
+        description="A refusal is lawful in some cases and always has to be explained."
         footer={
           <>
             <Button variant="secondary" onClick={() => setRefusing(false)} disabled={pending !== null}>
@@ -318,7 +347,7 @@ export function RequestActions({ id, memberName, kind, state: initialState, dueL
               disabled={reasonTooShort}
               loading={pending === 'refuse'}
             >
-              Refuse and notify
+              Refuse
             </Button>
           </>
         }
@@ -327,7 +356,7 @@ export function RequestActions({ id, memberName, kind, state: initialState, dueL
           htmlFor="refusal-reason"
           label="Reason for refusal"
           required
-          hint="Written to the audit log and sent to the member as-is."
+          hint="Written to the audit log word for word."
           error={
             reasonError ??
             (reason.length > 0 && reasonTooShort

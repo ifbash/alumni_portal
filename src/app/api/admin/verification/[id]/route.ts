@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { getSession } from '@/lib/auth/session';
-import { can, requireInDepartment, requireSession } from '@/lib/auth/guard';
+import { can, require as requireCap, requireInDepartment, requireSession } from '@/lib/auth/guard';
 import { getTenant } from '@/lib/tenant';
 import { getVerificationClaims } from '@/lib/data/repo';
 import { logAudit } from '@/lib/audit/log';
@@ -53,6 +53,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     const session = await getSession();
     requireSession(session);
+    // Capability before lookup. Resolving the claim first answers 404 or 403
+    // depending on whether the id exists, which tells any signed-in member
+    // which claim ids are real.
+    if (!can(session, 'verification.review.any')) requireCap(session, 'verification.review.department');
 
     const tenant = await getTenant();
     if (!tenant) throw new HttpError(404, 'unknown_tenant', 'No college is configured for this address.');

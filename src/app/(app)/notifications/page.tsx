@@ -1,24 +1,19 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { BellRing, Inbox, MailCheck, SlidersHorizontal } from 'lucide-react';
+import { Check, Inbox, MailCheck, SlidersHorizontal } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
 import { requireSession } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
 import { getNotifications } from '@/lib/data/repo';
 import type { NotificationItem } from '@/lib/data/types';
+import { ButtonLink, ChipNav, EmptyState, PageHeader } from '@/components/ui';
+import { cn } from '@/lib/cn';
+import { dayBucket, formatDateTime, formatRelative, formatTime } from '@/lib/format';
+import { notificationAction } from '@/lib/notifications-view';
 import {
-  ButtonLink,
-  Card,
-  CardBody,
-  EmptyState,
-  PageHeader,
-  SegmentedNav,
-  Tabs,
-  type TabItem,
-} from '@/components/ui';
-import { MarginNote } from '@/components/brand/Marks';
-import { formatDate, formatDateTime, formatTime } from '@/lib/format';
-import {
+  InboxProvider,
+  MarkAllButton,
   NotificationList,
   type NotificationGroupView,
   type NotificationKind,
@@ -26,13 +21,12 @@ import {
 } from './NotificationList';
 
 /**
- * The full inbox — the dropdown in the top bar, unabridged.
+ * The full inbox — the bell in the top bar, unabridged.
  *
- * The dropdown shows the last few and nothing else; this page is where a
- * member goes when they know something arrived and cannot find it. So the
- * two axes people actually search on are in the URL: what kind of thing it
- * was, and whether they have read it. A filtered inbox is a link that can
- * be pasted into a message to the alumni cell.
+ * The two things people filter on are in the URL: what kind of thing it
+ * was, and whether it is still unread. Rows are grouped by the calendar
+ * day in the college's time zone, measured against the same clock every
+ * other screen reads, so "Today" means today in the demo too.
  *
  * Read state itself is client-held — see `NotificationList`. Everything
  * else, including which rows a viewer may see and which targets are even
@@ -41,7 +35,7 @@ import {
 
 export const metadata: Metadata = {
   title: 'Notifications',
-  description: 'Everything the portal has told you, newest first.',
+  description: 'Requests, events, jobs and account notices, newest first.',
 };
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -49,36 +43,29 @@ type SearchParams = Record<string, string | string[] | undefined>;
 const first = (v: string | string[] | undefined): string | undefined =>
   Array.isArray(v) ? v[0] : v;
 
-/**
- * Tab order and tab labels.
- *
- * They live here rather than beside the row icons in `NotificationList`
- * because a server component may not read a value out of a `'use client'`
- * module — only pass props into one. The row badges are the singular form
- * and are that file's business.
- */
-const KIND_ORDER: NotificationKind[] = ['connection', 'event', 'job', 'verification', 'system'];
+/** The filter chips, in the words the rest of the portal uses. */
+type KindFilter = 'requests' | 'events' | 'jobs' | 'account';
 
-const KIND_LABEL: Record<NotificationKind, string> = {
-  connection: 'Connections',
-  event: 'Events',
-  job: 'Jobs',
-  verification: 'Verification',
-  system: 'Portal notices',
+const FILTERS: Array<{ value: KindFilter; label: string; kinds: NotificationKind[] }> = [
+  { value: 'requests', label: 'Requests', kinds: ['connection'] },
+  { value: 'events', label: 'Events', kinds: ['event'] },
+  { value: 'jobs', label: 'Jobs', kinds: ['job'] },
+  { value: 'account', label: 'Account', kinds: ['verification', 'system'] },
+];
+
+/** Links written before the filters were renamed still land on the right chip. */
+const LEGACY: Record<string, KindFilter | undefined> = {
+  connection: 'requests',
+  event: 'events',
+  job: 'jobs',
+  verification: 'account',
+  system: 'account',
 };
 
-const STATES = [
-  { value: 'all', label: 'Everything' },
-  { value: 'unread', label: 'Unread' },
-  { value: 'read', label: 'Read' },
-] as const;
-
-type StateFilter = (typeof STATES)[number]['value'];
-
-function buildHref(q: { kind?: string; state?: string }): string {
+function buildHref(q: { kind?: KindFilter | 'all'; unread?: boolean }): string {
   const sp = new URLSearchParams();
   if (q.kind && q.kind !== 'all') sp.set('kind', q.kind);
-  if (q.state && q.state !== 'all') sp.set('state', q.state);
+  if (q.unread) sp.set('state', 'unread');
   const s = sp.toString();
   return s ? `/notifications?${s}` : '/notifications';
 }
@@ -96,16 +83,13 @@ export default async function NotificationsPage({
   const resolved = await getTenantBrand();
   if (!resolved) notFound();
   const pack = resolved.brand.pack;
+  const timing = { locale: pack.locale.locale, timeZone: pack.locale.timeZone };
 
   const params = await searchParams;
   const kindParam = first(params.kind) ?? 'all';
-  const kind: NotificationKind | 'all' = (KIND_ORDER as string[]).includes(kindParam)
-    ? (kindParam as NotificationKind)
-    : 'all';
-  const stateParam = first(params.state) ?? 'all';
-  const state: StateFilter = STATES.some((s) => s.value === stateParam)
-    ? (stateParam as StateFilter)
-    : 'all';
+  const kind: KindFilter | 'all' =
+    FILTERS.find((f) => f.value === kindParam)?.value ?? LEGACY[kindParam] ?? 'all';
+  const unreadOnly = first(params.state) === 'unread';
 
   // Newest first. A notification inbox ordered any other way is a log.
   const all = [...getNotifications(session)].sort((a, b) =>
@@ -114,119 +98,96 @@ export default async function NotificationsPage({
 
   const unread = all.filter((n) => !n.readAt).length;
 
-  const matchesState = (n: NotificationItem) =>
-    state === 'unread' ? !n.readAt : state === 'read' ? Boolean(n.readAt) : true;
+  const byState = unreadOnly ? all.filter((n) => !n.readAt) : all;
+  const inKind = (n: NotificationItem, f: KindFilter) =>
+    FILTERS.find((x) => x.value === f)!.kinds.includes(n.kind);
+  const items = kind === 'all' ? byState : byState.filter((n) => inKind(n, kind));
 
-  const byState = all.filter(matchesState);
-  const items = kind === 'all' ? byState : byState.filter((n) => n.kind === kind);
-
-  // Counts describe the list the reader is looking at, so switching kind
-  // inside "Unread" never lands on a tab that turns out to be empty.
-  const tabs: TabItem[] = [
-    {
-      label: 'All',
-      href: buildHref({ state }),
-      count: byState.length,
-      active: kind === 'all',
-    },
-    ...KIND_ORDER.map((k) => ({
-      label: KIND_LABEL[k],
-      href: buildHref({ kind: k, state }),
-      count: byState.filter((n) => n.kind === k).length,
-      active: kind === k,
+  // A chip for each kind the inbox holds at all, plus the one in use.
+  // Counts describe the list in view, and a count of 0 is never drawn.
+  const chips = [
+    { label: 'All', href: buildHref({ unread: unreadOnly }), active: kind === 'all', count: byState.length },
+    ...FILTERS.filter((f) => f.value === kind || all.some((n) => inKind(n, f.value))).map((f) => ({
+      label: f.label,
+      href: buildHref({ kind: f.value, unread: unreadOnly }),
+      active: kind === f.value,
+      count: byState.filter((n) => inKind(n, f.value)).length,
     })),
   ];
 
-  const groups = groupByDay(items, pack.features);
+  const groups = groupByDay(items, pack.features, timing);
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow={pack.copy.shortName}
-        title="Notifications"
-        description={
-          unread === 0
-            ? 'Everything the portal has told you, newest first. Nothing is waiting on you right now.'
-            : `Everything the portal has told you, newest first. ${unread} of these have not been opened yet.`
-        }
-        actions={
-          <ButtonLink href="/settings/notifications" variant="secondary">
-            <SlidersHorizontal className="size-4" aria-hidden="true" />
-            Choose what you are sent
-          </ButtonLink>
-        }
-      />
-
-      <Tabs items={tabs} ariaLabel="Notification kinds" />
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <SegmentedNav
-          items={STATES.map((s) => ({
-            label: s.label,
-            href: buildHref({ kind, state: s.value }),
-            active: state === s.value,
-          }))}
+    <InboxProvider initialUnread={unread}>
+      <div className="space-y-6">
+        <PageHeader
+          title="Notifications"
+          description="Requests, events, jobs and account notices, newest first."
+          actions={all.length ? <MarkAllButton /> : null}
         />
-        {state !== 'all' || kind !== 'all' ? (
-          <ButtonLink href="/notifications" variant="ghost" size="sm">
-            Clear filters
-          </ButtonLink>
+
+        {all.length ? (
+          <div className="flex items-center gap-3">
+            <ChipNav items={chips} ariaLabel="Notification kinds" className="flex-1" />
+            <Link
+              href={buildHref({ kind, unread: !unreadOnly })}
+              aria-current={unreadOnly ? 'true' : undefined}
+              className={cn(
+                '-mt-1 inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full border px-3 text-sm sm:min-h-9',
+                'transition-colors duration-fast ease-brand',
+                unreadOnly
+                  ? 'border-line-strong bg-surface-raised font-medium text-primary'
+                  : 'border-line bg-surface-raised text-secondary hover:border-line-strong hover:text-primary',
+              )}
+            >
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'grid size-4 place-items-center rounded-sm border',
+                  unreadOnly
+                    ? 'border-[var(--button-primary-bg)] bg-[var(--button-primary-bg)] text-[var(--button-primary-fg)]'
+                    : 'border-line-strong',
+                )}
+              >
+                {unreadOnly ? <Check className="size-3" /> : null}
+              </span>
+              Unread only
+            </Link>
+          </div>
         ) : null}
+
+        {items.length === 0 ? (
+          <Empty hasAny={all.length > 0} kind={kind} unreadOnly={unreadOnly} />
+        ) : (
+          <NotificationList groups={groups} />
+        )}
+
+        <p>
+          <Link
+            href="/settings/notifications"
+            className="link inline-flex min-h-11 items-center gap-2 text-sm"
+          >
+            <SlidersHorizontal className="size-4" aria-hidden="true" />
+            Notification settings
+          </Link>
+        </p>
       </div>
-
-      {items.length === 0 ? (
-        <Empty
-          hasAny={all.length > 0}
-          kind={kind}
-          state={state}
-          collegeName={pack.copy.shortName}
-        />
-      ) : (
-        <NotificationList groups={groups} initialUnread={unread} />
-      )}
-
-      <Card>
-        <CardBody className="space-y-3">
-          <p className="text-sm text-secondary">
-            The same notices go to the email address you sign in with. Nothing here is a marketing
-            list — a connection request, an event you registered for and a decision on your account
-            are all things the portal owes you an answer about.
-          </p>
-          {!pack.features.whatsapp ? (
-            <p className="text-sm text-secondary">
-              WhatsApp is not connected for {pack.copy.shortName} yet, so this page and email are the
-              only two places these appear today.
-            </p>
-          ) : null}
-          <MarginNote className="border-t border-line pt-3">
-            Read state lives on your account, not on the sender&rsquo;s. Nobody is told whether you
-            opened a notification — an alumnus who ignores a request is not distinguishable here
-            from one who never saw it, and that is deliberate.
-          </MarginNote>
-        </CardBody>
-      </Card>
-    </div>
+    </InboxProvider>
   );
 }
 
 // ---------------------------------------------------------------
 
 /**
- * Three buckets, keyed on the calendar day in the tenant's time zone.
- *
- * The day key is `formatDate` rather than anything computed off the
- * server's own offset: a portal rendered in `ap-south-1` and read in
- * Vijayawada must agree about when "today" started, and the formatter
- * already carries the tenant's zone.
+ * Three buckets, keyed on the calendar day in the college's time zone and
+ * measured from `displayNow()` (inside `dayBucket`), never from the
+ * server's own clock. Today's rows also carry a relative time.
  */
 function groupByDay(
   items: NotificationItem[],
   features: { connections: boolean; events: boolean; jobs: boolean },
+  timing: { locale: string; timeZone: string },
 ): NotificationGroupView[] {
-  const now = new Date();
-  const today = formatDate(now);
-  const yesterday = formatDate(new Date(now.getTime() - 86400000));
-
   const buckets: Record<NotificationGroupView['key'], NotificationView[]> = {
     today: [],
     yesterday: [],
@@ -234,17 +195,21 @@ function groupByDay(
   };
 
   for (const n of items) {
-    const day = formatDate(n.createdAt);
-    const key: NotificationGroupView['key'] =
-      day === today ? 'today' : day === yesterday ? 'yesterday' : 'earlier';
-
-    buckets[key].push(toView(n, key, features));
+    const key = dayBucket(n.createdAt, timing.timeZone);
+    const view = toView(n, key, features);
+    buckets[key].push({
+      ...view,
+      relative: key === 'today' ? formatRelative(n.createdAt, timing) : null,
+      // The verb follows the reachable link, so a module that is switched
+      // off gets no dead button.
+      action: notificationAction({ kind: view.kind, href: view.href }),
+    });
   }
 
-  const meta: Array<{ key: NotificationGroupView['key']; label: string; hint: string }> = [
-    { key: 'today', label: 'Today', hint: 'since midnight' },
-    { key: 'yesterday', label: 'Yesterday', hint: `${yesterday}` },
-    { key: 'earlier', label: 'Earlier', hint: 'newest first' },
+  const meta: Array<{ key: NotificationGroupView['key']; label: string }> = [
+    { key: 'today', label: 'Today' },
+    { key: 'yesterday', label: 'Yesterday' },
+    { key: 'earlier', label: 'Earlier' },
   ];
 
   return meta
@@ -293,74 +258,37 @@ function toView(
 
 // ---------------------------------------------------------------
 
-/**
- * An empty inbox is good news, and the copy says so. "No notifications"
- * with a sad face reads as a fault; this is a portal telling somebody that
- * nothing needs them.
- */
+/** One sentence on why the list is empty, and at most one way out. */
 function Empty({
   hasAny,
   kind,
-  state,
-  collegeName,
+  unreadOnly,
 }: {
   hasAny: boolean;
-  kind: NotificationKind | 'all';
-  state: StateFilter;
-  collegeName: string;
+  kind: KindFilter | 'all';
+  unreadOnly: boolean;
 }) {
   if (!hasAny) {
     return (
       <EmptyState
         icon={<Inbox className="size-5" />}
-        title="Your inbox starts here"
-        description={`Nothing has needed you yet. When a student asks to connect, when an event you registered for is close, or when ${collegeName} makes a decision on your account, it lands on this page and in your email.`}
-        action={
-          <div className="flex flex-wrap justify-center gap-2">
-            <ButtonLink href="/directory" variant="secondary">
-              Search the directory
-            </ButtonLink>
-            <ButtonLink href="/settings/notifications" variant="ghost">
-              Choose what you are sent
-            </ButtonLink>
-          </div>
-        }
+        title="Nothing here yet"
+        description="Requests, event reminders and notices about your account appear here."
       />
     );
   }
 
-  if (state === 'unread') {
+  const label = kind === 'all' ? null : FILTERS.find((f) => f.value === kind)!.label.toLowerCase();
+
+  if (unreadOnly) {
     return (
       <EmptyState
         icon={<MailCheck className="size-5" />}
-        title={kind === 'all' ? 'You are up to date' : `Nothing unread under ${KIND_LABEL[kind]}`}
-        description={
-          kind === 'all'
-            ? 'Every notification on your account has been opened. New ones appear at the top of this page as they arrive.'
-            : 'Everything of this kind has been read. The others may not have been.'
-        }
+        title={label ? `No unread ${label}` : 'Nothing unread'}
+        description="You have read everything here."
         action={
-          <ButtonLink href={buildHref({ kind })} variant="secondary">
-            Show everything, read included
-          </ButtonLink>
-        }
-      />
-    );
-  }
-
-  if (state === 'read') {
-    return (
-      <EmptyState
-        icon={<BellRing className="size-5" />}
-        title={kind === 'all' ? 'Nothing has been read yet' : `Nothing read under ${KIND_LABEL[kind]}`}
-        description={
-          kind === 'all'
-            ? 'Every notification on your account is still unread. Open one, or mark the lot as read once you have caught up.'
-            : 'Everything of this kind is still unread. Other kinds may already have been read.'
-        }
-        action={
-          <ButtonLink href={buildHref({ kind, state: 'unread' })} variant="secondary">
-            Go to the unread ones
+          <ButtonLink href={buildHref({ kind })} variant="secondary" className="min-h-11">
+            Show all
           </ButtonLink>
         }
       />
@@ -370,10 +298,10 @@ function Empty({
   return (
     <EmptyState
       icon={<Inbox className="size-5" />}
-      title={`No ${KIND_LABEL[kind as NotificationKind].toLowerCase()} yet`}
-      description="Nothing of this kind has reached your account. Other notifications may still be waiting under the other tabs."
+      title={`No ${label ?? 'notifications'} yet`}
+      description="Other kinds may still be waiting."
       action={
-        <ButtonLink href="/notifications" variant="secondary">
+        <ButtonLink href="/notifications" variant="secondary" className="min-h-11">
           Show every kind
         </ButtonLink>
       }

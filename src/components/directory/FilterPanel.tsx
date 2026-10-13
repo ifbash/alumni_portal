@@ -1,10 +1,9 @@
 import Link from 'next/link';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { Button, Card, CardBody, Field, SegmentedNav, Select } from '@/components/ui';
+import { Button, Card, CardBody, Field, Select } from '@/components/ui';
 import type { DirectoryFacets, FacetCount } from '@/lib/data/types';
 import {
-  AVAILABILITY,
   COHORTS,
   DIRECTORY_PATH,
   DIRECTORY_PARAM_KEYS,
@@ -28,20 +27,34 @@ import {
  * counted with every filter applied *except* branch — so selecting CSE
  * never hides ECE. A facet UI that collapses to the one value you already
  * picked is the most common way faceted search becomes a dead end.
+ *
+ * Batch and branch are what people search by, so they stay open. Company,
+ * city, industry and skill sit under one "More filters" disclosure, and a
+ * facet with a single value is not a choice, so it is not shown. Who is
+ * open to being asked is the chip row above the results, not a group here.
  */
 export function FilterPanel({
   params,
   facets,
   canSearchStudents,
+  studentTier = false,
   idPrefix = '',
+  framed = true,
   className,
 }: {
   params: DirectoryParams;
   facets: DirectoryFacets;
   /** The cohort switch exists only for viewers who may enumerate students. */
   canSearchStudents: boolean;
-  /** Keeps control ids unique when the panel is rendered twice (mobile + desktop). */
+  /**
+   * The student tier's cards carry no city or industry, so the panel does
+   * not offer them either. Display narrowing only; the page decides.
+   */
+  studentTier?: boolean;
+  /** Keeps control ids unique when the panel is rendered twice (sheet + desktop). */
   idPrefix?: string;
+  /** False inside a sheet, which is already a surface of its own. */
+  framed?: boolean;
   className?: string;
 }) {
   const activeCount = countFilters(params);
@@ -58,101 +71,132 @@ export function FilterPanel({
     facets.industries.length === 0 &&
     facets.skills.length === 0;
 
-  return (
-    <Card as="section" aria-labelledby={headingId} className={className}>
-      <CardBody className="space-y-5">
-        <div className="flex items-baseline justify-between gap-3">
-          <h2 id={headingId} className="font-display text-md font-semibold">
-            Filters
-          </h2>
-          {activeCount > 0 ? (
-            <Link
-              href={buildDirectoryHref({}, { q: params.q ?? null, sort: params.sort ?? null })}
-              className="link text-xs font-medium"
-            >
-              Clear all
-            </Link>
-          ) : null}
-        </div>
+  type MoreGroup = { title: string; paramKey: DirectoryParamKey; options: FacetCount[] };
+  const candidates: MoreGroup[] = [
+    { title: 'Company', paramKey: 'company', options: facets.companies },
+    { title: 'City', paramKey: 'city', options: studentTier ? [] : facets.cities },
+    { title: 'Industry', paramKey: 'industry', options: studentTier ? [] : facets.industries },
+    { title: 'Skill', paramKey: 'skill', options: facets.skills },
+  ];
+  const more = candidates.filter((g) => shows(g.options, params[g.paramKey]));
 
-        {canSearchStudents ? (
-          <Group title="Show">
-            <SegmentedNav
-              className="flex w-full [&>a]:flex-1 [&>a]:text-center"
-              items={COHORTS.map((c) => ({
-                label: c.label,
-                href: buildDirectoryHref(params, { cohort: c.value === 'all' ? null : c.value }),
-                active: (params.cohort ?? 'all') === c.value,
-              }))}
-            />
-          </Group>
+  const moreActive = more.filter((g) => params[g.paramKey]).length;
+
+  const body = (
+    <div className="space-y-5">
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 id={headingId} className="font-display text-md font-semibold">
+          Filters
+        </h2>
+        {activeCount > 0 ? (
+          <Link
+            href={buildDirectoryHref({}, { q: params.q ?? null, sort: params.sort ?? null })}
+            className="link inline-flex min-h-11 items-center text-xs font-medium lg:min-h-0"
+          >
+            Clear all
+          </Link>
         ) : null}
+      </div>
 
-        <Group
-          title="Availability"
-          hint="Who has already agreed to be approached."
-        >
+      {canSearchStudents ? (
+        <Group title="Show">
           <ul className="space-y-0.5">
-            {AVAILABILITY.map((option) => {
-              const active = params[option.key] === '1';
+            {COHORTS.map((c) => {
+              const active = (params.cohort ?? 'all') === c.value;
               return (
-                <li key={option.key}>
-                  <Link
-                    href={buildDirectoryHref(params, { [option.key]: active ? null : '1' })}
-                    className={cn(
-                      'flex items-center gap-2.5 rounded px-2 py-1.5 text-sm',
-                      'transition-colors duration-fast ease-brand hover:bg-surface-sunken',
-                      active && 'bg-brand-soft font-semibold text-brand-soft-fg hover:bg-brand-soft',
-                    )}
-                  >
-                    <span
-                      aria-hidden="true"
-                      className={cn(
-                        'grid size-4 shrink-0 place-items-center rounded-sm border',
-                        active
-                          ? 'border-transparent bg-[var(--button-primary-bg)] text-[var(--button-primary-fg)]'
-                          : 'border-line-strong',
-                      )}
-                    >
-                      {active ? <Check className="size-3" /> : null}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                    {active ? <span className="sr-only">selected — activate to remove</span> : null}
-                  </Link>
+                <li key={c.value}>
+                  <OptionLink
+                    href={buildDirectoryHref(params, { cohort: c.value === 'all' ? null : c.value })}
+                    active={active}
+                    label={c.label}
+                  />
                 </li>
               );
             })}
           </ul>
         </Group>
+      ) : null}
 
-        {noFacets ? (
-          <Group title="Nothing left to narrow">
-            <p className="text-xs text-secondary">
-              No one matches the filters that are already on, so there are no branches, batches or
-              companies left to count. Clear all, or drop one of the chips above the results.
-            </p>
-          </Group>
-        ) : null}
+      {noFacets ? (
+        <Group title="Nothing left to narrow">
+          <p className="text-xs text-secondary">
+            No one matches the filters that are on. Clear all, or remove one of the chips above the
+            results.
+          </p>
+        </Group>
+      ) : null}
 
-        <BatchRange params={params} batches={facets.batches} idPrefix={idPrefix} />
+      <BatchRange params={params} batches={facets.batches} idPrefix={idPrefix} />
 
-        <FacetGroup
-          title="Branch"
-          paramKey="department"
-          options={facets.departments}
-          params={params}
-          limit={8}
-        />
-        <FacetGroup title="Company" paramKey="company" options={facets.companies} params={params} />
-        <FacetGroup title="City" paramKey="city" options={facets.cities} params={params} />
-        <FacetGroup title="Industry" paramKey="industry" options={facets.industries} params={params} />
-        <FacetGroup title="Skill" paramKey="skill" options={facets.skills} params={params} />
-      </CardBody>
+      <FacetGroup
+        title="Branch"
+        paramKey="department"
+        options={facets.departments}
+        params={params}
+        limit={8}
+      />
+
+      {more.length > 0 ? (
+        <details className="group/more border-t border-line pt-3" open={moreActive > 0}>
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 text-xs font-semibold uppercase tracking-wide text-secondary marker:hidden hover:text-primary lg:min-h-9">
+            <span>
+              More filters
+              {moreActive > 0 ? (
+                <span className="ml-2 rounded-full bg-brand-soft px-1.5 py-0.5 normal-case tracking-normal text-brand-soft-fg">
+                  {moreActive} on
+                </span>
+              ) : null}
+            </span>
+            <svg
+              viewBox="0 0 20 20"
+              className="size-4 shrink-0 text-muted transition-transform duration-fast group-open/more:rotate-180"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path d="m6 8 4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </summary>
+          <div className="mt-2 space-y-5">
+            {more.map((g) => (
+              <FacetGroup
+                key={g.paramKey}
+                title={g.title}
+                paramKey={g.paramKey}
+                options={g.options}
+                params={params}
+              />
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+
+  if (!framed) {
+    return (
+      <section aria-labelledby={headingId} className={className}>
+        {body}
+      </section>
+    );
+  }
+
+  return (
+    <Card as="section" aria-labelledby={headingId} className={className}>
+      <CardBody>{body}</CardBody>
     </Card>
   );
 }
 
 // ---------------------------------------------------------------
+
+/**
+ * A facet is worth showing when it offers a choice: two or more values,
+ * or the one value that is already selected (so it can be removed).
+ */
+function shows(options: FacetCount[], active: string | undefined): boolean {
+  if (options.length >= 2) return true;
+  return options.length === 1 && active === options[0]!.value;
+}
 
 function Group({
   title,
@@ -166,7 +210,7 @@ function Group({
   return (
     <section className="space-y-2 border-t border-line pt-5">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-secondary">{title}</h3>
-      {hint ? <p className="text-xs text-muted">{hint}</p> : null}
+      {hint ? <p className="text-xs text-secondary">{hint}</p> : null}
       {children}
     </section>
   );
@@ -207,12 +251,7 @@ function BatchRange({
 
         <div className="flex items-end gap-2">
           <Field htmlFor={`${idPrefix}batch-from`} label="From" className="min-w-0 flex-1">
-            <Select
-              id={`${idPrefix}batch-from`}
-              name="batchFrom"
-              sizeVariant="sm"
-              defaultValue={params.batchFrom ?? ''}
-            >
+            <Select id={`${idPrefix}batch-from`} name="batchFrom" defaultValue={params.batchFrom ?? ''}>
               <option value="">Any</option>
               {years.map((y) => (
                 <option key={y.value} value={y.value}>
@@ -223,12 +262,7 @@ function BatchRange({
           </Field>
 
           <Field htmlFor={`${idPrefix}batch-to`} label="To" className="min-w-0 flex-1">
-            <Select
-              id={`${idPrefix}batch-to`}
-              name="batchTo"
-              sizeVariant="sm"
-              defaultValue={params.batchTo ?? ''}
-            >
+            <Select id={`${idPrefix}batch-to`} name="batchTo" defaultValue={params.batchTo ?? ''}>
               <option value="">Any</option>
               {years.map((y) => (
                 <option key={y.value} value={y.value}>
@@ -238,7 +272,7 @@ function BatchRange({
             </Select>
           </Field>
 
-          <Button type="submit" variant="secondary" size="sm">
+          <Button type="submit" variant="secondary" className="min-h-11 lg:min-h-0">
             Apply
           </Button>
         </div>
@@ -247,7 +281,7 @@ function BatchRange({
       {params.batchFrom || params.batchTo ? (
         <Link
           href={buildDirectoryHref(params, { batchFrom: null, batchTo: null })}
-          className="link text-xs"
+          className="link inline-flex min-h-11 items-center text-xs lg:min-h-0"
         >
           All batches
         </Link>
@@ -269,9 +303,9 @@ function FacetGroup({
   params: DirectoryParams;
   limit?: number;
 }) {
-  if (options.length === 0) return null;
-
   const active = params[paramKey];
+  if (!shows(options, active)) return null;
+
   // The selected value always shows, even when it is not popular enough
   // to make the visible slice.
   const ordered = active
@@ -291,7 +325,7 @@ function FacetGroup({
 
       {rest.length ? (
         <details className="group">
-          <summary className="cursor-pointer list-none px-2 py-1.5 text-xs font-medium text-brand-fg marker:hidden hover:underline">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center px-2 text-xs font-medium text-brand-fg marker:hidden hover:underline lg:min-h-8">
             <span className="group-open:hidden">Show {rest.length} more</span>
             <span className="hidden group-open:inline">Show fewer</span>
           </summary>
@@ -303,6 +337,32 @@ function FacetGroup({
         </details>
       ) : null}
     </Group>
+  );
+}
+
+/** A choice in a one-of list (the cohort switch): a link that reads as a radio. */
+function OptionLink({ href, active, label }: { href: string; active: boolean; label: string }) {
+  return (
+    <Link
+      href={href}
+      aria-current={active ? 'true' : undefined}
+      className={cn(
+        'flex min-h-11 items-center gap-2.5 rounded px-2 text-sm lg:min-h-9',
+        'transition-colors duration-fast ease-brand hover:bg-surface-sunken',
+        active && 'bg-brand-soft font-semibold text-brand-soft-fg hover:bg-brand-soft',
+      )}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          'grid size-4 shrink-0 place-items-center rounded-full border',
+          active ? 'border-[var(--button-primary-bg)]' : 'border-line-strong',
+        )}
+      >
+        {active ? <span className="size-2 rounded-full bg-[var(--button-primary-bg)]" /> : null}
+      </span>
+      <span className="min-w-0 flex-1 whitespace-nowrap">{label}</span>
+    </Link>
   );
 }
 
@@ -323,7 +383,7 @@ function FacetLink({
         href={toggleDirectoryHref(params, paramKey, option.value)}
         title={option.label}
         className={cn(
-          'flex items-center justify-between gap-2 rounded px-2 py-1.5 text-sm',
+          'flex min-h-11 items-center justify-between gap-2 rounded px-2 text-sm lg:min-h-8',
           'transition-colors duration-fast ease-brand hover:bg-surface-sunken',
           active && 'bg-brand-soft font-semibold text-brand-soft-fg hover:bg-brand-soft',
         )}
@@ -333,7 +393,7 @@ function FacetLink({
           <span className="truncate">{option.label}</span>
           {active ? <span className="sr-only">selected — activate to remove</span> : null}
         </span>
-        <span className={cn('shrink-0 tabular text-xs', active ? 'text-brand-soft-fg' : 'text-muted')}>
+        <span className={cn('shrink-0 tabular text-xs', active ? 'text-brand-soft-fg' : 'text-secondary')}>
           {option.count.toLocaleString('en-IN')}
         </span>
       </Link>

@@ -174,6 +174,10 @@ export async function POST(request: Request) {
 
     // Written before the file is built. An export that fails halfway is
     // still an export that was attempted, and the log must show it.
+    //
+    // `strict`: if the entry cannot be written, no file is produced. A bulk
+    // contact export that left unrecorded is the one outcome this log exists
+    // to prevent, so the write is a precondition, not a courtesy.
     await logAudit({
       tenantId: tenant.id,
       session,
@@ -191,7 +195,7 @@ export async function POST(request: Request) {
         format: 'csv',
       },
       ip: request.headers.get('x-forwarded-for') ?? clientIp(request),
-    });
+    }, { strict: true });
 
     const header = columns.map((c) => cell(c.label)).join(',');
     const lines = rows.map((m) => columns.map((c) => cell(c.get(m))).join(','));

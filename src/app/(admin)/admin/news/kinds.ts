@@ -1,4 +1,5 @@
 import type { ComponentProps } from 'react';
+import { Award, BellOff, Landmark, Megaphone, Newspaper, type LucideIcon } from 'lucide-react';
 import type { Badge } from '@/components/ui';
 import type { NewsKind } from '@/lib/data/content';
 
@@ -18,7 +19,7 @@ export type BadgeTone = NonNullable<ComponentProps<typeof Badge>['tone']>;
 export interface AdminKindMeta {
   label: string;
   tone: BadgeTone;
-  /** What belongs under this kind, in the composer's own words. */
+  /** What belongs under this kind, in one line. */
   blurb: string;
   /** Whether publishing sends anything to anybody. */
   notifies: boolean;
@@ -37,36 +38,52 @@ export const KIND_META: Record<NewsKind, AdminKindMeta> = {
   announcement: {
     label: 'Announcement',
     tone: 'brand',
-    blurb: 'The college telling the network something — registration opening, a change of process, a deadline.',
+    blurb: 'Registration opening, a change of process, a deadline.',
     notifies: true,
     restrained: false,
   },
   achievement: {
     label: 'Achievement',
-    tone: 'success',
-    blurb: 'A graduate’s appointment, award or recognition. Name the batch and the branch; that is what makes it findable.',
+    tone: 'brand',
+    blurb: 'A graduate’s appointment or award. Name the batch and branch.',
     notifies: true,
     restrained: false,
   },
   milestone: {
     label: 'Milestone',
     tone: 'accent',
-    blurb: 'Something the network built or funded. Put the money and the count in the summary — vague gratitude raises nothing.',
+    blurb: 'Something the network built or funded, with the figures.',
     notifies: true,
     restrained: false,
   },
   press: {
     label: 'In the press',
-    tone: 'info',
-    blurb: 'Coverage in an outside publication. Say which one and when, so the claim can be checked.',
+    tone: 'outline',
+    blurb: 'Coverage elsewhere. Say which publication and when.',
     notifies: true,
     restrained: false,
   },
   obituary: {
     label: 'In memoriam',
     tone: 'neutral',
-    blurb: 'A notice for a member of the college community who has died. Published quietly, never pushed.',
+    blurb: 'A notice of a death. Published quietly, never pushed.',
     notifies: false,
     restrained: true,
   },
 };
+
+/** One icon per kind. The obituary's says what matters about it: nobody is notified. */
+export const KIND_ICON: Record<NewsKind, LucideIcon> = {
+  announcement: Megaphone,
+  achievement: Award,
+  milestone: Landmark,
+  press: Newspaper,
+  obituary: BellOff,
+};
+
+/**
+ * How many published stories the feed holds pinned at once. The same
+ * number `POST /api/admin/news` enforces (its `MAX_PINNED`), which is not
+ * exported from the route, so it is mirrored here.
+ */
+export const PINNED_CAP = 3;

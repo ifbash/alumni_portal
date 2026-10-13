@@ -167,25 +167,21 @@ export function PackImportExport({
   return (
     <div className={cn('space-y-5', className)}>
       <p className="text-sm text-secondary">
-        A customer&rsquo;s whole visual identity is this one file. Downloading it and dropping it in{' '}
-        <code className="font-mono text-xs">brands/</code> is the entire onboarding path for a new
-        college&rsquo;s look — there is deliberately no code to write, because the person doing it at
-        11pm before a demo should not have to be able to write any.
+        Everything that makes the portal look like the college, in one file your vendor puts live.
       </p>
 
       {/* Export */}
       <section className="space-y-2">
-        <h3 className="flex items-center gap-2 font-display text-md font-semibold">
+        <h4 className="flex items-center gap-2 font-display text-md font-semibold">
           <Download className="size-4 text-muted" aria-hidden="true" />
           Export
-        </h3>
+        </h4>
         <p className="text-sm text-secondary">
-          Writes <code className="font-mono text-xs">{packId}.json</code> exactly as the registry
-          expects it, seeds only. It carries the settings this browser form cannot store — ink,
-          marker, neutral chroma, the hero lines and the module switches.
+          Downloads <code className="font-mono text-xs">{packId}.json</code> with everything on this page,
+          including the settings Publish does not save.
         </p>
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" onClick={handleExport} loading={exporting} disabled={!pack}>
+          <Button type="button" variant="secondary" onClick={handleExport} loading={exporting} disabled={!pack}>
             <FileJson className="size-4" aria-hidden="true" />
             Download brand pack
           </Button>
@@ -199,15 +195,15 @@ export function PackImportExport({
 
       {/* Import */}
       <section className="space-y-3 border-t border-line pt-5">
-        <h3 className="flex items-center gap-2 font-display text-md font-semibold">
+        <h4 className="flex items-center gap-2 font-display text-md font-semibold">
           <Upload className="size-4 text-muted" aria-hidden="true" />
           Import
-        </h3>
+        </h4>
 
         <Field
           htmlFor="pack-paste"
           label="Paste a brand pack"
-          hint="Checked against the same schema that loads brands/*.json at boot. Nothing is applied until you load it."
+          hint="Checked against the same rules the portal loads packs with. Nothing changes until you load it."
           error={parseError}
         >
           <Textarea

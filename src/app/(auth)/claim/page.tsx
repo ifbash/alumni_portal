@@ -1,174 +1,128 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { ClipboardCheck, FileSearch, IdCard, UserRoundCheck } from 'lucide-react';
+import { GraduationCap } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
 import { getTenantBrand } from '@/lib/tenant';
 import { getDegreeRegisterStats, getDepartments } from '@/lib/data/repo';
 import { NOTICE_VERSION } from '@/lib/config';
-import { Alert, Card, CardBody } from '@/components/ui';
-import { formatNumber } from '@/lib/format';
+import { rollNumber } from '@/lib/branding/copy';
+import { yearIn } from '@/lib/format';
+import { Alert } from '@/components/ui';
 import { ClaimForm } from './ClaimForm';
 
-export const metadata: Metadata = {
-  title: 'Claim your profile',
-  description:
-    'Register as an alumnus by matching your roll number and name against the college degree register.',
-};
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 /**
- * Self-registration.
+ * The years the form offers, newest first.
  *
- * The page has to do two jobs at once: collect four fields the matcher
- * can score, and be honest about what happens to them. People are being
- * asked to hand over identity data to a portal they have never used, and
- * "we will get back to you" is not an answer anyone accepts from a
- * college that lost touch with them nine years ago.
+ * Exactly the years the degree register covers: offering a year the
+ * college holds no records for only produces a registration nobody can
+ * approve. Only `.year` is read — never a count. Until the register
+ * arrives from the examinations branch the list would be empty and the
+ * form unusable, so it falls back to the last forty years; "My year is
+ * not listed" catches anything older.
  */
-export default async function ClaimPage() {
+function registerYears(timeZone: string): number[] {
+  const years = getDegreeRegisterStats()
+    .byYear.map((r) => r.year)
+    .filter((y) => y > 0)
+    .sort((a, b) => b - a);
+  if (years.length > 0) return years;
+
+  const now = yearIn(timeZone);
+  return Array.from({ length: 41 }, (_, i) => now - i);
+}
+
+/**
+ * `?year=2016`, from a batch chip on the landing page or a link forwarded
+ * round a batch group. Anything that is not a register year is ignored
+ * silently: a stale or mistyped link still opens a working form.
+ */
+function pickYear(raw: string | string[] | undefined, years: number[]): number | undefined {
+  if (typeof raw !== 'string' || !/^\d{4}$/.test(raw)) return undefined;
+  const year = Number(raw);
+  return years.includes(year) ? year : undefined;
+}
+
+export async function generateMetadata({ searchParams }: { searchParams: SearchParams }): Promise<Metadata> {
+  const sp = await searchParams;
+  const resolved = await getTenantBrand();
+  if (!resolved) return { title: 'Alumni registration' };
+
+  const { copy, locale } = resolved.brand.pack;
+  const year = pickYear(sp.year, registerYears(locale.timeZone));
+
+  return {
+    title: year ? `Batch of ${year} — Alumni registration` : 'Alumni registration',
+    description: `Register as a graduate of ${copy.institutionName} with your ${rollNumber(copy).mid} and year of passing.`,
+  };
+}
+
+/**
+ * Alumni registration.
+ *
+ * Four details the matcher can score against the degree register, asked
+ * for in the words printed on the certificate, plus somewhere to send the
+ * outcome. Final-year students are told first that this page is not for
+ * them: the placement cell invites them, and a student who registers here
+ * only produces a record the college cannot match.
+ */
+export default async function RegistrationPage({ searchParams }: { searchParams: SearchParams }) {
   const session = await getSession();
   if (session) redirect('/dashboard');
 
+  const sp = await searchParams;
   const { brand } = (await getTenantBrand())!;
-  const { copy, locale } = brand.pack;
-  const fmt = { locale: locale.locale, currency: locale.currency, timeZone: locale.timeZone };
+  const { copy, features, locale } = brand.pack;
+  const roll = rollNumber(copy);
+  const office = copy.officeName;
 
+  const years = registerYears(locale.timeZone);
+  const initialYear = pickYear(sp.year, years);
+  const initialEmail = typeof sp.email === 'string' ? sp.email.trim().slice(0, 254) : '';
   const departments = getDepartments().map((d) => ({ code: d.code, name: d.name }));
-  const register = getDegreeRegisterStats();
-
-  // The dropdown offers exactly the years the register covers — offering a
-  // year the college has no records for only produces a claim nobody can
-  // approve.
-  const years = register.byYear
-    .map((r) => r.year)
-    .filter((y) => y > 0)
-    .sort((a, b) => b - a);
 
   return (
     <div className="space-y-8">
       <header className="space-y-3">
-        <h1 className="font-display text-display-sm font-bold">Claim your alumni profile</h1>
+        <p className="text-sm font-semibold text-brand-fg">
+          {initialYear ? `Batch of ${initialYear}` : `${copy.shortName} alumni`}
+        </p>
+        <h1 className="font-display text-display-sm font-bold">Alumni registration</h1>
         <p className="text-secondary">
-          {copy.institutionName} keeps a register of every degree it has awarded — currently{' '}
-          <span className="font-medium text-primary tabular">{formatNumber(register.total, fmt)}</span>{' '}
-          records from the examinations branch. Give us four details and we will find your row in it.
+          For graduates of {copy.institutionName}. Keep your {roll.mid} handy — it is on your{' '}
+          {roll.sourcesMid[0]} and {roll.sourcesMid[1]}. It takes about two minutes.
+        </p>
+        <p className="text-sm text-secondary">
+          Already registered?{' '}
+          <Link className="link" href="/login">
+            Sign in
+          </Link>
         </p>
       </header>
 
-      <Alert tone="info" title="Why the college has to check">
+      <Alert tone="neutral" icon={<GraduationCap className="size-4" />} title="Final-year student?">
         <p>
-          A portal that lets anyone type in a name is a portal where anyone can read your batch&apos;s
-          contact details. Matching against the register is what keeps that from being possible — and
-          it is why nobody sees the directory until a claim is approved.
+          You do not need to register. The placement cell adds your batch and emails you an
+          invitation — then you simply <Link href="/login">sign in</Link>. Not received yours?{' '}
+          <Link href="/contact">Contact the {office}</Link>.
         </p>
       </Alert>
 
       <ClaimForm
         departments={departments}
         years={years}
+        initialYear={initialYear}
+        initialEmail={initialEmail}
         noticeVersion={NOTICE_VERSION}
         supportEmail={copy.supportEmail}
+        shortName={copy.shortName}
+        office={office}
+        roll={roll}
+        whatsappEnabled={features.whatsapp}
+        reviewTurnaround={copy.reviewTurnaround}
       />
-
-      <Card>
-        <CardBody className="space-y-4">
-          <h2 className="font-display text-base font-semibold">What happens after you submit</h2>
-          <ol className="space-y-4">
-            <Next
-              n={1}
-              icon={<FileSearch className="size-4" aria-hidden="true" />}
-              title="Your details are scored against the register"
-            >
-              Roll number, name, branch and year, all four. The matcher expects spelling to differ
-              between a certificate and the way you write your own name, so an initial in the wrong
-              place will not fail you.
-            </Next>
-            <Next
-              n={2}
-              icon={<UserRoundCheck className="size-4" aria-hidden="true" />}
-              title="A clean match is approved on the spot"
-            >
-              You get an email with a sign-in code and the directory opens immediately.
-            </Next>
-            <Next
-              n={3}
-              icon={<ClipboardCheck className="size-4" aria-hidden="true" />}
-              title="Anything ambiguous goes to a person"
-            >
-              Two graduates with the same name in the same branch and year is common enough that the
-              alumni cell reviews those by hand, with both register rows in front of them. Expect an
-              answer within three working days.
-            </Next>
-          </ol>
-
-          <div className="flex gap-3 rounded-lg border border-line bg-surface-sunken p-4">
-            <IdCard className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-            <p className="text-sm text-secondary">
-              Changed your surname since graduating, held a supplementary exam, or transferred in?
-              Submit the form with the details as the certificate has them and add a note by email —
-              {copy.supportEmail ? (
-                <>
-                  {' '}
-                  <a href={`mailto:${copy.supportEmail}`} className="link">
-                    {copy.supportEmail}
-                  </a>{' '}
-                </>
-              ) : (
-                ' to the alumni cell '
-              )}
-              with a scan of the certificate. The cell corrects the record rather than rejecting the
-              claim.
-            </p>
-          </div>
-        </CardBody>
-      </Card>
-
-      <p className="text-sm text-secondary">
-        Final-year student? You do not claim a profile — the placement cell adds your batch and
-        emails you an invitation. If your classmates have one and you do not,{' '}
-        {copy.supportEmail ? (
-          <a href={`mailto:${copy.supportEmail}`} className="link">
-            write to the alumni cell
-          </a>
-        ) : (
-          'ask the placement cell'
-        )}
-        . Already have an account?{' '}
-        <Link href="/login" className="link">
-          Sign in
-        </Link>
-        .
-      </p>
     </div>
-  );
-}
-
-function Next({
-  n,
-  icon,
-  title,
-  children,
-}: {
-  n: number;
-  icon: React.ReactNode;
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <li className="flex gap-3">
-      <span
-        className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-brand-soft font-mono text-xs font-bold text-brand-soft-fg tabular"
-        aria-hidden="true"
-      >
-        {n}
-      </span>
-      <div className="min-w-0 space-y-1">
-        <p className="flex items-center gap-2 font-semibold">
-          <span className="text-muted">{icon}</span>
-          {title}
-        </p>
-        <p className="text-sm text-secondary">{children}</p>
-      </div>
-    </li>
   );
 }

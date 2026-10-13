@@ -2,9 +2,9 @@
 
 import * as React from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { CheckCircle2, Lock, Send } from 'lucide-react';
+import { CheckCircle2, Send } from 'lucide-react';
 
-import { Alert, Badge, Button, Dialog, Field, Textarea, describedBy, useToast } from '@/components/ui';
+import { Alert, Button, Dialog, Field, Textarea, describedBy, useToast } from '@/components/ui';
 import { api, outcomeToast } from '@/lib/client/api';
 
 /**
@@ -16,12 +16,15 @@ import { api, outcomeToast } from '@/lib/client/api';
  *
  *  - **A second application is refused, not swallowed.** The server 409s
  *    on a posting you have already applied to, and that is shown as the
- *    fact it is rather than as a generic failure. Applying twice does not
- *    move anyone up a list, and a student should be told that once.
- *  - **A fixture write is not an application.** This build has no writable
- *    store; when the response says so, the panel says so too. A fake
+ *    fact it is rather than as a generic failure.
+ *  - **A write that was not stored is not an application.** When the
+ *    response says nothing was saved, the dialog says so too. A fake
  *    "Application sent" is the one thing a student must never be shown on
  *    a screen about their own job search.
+ *
+ * The page renders this only for a viewer who may apply to a live posting
+ * (or who already has). `panel` is the rail on a desktop; `bar` is the
+ * phone's sticky action bar, which has room for the button alone.
  */
 
 const NOTE_MAX = 600;
@@ -33,33 +36,38 @@ interface ApplyResult {
 
 type Phase = 'form' | 'sent' | 'refused';
 
+/**
+ * It has to stay true of the applicant list the poster sees. The page
+ * states the same line in its rail (a server file cannot import a value
+ * from this client module).
+ */
+const APPLY_PRIVACY_LINE =
+  'The poster sees your name, branch, batch and note — never your phone or email.';
+
 export function ApplyButton({
   jobTitle,
   company,
-  isLive,
-  canApply,
-  isAuthor,
   alreadyApplied,
   appliedOn,
   appliedNote,
-  applyUrl,
+  variant = 'panel',
 }: {
   jobTitle: string;
   company: string;
-  isLive: boolean;
-  canApply: boolean;
-  isAuthor: boolean;
   alreadyApplied: boolean;
   /** Pre-formatted on the server — this file must not pull the fixture clock in. */
   appliedOn: string | null;
   appliedNote: string | null;
-  applyUrl: string | null;
+  variant?: 'panel' | 'bar';
 }) {
   const toast = useToast();
   const router = useRouter();
   const params = useParams<{ id: string }>();
 
   const [open, setOpen] = React.useState(false);
+  // Per instance: the page renders this button twice (the rail and the
+  // phone's sticky bar), and a shared id would label the other dialog.
+  const noteId = `apply-note-${React.useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const [note, setNote] = React.useState('');
   const [phase, setPhase] = React.useState<Phase>('form');
   const [busy, setBusy] = React.useState(false);
@@ -69,19 +77,8 @@ export function ApplyButton({
 
   const jobId = params?.id ?? '';
 
-  if (isAuthor) {
-    return (
-      <div className="space-y-2">
-        <Badge tone="brand">Your posting</Badge>
-        <p className="text-sm text-secondary">
-          You posted this role, so there is nothing to apply to. Applications are counted in the
-          panel below.
-        </p>
-      </div>
-    );
-  }
-
   if (alreadyApplied) {
+    if (variant === 'bar') return null;
     return (
       <div className="space-y-2">
         <p className="flex items-center gap-2 text-sm font-semibold text-success-fg">
@@ -95,41 +92,7 @@ export function ApplyButton({
         ) : (
           <p className="text-sm text-secondary">You applied without a note.</p>
         )}
-        <p className="text-xs text-muted">
-          {company} sees your name, branch and batch. You cannot apply twice — if something has
-          changed, message the poster from their profile.
-        </p>
-      </div>
-    );
-  }
-
-  if (!isLive) {
-    return (
-      <div className="space-y-2">
-        <p className="flex items-center gap-2 text-sm font-semibold text-secondary">
-          <Lock className="size-4" aria-hidden="true" />
-          Applications are not open
-        </p>
-        <p className="text-sm text-secondary">
-          This posting is not live on the board, so nobody can apply to it. That is a state of the
-          posting, not of your account.
-        </p>
-      </div>
-    );
-  }
-
-  if (!canApply) {
-    return (
-      <div className="space-y-2">
-        <p className="flex items-center gap-2 text-sm font-semibold text-secondary">
-          <Lock className="size-4" aria-hidden="true" />
-          Your account cannot apply
-        </p>
-        <p className="text-sm text-secondary">
-          Applying is for final-year students and alumni. Staff accounts post and moderate roles
-          instead.
-          {applyUrl ? ' The company careers link below still works.' : ''}
-        </p>
+        <p className="text-sm text-secondary">{APPLY_PRIVACY_LINE}</p>
       </div>
     );
   }
@@ -189,34 +152,22 @@ export function ApplyButton({
   };
 
   const title =
-    phase === 'sent'
-      ? result?.persisted
-        ? 'Application sent'
-        : 'Not sent'
-      : phase === 'refused'
-        ? 'Not sent'
-        : `Apply — ${jobTitle}`;
+    phase === 'sent' ? 'Application sent' : phase === 'refused' ? 'Not sent' : `Apply — ${jobTitle}`;
+
+  const written = note.trim();
 
   return (
-    <div className="space-y-2">
-      <Button className="w-full" onClick={() => setOpen(true)}>
+    <>
+      <Button className="min-h-11 w-full" size={variant === 'bar' ? 'md' : 'lg'} onClick={() => setOpen(true)}>
         <Send className="size-4" aria-hidden="true" />
-        Apply through the portal
+        Apply with a note
       </Button>
-      <p className="text-xs text-muted">
-        The poster sees your name, branch, batch and your note. Your email and phone number are
-        never attached.
-      </p>
 
       <Dialog
         open={open}
         onClose={close}
         title={title}
-        description={
-          phase === 'form'
-            ? `${company} · your application goes to the person who posted this role.`
-            : undefined
-        }
+        description={phase === 'form' ? `${company} · your application goes to the person who posted this role.` : undefined}
         footer={
           phase === 'form' ? (
             <>
@@ -238,47 +189,24 @@ export function ApplyButton({
         {phase === 'refused' ? (
           <Alert tone="danger" title="This application was not accepted">
             <p>{refusal}</p>
-            <p className="mt-2">
-              Nothing was sent to {company}. The posting on screen has been refreshed to whatever
-              its current state is.
-            </p>
+            <p className="mt-2">Nothing was sent to {company}. The posting has been refreshed to show where it stands now.</p>
           </Alert>
         ) : phase === 'sent' ? (
           <div className="space-y-4">
-            {result?.persisted ? (
-              <Alert tone="success" title={`Your application is with ${company}`}>
-                <p>{result.note}</p>
-              </Alert>
-            ) : (
-              <Alert tone="info" title="Nothing was stored">
-                <p>
-                  Your note has not gone to {company}, to the poster, or to the placement cell.
-                  This build runs on seeded data with no database behind it: the capability check,
-                  the closing-date check and the duplicate-application check all ran on the server,
-                  and the write did not.
-                </p>
-              </Alert>
-            )}
-
-            <div className="space-y-2">
-              <p className="text-sm font-semibold">
-                {result?.persisted ? 'What happens next' : 'What this does once the store is behind it'}
+            {/* Fixture honesty is the Demo data marker and the toast, not this panel. */}
+            <Alert tone="success" title={`Your application is with ${company}`}>
+              <p>
+                {result?.persisted
+                  ? 'It is listed under My applications, with the note you wrote.'
+                  : 'It goes to the person who posted this role, with the note you wrote.'}
               </p>
-              <ol className="list-decimal space-y-1.5 pl-5 text-sm text-secondary">
-                <li>Records an application against this posting with your note.</li>
-                <li>Notifies the poster on WhatsApp and email, with your name, branch and batch.</li>
-                <li>
-                  Adds it to your <span className="font-medium text-primary">My applications</span>{' '}
-                  tab so you can see what you said and when.
-                </li>
-              </ol>
-            </div>
+            </Alert>
 
-            {note.trim() ? (
+            {written ? (
               <div className="space-y-1.5">
                 <p className="text-sm font-semibold">The note you wrote</p>
                 <blockquote className="rounded border border-line bg-surface-sunken p-3 text-sm text-secondary">
-                  {note.trim()}
+                  {written}
                 </blockquote>
               </div>
             ) : null}
@@ -286,13 +214,13 @@ export function ApplyButton({
         ) : (
           <div className="space-y-4">
             <Field
-              htmlFor="apply-note"
+              htmlFor={noteId}
               label="Add a note"
-              hint="Optional, but the ones that get read say something specific — a project you built, a module you know well, or why this team."
+              hint="Optional. Say something specific: a project you built, a subject you know well, or why this team."
               error={noteError}
             >
               <Textarea
-                id="apply-note"
+                id={noteId}
                 name="note"
                 rows={5}
                 maxLength={NOTE_MAX}
@@ -300,26 +228,25 @@ export function ApplyButton({
                 onChange={(e) => setNote(e.target.value)}
                 invalid={Boolean(noteError)}
                 placeholder="Final-year CSE. Built a UPI reconciliation tool for our capstone — happy to walk through how I handled retries."
-                aria-describedby={describedBy('apply-note', {
+                aria-describedby={describedBy(noteId, {
                   hint: true,
                   error: Boolean(noteError),
                 })}
               />
             </Field>
-            <p className="text-right text-xs tabular text-muted">
+            <p className="text-right text-xs tabular text-secondary">
               {note.length} / {NOTE_MAX}
             </p>
 
             <Alert tone="neutral" title="What the poster receives">
               <p>
                 Your name, branch, batch year and this note. Not your email, not your phone number,
-                not your CGPA. If they want to talk, they reply through the portal and you decide
-                whether to share anything else.
+                not your CGPA.
               </p>
             </Alert>
           </div>
         )}
       </Dialog>
-    </div>
+    </>
   );
 }

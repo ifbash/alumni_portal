@@ -113,7 +113,7 @@ export function OtpForm({
       case 'too_many_attempts':
         return `${maxAttempts} wrong codes, so this one has been cancelled. Send a new code to try again.`;
       case 'unknown_email':
-        return `There is no account on ${email}. If you graduated from here, claim your profile with your roll number.`;
+        return `There is no account on ${email}. If you graduated from here, register with your roll number.`;
       case 'rate_limited':
         return 'Too many attempts from here. Wait a minute, then ask for a new code.';
       default:
@@ -396,8 +396,8 @@ export function OtpForm({
               <p>{message}</p>
               {reason === 'unknown_email' ? (
                 <p className="pt-1">
-                  <Link href="/claim">Claim your profile</Link> — it takes a roll number and a year
-                  of passing.
+                  <Link href="/claim">Register with your roll number</Link> — it takes a roll number
+                  and a year of passing.
                 </p>
               ) : null}
             </Alert>
@@ -409,6 +409,18 @@ export function OtpForm({
           {pending ? null : <ArrowRight className="size-4" aria-hidden="true" />}
         </Button>
       </form>
+
+      {/* The otp route answers an unknown address exactly as it answers a
+          known one, so a code that never comes is the only signal a person
+          without an account gets. This says so. */}
+      <p className="text-sm text-secondary">
+        Nothing after two minutes? Check your spam folder. No code is sent to an address that is
+        not registered —{' '}
+        <Link className="link" href="/claim">
+          register first
+        </Link>
+        .
+      </p>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5">
         <p className="text-sm text-secondary">

@@ -335,3 +335,43 @@ describe('two people, same name, same branch, same year', () => {
     expect(score(claim({ rollNumber: '18JN1A0577' }), twinA).confidence).toBeLessThan(REVIEW_AT);
   });
 });
+
+describe('auto-approval needs more than a guessable roll and a public name', () => {
+  const venkata = record({ id: 'r-v', rollNumber: '18JN1A0501', name: 'KONDURU VENKATA REDDY' });
+
+  it('does not let a lone surname pass for the whole name', () => {
+    // The name score divides by the shorter name, so "Reddy" against
+    // "Konduru Venkata Reddy" is a perfect 1.0. Roll, department and batch
+    // are all guessable; with them this used to auto-approve a stranger.
+    const outcome = matchClaim(
+      claim({ rollNumber: '18JN1A0501', name: 'Reddy', departmentCode: 'CSE', batchYear: 2022 }),
+      [venkata],
+    );
+    expect(outcome.decision).toBe('review');
+    expect(outcome.reasons).toContain('name_too_short_to_auto_approve');
+  });
+
+  it('counts each register token once, so a repeated word cannot double-score', () => {
+    const rao = record({ id: 'r-r', rollNumber: '18JN1A0502', name: 'Venkata Rao' });
+    const repeated = score(claim({ rollNumber: '18JN1A0502', name: 'Rao Rao' }), rao);
+    const single = score(claim({ rollNumber: '18JN1A0502', name: 'Rao Venkata' }), rao);
+    expect(repeated.confidence).toBeLessThan(single.confidence);
+    expect(repeated.reasons).not.toContain('name_exact');
+  });
+
+  it('sends a roll-and-name-only claim to a human when nothing else agrees', () => {
+    const outcome = matchClaim(
+      claim({ rollNumber: '18JN1A0501', name: 'Konduru Venkata Reddy', departmentCode: null, batchYear: null }),
+      [venkata],
+    );
+    expect(outcome.decision).not.toBe('auto_approve');
+  });
+
+  it('still auto-approves a full name with the department and batch agreeing', () => {
+    const outcome = matchClaim(
+      claim({ rollNumber: '18JN1A0501', name: 'Konduru Venkata Reddy', departmentCode: 'CSE', batchYear: 2022 }),
+      [venkata],
+    );
+    expect(outcome.decision).toBe('auto_approve');
+  });
+});

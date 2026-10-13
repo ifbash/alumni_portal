@@ -1,86 +1,60 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, CheckCircle2, Mail, PlayCircle, RotateCcw, ScrollText, Users } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, Circle, PlayCircle, RotateCcw, Users } from 'lucide-react';
 
 import {
   Alert,
-  Badge,
   Button,
+  ButtonLink,
   Card,
   CardBody,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
   ConfirmDialog,
-  DetailRow,
   EmptyState,
   Field,
   Select,
-  Table,
-  TableWrap,
-  TBody,
-  TD,
-  TH,
-  THead,
-  TR,
   useToast,
 } from '@/components/ui';
 import { BarList } from '@/components/charts';
 import { api, outcomeToast } from '@/lib/client/api';
+import { cn } from '@/lib/cn';
 
 /**
- * The annual student → alumnus transition.
+ * The annual final-year → alumni transition, in three steps.
  *
- * Two properties are non-negotiable and both are visible in the UI:
- * it is triggered by a person, never by a schedule; and the dry run comes
- * first, always, with a typed confirmation between the preview and the
- * commit. A rollover run against the wrong batch cannot be undone from
- * inside the product — the reverse is a database restore — so the friction
- * here is the design, not an oversight.
+ * Two properties are non-negotiable and both are visible in the UI: it is
+ * triggered by a person, never by a schedule; and the dry run comes first,
+ * always, with a typed confirmation between the preview and the commit.
+ * The commit control does not exist until the preview has been read.
  *
- * Every number on this screen after the dry run comes back from
- * `POST /api/admin/rollover`, computed by the same query the write would
- * use. Nothing is counted twice, in two places, by two pieces of code that
- * can drift apart: a preview assembled locally is a preview of something
- * else, and the phrase the admin types is typed against the server's count.
+ * Every number after the dry run comes back from `POST
+ * /api/admin/rollover`, computed by the same query the write would use.
+ * The words around them are this screen's own; the response's machine
+ * fields and the college-mailbox figures are not shown.
  */
 
 export interface BatchPreview {
   year: number;
   total: number;
   departments: Array<{ code: string; name: string; count: number }>;
-  collegeEmailOnly: number;
   withRegisterRow: number;
-  sample: Array<{ name: string; roll: string; department: string }>;
 }
 
-/** Exactly the shape `/api/admin/rollover` returns. */
+/** The fields of `/api/admin/rollover` this screen reads. */
 interface RolloverPreview {
   batchYear: number;
   moves: { from: string; to: string; count: number };
   byDepartment: Array<{ code: string; name: string; count: number }>;
   reachability: {
-    collegeEmailOnly: number;
-    onPersonalEmail: number;
     withRegisterRow: number;
     withoutRegisterRow: number;
   };
   changes: {
-    status: string;
-    roles: string;
     connectionQuota: { before: string; after: string };
-    directory: string;
-    gains: string[];
-    loses: string[];
-    untouched: string[];
-    verificationMethod: string;
   };
   sample: Array<{ name: string; rollNumber: string | null; departmentCode: string | null }>;
-  warnings: string[];
-  note: string;
 }
 
 interface RolloverResult extends RolloverPreview {
@@ -88,7 +62,59 @@ interface RolloverResult extends RolloverPreview {
   auditedAs: string;
 }
 
-export function RolloverRunner({ batches, actorName }: { batches: BatchPreview[]; actorName: string }) {
+function Step({
+  n,
+  title,
+  state,
+  children,
+}: {
+  n: number;
+  title: string;
+  state: 'current' | 'done' | 'waiting';
+  children?: React.ReactNode;
+}) {
+  return (
+    <li className="relative flex gap-4">
+      <span
+        className={cn(
+          'grid size-8 shrink-0 place-items-center rounded-full text-sm font-semibold tabular',
+          state === 'done'
+            ? 'bg-success-soft text-success-fg'
+            : state === 'current'
+              ? 'bg-[var(--button-primary-bg)] text-[var(--button-primary-fg)]'
+              : 'border border-line bg-surface text-secondary',
+        )}
+        aria-hidden="true"
+      >
+        {state === 'done' ? <CheckCircle2 className="size-4" /> : n}
+      </span>
+      <div className="min-w-0 flex-1 space-y-3 pb-6">
+        <h2 className={cn('pt-1 font-display text-md font-semibold', state === 'waiting' && 'text-secondary')}>
+          <span className="sr-only">Step {n}: </span>
+          {title}
+        </h2>
+        {children}
+      </div>
+    </li>
+  );
+}
+
+export function RolloverRunner({
+  batches,
+  actorName,
+  crest,
+  links,
+  donations,
+}: {
+  batches: BatchPreview[];
+  actorName: string;
+  /** The college crest for the welcome card, rendered on the server (null when the pack has none). */
+  crest: React.ReactNode;
+  /** Which doors this viewer can open; hrefs are built here per batch. */
+  links: { upload: boolean; comms: boolean; news: boolean; audit: boolean };
+  /** Whether members can give; the dry run mentions giving only when they can. */
+  donations: boolean;
+}) {
   const toast = useToast();
   const router = useRouter();
 
@@ -123,10 +149,7 @@ export function RolloverRunner({ batches, actorName }: { batches: BatchPreview[]
     }
 
     setPreview(outcome.data);
-    toast.info(
-      'Dry run complete',
-      `${outcome.data.moves.count} members would move. Nothing has changed.`,
-    );
+    toast.info('Dry run complete', `${outcome.data.moves.count} final-year students would become alumni. Nothing has changed.`);
   };
 
   const execute = async () => {
@@ -164,274 +187,231 @@ export function RolloverRunner({ batches, actorName }: { batches: BatchPreview[]
     return (
       <EmptyState
         icon={<Users className="size-5" />}
-        title="No student cohort is loaded"
-        description="Rollover moves final-years to alumni. There are no members with status active_student on this tenant yet — load the final-year roll list from the placement cell first."
+        title="No final-year students on the portal"
+        description="The rollover moves final-year students to alumni. It has nobody to move until the final-year list is loaded."
       />
     );
   }
 
+  // ---------------------------------------------------------------
+  // Done: the welcome
+  // ---------------------------------------------------------------
+
   if (done) {
-    const { result, persisted } = done;
-
+    // Whether it persisted is said once, by the outcome toast.
+    const { result } = done;
+    const y = result.batchYear;
     return (
-      <Card>
-        <CardHeader>
-          <div className="space-y-1">
-            <CardTitle as="h2">
-              <CheckCircle2 className="mr-2 inline size-5 align-[-4px] text-success-fg" aria-hidden="true" />
-              Batch of {result.batchYear} rolled over
-            </CardTitle>
-            <CardDescription>
-              {result.moves.count} members moved from <span className="font-mono">{result.moves.from}</span> to{' '}
-              <span className="font-mono">{result.moves.to}</span>.
-            </CardDescription>
-          </div>
-          <Badge tone="success">{result.auditedAs}</Badge>
-        </CardHeader>
-
-        <CardBody className="space-y-4">
-          {result.reachability.collegeEmailOnly > 0 ? (
-            <Alert tone="warning" title="Do this next, today" icon={<Mail className="size-4" />}>
-              <p>
-                {result.reachability.collegeEmailOnly} of them still have only a{' '}
-                <span className="font-mono">@diet.ac.in</span> address on the account. Those mailboxes are deactivated
-                within weeks, and after that neither the OTP nor the recovery mail reaches them — the account is lost and
-                so is the person. Send the &ldquo;add a personal email&rdquo; campaign over WhatsApp before the mailboxes
-                go.
+      <div className="space-y-4">
+        <section aria-labelledby="welcome-title" className="band-surface rounded-xl px-6 py-8 sm:px-8">
+          <div className="flex items-start gap-4">
+            {crest}
+            <div className="min-w-0 space-y-2">
+              <p className="text-sm font-semibold text-band-accent">Batch of {y}</p>
+              <h2 id="welcome-title" className="font-display text-display-xs font-bold text-band-fg">
+                Welcome the Class of {y} to the alumni network
+              </h2>
+              <p className="text-md text-band-muted">
+                {result.moves.count} final-year students are now alumni.
               </p>
-            </Alert>
-          ) : null}
+              {links.news || links.comms ? (
+                <div className="flex flex-wrap gap-2 pt-3">
+                  {links.news ? (
+                    <ButtonLink href="/admin/news/new" variant="band" className="min-h-11">
+                      Write the announcement
+                    </ButtonLink>
+                  ) : null}
+                  {links.comms ? (
+                    <ButtonLink
+                      href={`/admin/comms/new?cohort=alumni&batchFrom=${y}&batchTo=${y}`}
+                      variant="band-outline"
+                      className="min-h-11"
+                    >
+                      Write to the {y} batch
+                    </ButtonLink>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </section>
 
-          <dl className="divide-y divide-line">
-            <DetailRow label="Status">
-              <span className="font-mono text-xs">{result.changes.status}</span>
-            </DetailRow>
-            <DetailRow label="Roles">
-              <span className="font-mono text-xs">{result.changes.roles}</span>
-            </DetailRow>
-            <DetailRow label="Request quota">
-              <span className="tabular">
-                {result.changes.connectionQuota.before} → {result.changes.connectionQuota.after}
-              </span>
-            </DetailRow>
-            <DetailRow label="Verification method">
-              <span className="font-mono text-xs">{result.changes.verificationMethod}</span>
-            </DetailRow>
-            <DetailRow label="Moved at">
-              {/* The timestamp as the audit entry records it, not as a
-                  reading date — this row is the entry, not a summary. */}
-              <span className="font-mono text-xs">{result.movedAt}</span>
-            </DetailRow>
-          </dl>
+        <p className="text-sm text-secondary">
+          {links.audit ? (
+            <Link href="/admin/audit?action=rollover.execute" className="link">
+              Recorded in the audit log
+            </Link>
+          ) : (
+            'Recorded in the audit log'
+          )}{' '}
+          against {actorName}, with every member before and after.
+        </p>
 
-          <p className="text-sm text-secondary">{result.note}</p>
-
-          <p className="text-sm text-secondary">
-            Written to <span className="font-mono">audit_log</span> as one entry — actor {actorName}, action{' '}
-            <span className="font-mono">{result.auditedAs}</span>, resource{' '}
-            <span className="font-mono">batch/{result.batchYear}</span> — with the per-member before and after snapshots
-            attached.
-          </p>
-
-          {!persisted ? (
-            <p className="text-xs text-muted">
-              This build runs on seeded data with no database behind it. The capability check, the batch-year
-              confirmation and the audit entry all ran; the status change did not, so these members are still students
-              on the next page load. The counts are computed from the real member records this tenant holds.
-            </p>
-          ) : null}
-        </CardBody>
-
-        <CardFooter>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              setDone(null);
-              setPreview(null);
-            }}
-          >
-            <RotateCcw className="size-4" aria-hidden="true" />
-            Back to the runner
-          </Button>
-        </CardFooter>
-      </Card>
+        <Button
+          variant="secondary"
+          onClick={() => {
+            setDone(null);
+            setPreview(null);
+          }}
+        >
+          <RotateCcw className="size-4" aria-hidden="true" />
+          Back to the rollover
+        </Button>
+      </div>
     );
   }
 
+  // ---------------------------------------------------------------
+  // The three steps
+  // ---------------------------------------------------------------
+
+  const inRegister = batch ? batch.withRegisterRow : 0;
+  const registerDone = batch ? inRegister >= batch.total : false;
+
   return (
     <Card>
-      <CardHeader>
-        <div className="space-y-1">
-          <CardTitle as="h2">Run the rollover</CardTitle>
-          <CardDescription>
-            Pick the batch, read the dry run, then type the confirmation phrase. There is no step that skips the
-            preview.
-          </CardDescription>
-        </div>
-      </CardHeader>
+      <CardBody>
+        <ol aria-label="Rollover steps">
+          {/* ---- 1 ---- */}
+          <Step n={1} title="Before you run" state={preview ? 'done' : 'current'}>
+            <Field htmlFor="batch-year" label="Graduating batch" required className="sm:max-w-sm">
+              <Select
+                id="batch-year"
+                value={year ?? ''}
+                onChange={(e) => {
+                  setYear(Number(e.target.value));
+                  setPreview(null);
+                  setRefused(null);
+                }}
+              >
+                {batches.map((b) => (
+                  <option key={b.year} value={b.year}>
+                    Batch of {b.year} — {b.total} final-year students
+                  </option>
+                ))}
+              </Select>
+            </Field>
 
-      <CardBody className="space-y-5">
-        <Field
-          htmlFor="batch-year"
-          label="Graduating batch"
-          hint="The year of passing recorded on the student's account."
-          required
-        >
-          <Select
-            id="batch-year"
-            value={year ?? ''}
-            onChange={(e) => {
-              setYear(Number(e.target.value));
-              setPreview(null);
-              setRefused(null);
-            }}
-          >
-            {batches.map((b) => (
-              <option key={b.year} value={b.year}>
-                Batch of {b.year} — {b.total} members
-              </option>
-            ))}
-          </Select>
-        </Field>
-
-        {premature && batch ? (
-          <Alert tone="danger" title={`The ${batch.year} batch has not graduated`} icon={<AlertTriangle className="size-4" />}>
-            <p>
-              {earliest} is still on the portal as a student cohort, which means {batch.year} is at least a year from
-              finishing. Rolling them over now would give final-years alumni access and strip them of the student view
-              they are actually using. Roll the {earliest} batch first.
-            </p>
-          </Alert>
-        ) : null}
-
-        {refused ? (
-          <Alert tone="danger" title="The server refused this" icon={<AlertTriangle className="size-4" />}>
-            <p>{refused}</p>
-          </Alert>
-        ) : null}
-
-        {!preview ? (
-          <div className="rounded-lg border border-dashed border-line bg-surface p-6 text-center">
-            <p className="text-sm text-secondary">
-              Nothing has been read yet. The dry run counts the members, groups them by branch, and lists what would
-              change — without touching a single record.
-            </p>
-            <div className="mt-4">
-              <Button onClick={() => void runDryRun()} loading={running === 'dry'} disabled={!batch}>
-                <PlayCircle className="size-4" aria-hidden="true" />
-                Run the dry run
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-5">
-            <Alert tone="info" title={`${preview.moves.count} members would move`} icon={<Users className="size-4" />}>
-              <p>
-                Every member with status <span className="font-mono">{preview.moves.from}</span> and year of passing{' '}
-                <span className="font-mono">{preview.batchYear}</span> becomes{' '}
-                <span className="font-mono">{preview.moves.to}</span>. Nothing has changed yet — this is a count, not an
-                action.
-              </p>
-            </Alert>
-
-            {preview.warnings.map((w) => (
-              <Alert key={w} tone="warning" icon={<AlertTriangle className="size-4" />}>
-                <p>{w}</p>
+            {premature && batch ? (
+              <Alert tone="danger" title={`The ${batch.year} batch has not graduated`} icon={<AlertTriangle className="size-4" />}>
+                <p>
+                  The {earliest} batch is still on the portal as final-year students. Roll {earliest} first; running{' '}
+                  {batch.year} now would be refused.
+                </p>
               </Alert>
-            ))}
+            ) : null}
 
-            <div className="space-y-2">
-              <h3 className="text-sm font-semibold">By branch</h3>
-              <BarList
-                label={`Batch of ${preview.batchYear} by branch`}
-                data={preview.byDepartment.map((d) => ({ label: `${d.code} — ${d.name}`, value: d.count }))}
-              />
-            </div>
+            {batch ? (
+              <ul className="space-y-2 text-sm">
+                <li className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  {registerDone ? (
+                    <CheckCircle2 className="size-4 shrink-0 text-success-fg" aria-hidden="true" />
+                  ) : (
+                    <Circle className="size-4 shrink-0 text-warning-fg" aria-hidden="true" />
+                  )}
+                  <span>
+                    {inRegister} of {batch.total} are in the degree register
+                  </span>
+                  {!registerDone && links.upload ? (
+                    <Link
+                      href="/admin/degree-register/upload"
+                      className="inline-flex min-h-11 items-center gap-1 font-semibold text-brand-fg hover:underline sm:min-h-0"
+                    >
+                      Load the {batch.year} files
+                      <ArrowRight className="size-4" aria-hidden="true" />
+                    </Link>
+                  ) : null}
+                </li>
+                {links.comms ? (
+                  <li className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <Circle className="size-4 shrink-0 text-muted" aria-hidden="true" />
+                    <span>Tell the batch first</span>
+                    <Link
+                      href={`/admin/comms/new?cohort=students&batchFrom=${batch.year}&batchTo=${batch.year}`}
+                      className="inline-flex min-h-11 items-center gap-1 font-semibold text-brand-fg hover:underline sm:min-h-0"
+                    >
+                      Write to them
+                      <ArrowRight className="size-4" aria-hidden="true" />
+                    </Link>
+                  </li>
+                ) : null}
+              </ul>
+            ) : null}
+          </Step>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-lg border border-line bg-surface p-4">
-                <p className="flex items-center gap-2 text-sm font-medium">
-                  <Mail className="size-4 text-warning-fg" aria-hidden="true" />
-                  {preview.reachability.collegeEmailOnly} on a college mailbox
+          {/* ---- 2 ---- */}
+          <Step n={2} title="Preview" state={preview ? 'done' : 'waiting'}>
+            {refused ? (
+              <Alert tone="danger" title="The server refused this" icon={<AlertTriangle className="size-4" />}>
+                <p>{refused}</p>
+              </Alert>
+            ) : null}
+
+            {!preview ? (
+              <div className="space-y-3">
+                <p className="text-sm text-secondary">
+                  Counts who would move and what changes for them. Nothing is written.
                 </p>
-                <p className="mt-1 text-xs text-secondary">
-                  Their only address is <span className="font-mono">@diet.ac.in</span>. Once IT deactivates it, the OTP
-                  has nowhere to go and the account is unrecoverable. This is the number that decides whether a batch
-                  stays reachable in five years — {preview.reachability.onPersonalEmail} of them have a personal address
-                  as well.
-                </p>
+                <Button onClick={() => void runDryRun()} loading={running === 'dry'} disabled={!batch}>
+                  <PlayCircle className="size-4" aria-hidden="true" />
+                  Run the dry run
+                </Button>
               </div>
-              <div className="rounded-lg border border-line bg-surface p-4">
-                <p className="flex items-center gap-2 text-sm font-medium">
-                  <ScrollText className="size-4 text-muted" aria-hidden="true" />
-                  {preview.reachability.withRegisterRow} of {preview.moves.count} have a register row
+            ) : (
+              <div className="space-y-4 text-sm">
+                <p className="font-display text-lg font-semibold">
+                  {preview.moves.count} final-year students become alumni.
                 </p>
-                <p className="mt-1 text-xs text-secondary">
-                  The examinations branch supplies the degree file months after the ceremony. The{' '}
-                  {preview.reachability.withoutRegisterRow} without a row are marked{' '}
-                  <span className="font-mono">verified_by: {preview.changes.verificationMethod}</span> — the college
-                  vouched for them directly — and are re-linked automatically when the {preview.batchYear} file is
-                  loaded.
-                </p>
+                <ul className="list-disc space-y-1.5 pl-5 text-secondary">
+                  <li>
+                    They can post jobs and receive mentorship and referral requests
+                    {donations ? ', and give to campaigns' : ''}.
+                  </li>
+                  <li>
+                    Their request limit goes from {preview.changes.connectionQuota.before} to{' '}
+                    {preview.changes.connectionQuota.after}.
+                  </li>
+                  <li>Their academic and placement data stays with placement staff.</li>
+                  <li>Their contact settings, connections, registrations and applications stay as they are.</li>
+                  {preview.reachability.withoutRegisterRow > 0 ? (
+                    <li>
+                      {preview.reachability.withoutRegisterRow} have no register row yet. They are verified by the rollover
+                      and linked to their row when the {preview.batchYear} files are loaded.
+                    </li>
+                  ) : null}
+                </ul>
+                <div className="space-y-2">
+                  <h3 className="text-sm font-semibold">By branch</h3>
+                  <BarList
+                    label={`Batch of ${preview.batchYear} by branch`}
+                    data={preview.byDepartment.map((d) => ({ label: `${d.code} · ${d.name}`, value: d.count }))}
+                  />
+                </div>
+                <Button variant="ghost" onClick={() => setPreview(null)} disabled={running !== null}>
+                  <RotateCcw className="size-4" aria-hidden="true" />
+                  Discard the preview
+                </Button>
               </div>
-            </div>
+            )}
+          </Step>
 
-            <div className="space-y-2">
-              <h3 className="text-sm font-semibold">
-                First {preview.sample.length} of {preview.moves.count}
-              </h3>
-              <TableWrap caption={`Sample of the batch of ${preview.batchYear}`}>
-                <Table>
-                  <THead>
-                    <TR>
-                      <TH>Name</TH>
-                      <TH>Roll number</TH>
-                      <TH>Branch</TH>
-                      <TH>Status after</TH>
-                    </TR>
-                  </THead>
-                  <TBody>
-                    {preview.sample.map((m, i) => (
-                      <TR key={m.rollNumber ?? `${m.name}-${i}`}>
-                        <TD>{m.name}</TD>
-                        <TD>
-                          <span className="font-mono">{m.rollNumber ?? '—'}</span>
-                        </TD>
-                        <TD>{m.departmentCode ?? '—'}</TD>
-                        <TD>
-                          <Badge tone="success">{preview.moves.to}</Badge>
-                        </TD>
-                      </TR>
-                    ))}
-                  </TBody>
-                </Table>
-              </TableWrap>
-              <p className="text-xs text-muted">
-                The full list is attached to the audit entry when the rollover runs, so the batch can be reconstructed
-                exactly.
-              </p>
-            </div>
-          </div>
-        )}
+          {/* ---- 3 ---- */}
+          <Step n={3} title="Run" state={preview ? 'current' : 'waiting'}>
+            {preview ? (
+              <div className="space-y-3">
+                <p className="text-sm text-secondary">
+                  There is no undo inside the portal. You will be asked to type the batch year to confirm.
+                </p>
+                <Button variant="danger" disabled={running !== null} onClick={() => setConfirming(true)}>
+                  Roll the batch of {preview.batchYear} into alumni
+                </Button>
+              </div>
+            ) : (
+              <p className="text-sm text-secondary">Opens once you have read the preview.</p>
+            )}
+          </Step>
+        </ol>
       </CardBody>
-
-      <CardFooter>
-        {preview ? (
-          <Button variant="ghost" onClick={() => setPreview(null)} disabled={running !== null}>
-            <RotateCcw className="size-4" aria-hidden="true" />
-            Discard the preview
-          </Button>
-        ) : null}
-        <div className="ml-auto">
-          <Button
-            variant="danger"
-            disabled={!preview || running !== null}
-            onClick={() => setConfirming(true)}
-          >
-            Commit the rollover
-          </Button>
-        </div>
-      </CardFooter>
 
       <ConfirmDialog
         open={confirming}
@@ -444,17 +424,12 @@ export function RolloverRunner({ batches, actorName }: { batches: BatchPreview[]
         body={
           <div className="space-y-3">
             <p>
-              <span className="font-semibold text-primary">{preview?.moves.count ?? 0} members</span> change status,
-              role, directory cohort and request quota in one transaction.
+              <span className="font-semibold text-primary">{preview?.moves.count ?? 0} final-year students</span> become
+              alumni in one step: their status, role, place in the directory and request limit all change.
             </p>
             <p>
-              <span className="font-semibold text-primary">There is no undo inside the product.</span> Reversing a
-              rollover means restoring the database to a point before it ran, which loses everything else that happened
-              in between. Type the phrase to confirm the batch year is the one you meant.
-            </p>
-            <p>
-              One entry is written to <span className="font-mono">audit_log</span> — actor, batch, count, and the
-              per-member before and after snapshots.
+              <span className="font-semibold text-primary">There is no undo inside the portal.</span> Type the phrase to
+              confirm the batch year is the one you meant.
             </p>
           </div>
         }

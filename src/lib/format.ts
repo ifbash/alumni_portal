@@ -1,4 +1,4 @@
-import { SEED_NOW } from './data/seed';
+import { SEED_NOW } from './clock';
 
 /**
  * Formatting.
@@ -36,12 +36,15 @@ export function formatCurrency(amount: number, opts: FormatOpts = {}): string {
  * conversation about them. Showing ₹14,18,500 on a progress bar is
  * correct and unreadable; showing ₹14.19 L is what the committee says
  * out loud.
+ *
+ * Below one lakh the full figure is shorter than any abbreviation and is
+ * what people say: "₹2,000", never "₹2.0K", which is a Western unit
+ * nobody quotes a gift in.
  */
 export function formatCompactINR(amount: number): string {
   if (amount >= 10000000) return `₹${(amount / 10000000).toFixed(2)} Cr`;
   if (amount >= 100000) return `₹${(amount / 100000).toFixed(2)} L`;
-  if (amount >= 1000) return `₹${(amount / 1000).toFixed(1)}K`;
-  return `₹${amount}`;
+  return formatCurrency(amount);
 }
 
 export function formatDate(iso: string | Date | null | undefined, opts: FormatOpts = {}): string {
@@ -90,7 +93,7 @@ export function formatRelative(iso: string | Date | null | undefined, opts: Form
   if (Number.isNaN(d.getTime())) return '—';
 
   const rtf = new Intl.RelativeTimeFormat(opts.locale ?? DEFAULTS.locale, { numeric: 'auto' });
-  const diffMs = d.getTime() - SEED_NOW.getTime();
+  const diffMs = d.getTime() - displayNow().getTime();
   const abs = Math.abs(diffMs);
 
   const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
@@ -119,6 +122,16 @@ export function formatDateRange(startIso: string, endIso: string | null, opts: F
   return sameDay
     ? `${formatDate(start, opts)}, ${formatTime(start, opts)} – ${formatTime(end, opts)}`
     : `${formatDateTime(start, opts)} – ${formatDateTime(end, opts)}`;
+}
+
+/**
+ * The calendar year in the tenant's time zone. Just after midnight on
+ * 1 January in Vijayawada, a UTC server is still in the old year for
+ * another five and a half hours; a batch list keyed on "this year" must
+ * not be.
+ */
+export function yearIn(timeZone: string, at: Date = new Date()): number {
+  return Number(new Intl.DateTimeFormat('en-IN', { year: 'numeric', timeZone }).format(at));
 }
 
 export function formatPercent(fraction: number, digits = 0): string {
@@ -162,8 +175,71 @@ export function initials(name: string): string {
 /** Ordinal batch label — "Batch of 2017 · 9 years out". */
 export function yearsOut(batchYear: number | null): string | null {
   if (!batchYear) return null;
-  const years = SEED_NOW.getFullYear() - batchYear;
+  const years = yearIn(DEFAULTS.timeZone, displayNow()) - batchYear;
   if (years < 0) return 'graduating soon';
   if (years === 0) return 'graduated this year';
   return `${years} year${years === 1 ? '' : 's'} out`;
+}
+
+// ---------------------------------------------------------------
+// The clock the UI reads
+// ---------------------------------------------------------------
+
+/**
+ * "Now", as every screen should read it.
+ *
+ * The fixture clock today, so a seeded demo says "in 11 days" on every
+ * visit. This is the one place to change when the portal reads the real
+ * clock. Never call `new Date()` or `Date.now()` during render instead:
+ * the server and the browser disagree by the time the page hydrates, and
+ * the fixture data is dated against this instant, not the wall clock.
+ */
+export function displayNow(): Date {
+  return new Date(SEED_NOW.getTime());
+}
+
+/**
+ * The short name of a time zone, as a reader expects it: "IST" for
+ * Asia/Kolkata. Falls back to the zone id when the runtime has no short
+ * name for it, which is still better than a bare offset nobody reads.
+ */
+export function formatTimeZoneLabel(timeZone: string, locale: string = DEFAULTS.locale): string {
+  try {
+    const part = new Intl.DateTimeFormat(locale, { timeZone, timeZoneName: 'short' })
+      .formatToParts(displayNow())
+      .find((p) => p.type === 'timeZoneName');
+    return part?.value ?? timeZone;
+  } catch {
+    return timeZone;
+  }
+}
+
+/** Days since 1970-01-01 of the calendar date `d` falls on in `timeZone`. */
+function calendarDay(d: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone,
+  }).formatToParts(d);
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  return Math.round(Date.UTC(get('year'), get('month') - 1, get('day')) / 86400000);
+}
+
+/**
+ * Whole calendar days from today to `iso`, in the tenant's time zone.
+ * 0 is today, 1 tomorrow, -1 yesterday. Calendar days rather than 24-hour
+ * spans: a deadline at 9 am tomorrow is "1 day" away at 11 pm tonight.
+ */
+export function daysUntil(iso: string | Date, timeZone: string = DEFAULTS.timeZone): number {
+  const d = typeof iso === 'string' ? new Date(iso) : iso;
+  return calendarDay(d, timeZone) - calendarDay(displayNow(), timeZone);
+}
+
+/** Which heading a dated item sits under in a feed. Future dates count as today. */
+export function dayBucket(iso: string | Date, timeZone: string = DEFAULTS.timeZone): 'today' | 'yesterday' | 'earlier' {
+  const diff = daysUntil(iso, timeZone);
+  if (diff >= 0) return 'today';
+  if (diff === -1) return 'yesterday';
+  return 'earlier';
 }

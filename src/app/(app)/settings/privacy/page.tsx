@@ -1,17 +1,11 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { Check, Clock, Eye, Lock, ScrollText, ShieldCheck, X } from 'lucide-react';
+import { Check, Clock, Eye, Lock, X } from 'lucide-react';
 import {
-  Alert,
   Badge,
-  Card,
-  CardBody,
-  CardDescription,
-  CardHeader,
-  CardTitle,
   DefinitionCard,
-  Section,
+  Disclosure,
   Table,
   TableWrap,
   TBody,
@@ -21,27 +15,29 @@ import {
   TR,
 } from '@/components/ui';
 import { getSession } from '@/lib/auth/session';
-import { requireSession } from '@/lib/auth/guard';
+import { requireSession, can, type Session } from '@/lib/auth/guard';
 import { getNotifications, getOwnProfile } from '@/lib/data/repo';
 import { roleHas, type Role } from '@/lib/auth/permissions';
+import { releaseContact } from '@/lib/members/projection';
+import { getTenantBrand } from '@/lib/tenant';
+import { isVendorOnlySession } from '@/lib/navigation';
 import { NOTICE_VERSION } from '@/lib/config';
 import { formatDate } from '@/lib/format';
+import { capitalise, vendorLabel } from '@/lib/branding/copy';
+import { visibilityOption } from '@/lib/visibility-copy';
 import type { ContactVisibility } from '@/lib/data/types';
-import { VisibilityForm } from './VisibilityForm';
+import { VisibilityForm, type Matrices, type MatrixCell, type MatrixRow } from './VisibilityForm';
 
 /**
- * Privacy — the DPDP surface.
+ * Privacy — the member's half of contact release.
  *
- * Two things are being demonstrated here, and they are the product's
- * differentiators against every portal a college has been shown before:
- *
- *  1. **Consent is a setting the member holds**, with the consequence of
- *     each option written next to it in words a 2014 graduate can act on.
- *     "Contact visibility: on_accept" is a database value, not a choice.
- *  2. **The role table is derived from the capability matrix**, not
- *     written by hand. It cannot drift away from what the code enforces,
- *     because it is reading the same grants `can()` reads. Telling a
- *     member what staff can see, truthfully, is the part everyone skips.
+ * The setting is four options in plain words, with what each one does
+ * written next to it. Under it, "Who can see what" is not written by hand:
+ * the page runs `releaseContact()` from `src/lib/members/projection.ts`
+ * against a viewer of each kind, for each of the four options, so the
+ * matrix follows the option being chosen and cannot drift from what the
+ * directory actually releases. The per-role table in the disclosure is
+ * read from the same capability grants `can()` reads.
  */
 
 export const metadata: Metadata = {
@@ -49,6 +45,11 @@ export const metadata: Metadata = {
 };
 
 type Access = 'yes' | 'no' | 'on_accept' | 'never';
+
+const OPTIONS: ContactVisibility[] = ['private', 'on_accept', 'alumni_only', 'all_members'];
+
+/** A stand-in contact, so the matrix measures the rule rather than which fields happen to be filled. */
+const PROBE = { email: 'probe', mobile: 'probe', linkedin: 'probe', github: 'probe', portfolio: 'probe' };
 
 export default async function PrivacySettingsPage() {
   const session = await getSession();
@@ -115,215 +116,231 @@ export default async function PrivacySettingsPage() {
     messages: 'never' as Access,
   }));
 
+  const resolved = await getTenantBrand();
+  if (!resolved) notFound();
+  const pack = resolved.brand.pack;
+  const office = pack.copy.officeName;
+  const editable = can(session, 'profile.write.own');
+  const vendorOnly = isVendorOnlySession(session);
+
+  // ---- Contact release, run rather than described ---------------------
+
+  const ownerCanReceive = can(session, 'connection.receive');
+  const ownerCanSend = can(session, 'connection.send');
+
+  const viewerFor = (role: Role): Session => ({
+    memberId: `privacy:${role}`,
+    tenantId: session.tenantId,
+    status: role === 'student' ? 'active_student' : 'active_alumni',
+    roles: [{ role, departmentId: null }],
+    departmentId: null,
+    batchYear: null,
+  });
+
+  /** Could these two ever hold an accepted request between them? */
+  const connectable = (viewer: Session): boolean =>
+    pack.features.connections &&
+    ((can(viewer, 'connection.send') && ownerCanReceive) ||
+      (ownerCanSend && can(viewer, 'connection.receive')));
+
+  const release = (role: Role, option: ContactVisibility): { email: MatrixCell; mobile: MatrixCell } => {
+    const viewer = viewerFor(role);
+    const owner = { memberId: session.memberId, contact: { ...PROBE, visibility: option } };
+    const now = releaseContact(viewer, owner, { hasAcceptedConnection: false });
+    const onAccept = connectable(viewer)
+      ? releaseContact(viewer, owner, { hasAcceptedConnection: true })
+      : null;
+    const cell = (field: 'email' | 'mobile'): MatrixCell =>
+      now?.[field] ? 'yes' : onAccept?.[field] ? 'on_accept' : 'no';
+    return { email: cell('email'), mobile: cell('mobile') };
+  };
+
+  const reach = (role: Role, option: ContactVisibility): Omit<MatrixRow, 'key' | 'label'> => {
+    const profileCell: MatrixCell = seesProfile(role) ? 'yes' : 'no';
+    if (profileCell === 'no') return { profile: 'no', email: 'no', mobile: 'no' };
+    return { profile: profileCell, ...release(role, option) };
+  };
+
+  const same = (a: Omit<MatrixRow, 'key' | 'label'>, b: Omit<MatrixRow, 'key' | 'label'>) =>
+    a.profile === b.profile && a.email === b.email && a.mobile === b.mobile;
+
+  const matrices = Object.fromEntries(
+    OPTIONS.map((option) => {
+      const alumni = reach('alumni', option);
+      const faculty = reach('faculty', option);
+      const matrix: MatrixRow[] = [
+        { key: 'student', label: 'Final-year students', ...reach('student', option) },
+        ...(same(alumni, faculty)
+          ? [{ key: 'members', label: 'Alumni and faculty', ...alumni }]
+          : [
+              { key: 'alumni', label: 'Alumni', ...alumni },
+              { key: 'faculty', label: 'Faculty', ...faculty },
+            ]),
+        { key: 'office', label: capitalise(office), ...reach('alumni_cell_operator', option) },
+        { key: 'admin', label: 'College admin', ...reach('college_admin', option) },
+      ];
+      return [option, matrix];
+    }),
+  ) as Matrices;
+
+  // The per-role table below reads its email and mobile columns from the
+  // same run, so the two views on this page can never disagree.
+  const saved = Object.fromEntries(
+    ROLE_ROWS.map((r) => [r.role, seesProfile(r.role) ? release(r.role, visibility) : null]),
+  ) as Record<Role, { email: MatrixCell; mobile: MatrixCell } | null>;
+  const releasedAccess = (role: Role, field: 'email' | 'mobile'): Access => saved[role]?.[field] ?? 'no';
+
+  const roleLabel = (role: Role, label: string) =>
+    role === 'platform_admin'
+      ? `Platform admin (${vendorLabel(pack.copy)})`
+      : role === 'alumni_cell_operator'
+        ? `${capitalise(office)} staff`
+        : label;
+
   // ---- Consent records ------------------------------------------------
 
   const noticeUpdate = getNotifications(session).find(
     (n) => n.kind === 'system' && n.title.toLowerCase().includes('privacy notice'),
   );
 
+  const current = visibilityOption(visibility);
+
   return (
     <>
-      {/* ---- The setting ----------------------------------------------- */}
+      <VisibilityForm
+        initial={visibility}
+        matrices={matrices}
+        readOnly={!editable}
+        officeName={office}
+        ownerIsStudent={isStudent}
+      />
 
-      <Section
-        title="Who can reach you"
-        description="Your contact details live in a separate table from your profile. Releasing them needs two things to be true at once: the person asking must be entitled, and you must have agreed. This setting is your half."
-      >
-        <Alert tone="info" title={`Right now: ${SUMMARY[visibility].title}`} icon={<ShieldCheck className="size-4" />}>
-          {SUMMARY[visibility].body}
-        </Alert>
-
-        <Card>
-          <CardBody>
-            <VisibilityForm initial={visibility} />
-          </CardBody>
-        </Card>
-      </Section>
-
-      {/* ---- The truth table -------------------------------------------- */}
-
-      <Section
-        title="What each role can see about you"
-        description="Read from the college's capability matrix at the moment this page loaded — not a summary somebody typed once and forgot to update."
-      >
-        <TableWrap
-          caption="What each role at the college can see about your record"
-          className="hidden sm:block"
-        >
-          <Table>
-            <caption className="sr-only">
-              Roles down the side, the data they can reach across the top.
-            </caption>
-            <THead>
-              <TR>
-                <TH className="min-w-44">Role</TH>
-                <TH>Name, branch, batch</TH>
-                <TH>Bio, skills, employer</TH>
-                <TH>Email</TH>
-                <TH>Mobile</TH>
-                {isStudent ? <TH>CGPA, placement</TH> : null}
-                <TH>Your message text</TH>
-              </TR>
-            </THead>
-            <TBody>
-              {rows.map((r) => (
-                <TR key={r.role}>
-                  <TH scope="row" className="text-left font-semibold normal-case tracking-normal text-primary">
-                    {r.label}
-                    {r.note ? (
-                      <span className="block text-xs font-normal normal-case text-muted">
-                        {r.note}
-                      </span>
-                    ) : null}
-                  </TH>
-                  <TD>
-                    <AccessCell value={r.identity} />
-                  </TD>
-                  <TD>
-                    <AccessCell value={r.detail} />
-                  </TD>
-                  <TD>
-                    <AccessCell value={r.email} />
-                  </TD>
-                  <TD>
-                    <AccessCell value={r.mobile} />
-                  </TD>
-                  {isStudent ? (
-                    <TD>
-                      <AccessCell value={r.academic} />
-                    </TD>
-                  ) : null}
-                  <TD>
-                    <AccessCell value={r.messages} />
-                  </TD>
-                </TR>
-              ))}
-            </TBody>
-          </Table>
-        </TableWrap>
-
-        {/* Below sm a seven-column table is unreadable however it scrolls. */}
-        <div className="space-y-3 sm:hidden">
-          {rows.map((r) => (
-            <DefinitionCard
-              key={r.role}
-              title={r.label}
-              subtitle={r.note}
-              rows={[
-                { label: 'Name, branch, batch', value: <AccessCell value={r.identity} /> },
-                { label: 'Bio, skills, employer', value: <AccessCell value={r.detail} /> },
-                { label: 'Email', value: <AccessCell value={r.email} /> },
-                { label: 'Mobile', value: <AccessCell value={r.mobile} /> },
-                ...(isStudent
-                  ? [{ label: 'CGPA, placement', value: <AccessCell value={r.academic} /> }]
-                  : []),
-                { label: 'Your message text', value: <AccessCell value={r.messages} /> },
-              ]}
-            />
-          ))}
-        </div>
-
-        <div className="space-y-3">
-          <Alert tone="neutral" title="Three things no setting on this page changes" icon={<Lock className="size-4" />}>
-            <ul className="mt-1 list-disc space-y-1 pl-5">
-              <li>
-                <strong>Nobody reads your messages.</strong> There is no capability for it in the
-                system, for any role, deliberately — so there is no switch an administrator could
-                be persuaded to flip.
-              </li>
-              <li>
-                <strong>The college admin can export contact details in bulk</strong>, for things
-                like a NAAC submission. It is the only role that can, every export is written to the
-                audit log with who did it and why, and you can ask to see that log.
-              </li>
-              <li>
-                <strong>The directory is never public.</strong> Every viewer is a signed-in,
-                verified member of your college. Nothing here is indexed by a search engine, and
-                there is no anonymous view of it to be found.
-              </li>
-            </ul>
-          </Alert>
-
-          {!isStudent ? (
-            <p className="text-xs text-muted">
-              CGPA and placement status exist only for current students and are visible only to the
-              placement cell. They are never shown to alumni — alumni post jobs on this portal, and
-              a searchable marks list is a recruiting shortcut nobody agreed to.
+      <div className="space-y-3">
+        <Disclosure id="every-role" summary="Every role at the college, in detail">
+          <div className="space-y-3">
+            <p>
+              What each role can see about you with your saved setting,
+              {current ? ` “${current.label}”` : ''}. Someone who holds two roles gets both.
             </p>
-          ) : null}
-        </div>
-      </Section>
 
-      {/* ---- Consent history --------------------------------------------- */}
+            <TableWrap caption="What each role at the college can see about your record" className="hidden sm:block">
+              <Table>
+                <THead>
+                  <TR>
+                    <TH className="min-w-44">Role</TH>
+                    <TH>Name, branch, batch</TH>
+                    <TH>Bio, skills, employer</TH>
+                    <TH>Email</TH>
+                    <TH>Mobile</TH>
+                    {isStudent ? <TH>CGPA, placement</TH> : null}
+                    <TH>Your messages</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {rows.map((r) => (
+                    <TR key={r.role}>
+                      <TH scope="row" className="text-left font-semibold normal-case tracking-normal text-primary">
+                        {roleLabel(r.role, r.label)}
+                        {r.note ? (
+                          <span className="block text-xs font-normal normal-case text-secondary">{r.note}</span>
+                        ) : null}
+                      </TH>
+                      <TD>
+                        <AccessCell value={r.identity} />
+                      </TD>
+                      <TD>
+                        <AccessCell value={r.detail} />
+                      </TD>
+                      <TD>
+                        <AccessCell value={releasedAccess(r.role, 'email')} />
+                      </TD>
+                      <TD>
+                        <AccessCell value={releasedAccess(r.role, 'mobile')} />
+                      </TD>
+                      {isStudent ? (
+                        <TD>
+                          <AccessCell value={r.academic} />
+                        </TD>
+                      ) : null}
+                      <TD>
+                        <AccessCell value={r.messages} />
+                      </TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            </TableWrap>
 
-      <Section
-        title="Your consent record"
-        description="Append-only. Withdrawing consent adds a line; it never removes one. That is what makes the log evidence rather than a preference screen."
-      >
-        <Card>
-          <CardHeader>
-            <div className="space-y-1">
-              <CardTitle as="h3" className="text-md">
-                Notice version in force
-              </CardTitle>
-              <CardDescription>
-                Every consent is recorded against the exact notice you were shown.
-              </CardDescription>
-            </div>
-            <Badge tone="brand">
-              <ScrollText className="size-3.5" aria-hidden="true" />
-              {NOTICE_VERSION}
-            </Badge>
-          </CardHeader>
-
-          <CardBody>
-            <ol className="space-y-4">
-              {noticeUpdate ? (
-                <ConsentRow
-                  title={`Privacy notice ${NOTICE_VERSION} published`}
-                  when={noticeUpdate.createdAt}
-                  version={NOTICE_VERSION}
-                  state={
-                    noticeUpdate.readAt
-                      ? { tone: 'success', label: `Acknowledged ${formatDate(noticeUpdate.readAt)}` }
-                      : { tone: 'warning', label: 'Not acknowledged yet' }
-                  }
-                  detail="Replaces the notice you accepted at sign-up. Nothing about how your data is used changed without this line existing."
+            {/* Below sm a seven-column table is unreadable however it scrolls. */}
+            <div className="space-y-3 sm:hidden">
+              {rows.map((r) => (
+                <DefinitionCard
+                  key={r.role}
+                  title={roleLabel(r.role, r.label)}
+                  subtitle={r.note}
+                  rows={[
+                    { label: 'Name, branch, batch', value: <AccessCell value={r.identity} /> },
+                    { label: 'Bio, skills, employer', value: <AccessCell value={r.detail} /> },
+                    { label: 'Email', value: <AccessCell value={releasedAccess(r.role, 'email')} /> },
+                    { label: 'Mobile', value: <AccessCell value={releasedAccess(r.role, 'mobile')} /> },
+                    ...(isStudent
+                      ? [{ label: 'CGPA, placement', value: <AccessCell value={r.academic} /> }]
+                      : []),
+                    { label: 'Your messages', value: <AccessCell value={r.messages} /> },
+                  ]}
                 />
-              ) : null}
+              ))}
+            </div>
+          </div>
+        </Disclosure>
 
-              <ConsentRow
-                title="Contact sharing"
-                when={null}
-                version={NOTICE_VERSION}
-                state={{ tone: 'brand', label: SUMMARY[visibility].title }}
-                detail="Current setting. Changing it above appends a new record and leaves this one in place."
-              />
+        {pack.features.directory && !vendorOnly ? (
+          <p>
+            <Link href="/profile/preview" className="link inline-flex min-h-11 items-center gap-2 text-sm">
+              <Eye className="size-4" aria-hidden="true" />
+              {isStudent ? 'See what others see' : 'See it as a student sees it'}
+            </Link>
+          </p>
+        ) : null}
 
+        <Disclosure id="consent-history" summary="Your consent history">
+          <ol className="space-y-4">
+            {noticeUpdate ? (
               <ConsentRow
-                title="Directory listing"
-                when={profile.verifiedAt}
+                title={`Privacy notice ${NOTICE_VERSION}`}
+                when={noticeUpdate.createdAt}
                 version={NOTICE_VERSION}
-                state={{ tone: 'success', label: 'Given' }}
-                detail={
-                  isStudent
-                    ? 'Recorded when the placement cell added you to the portal. Your name, branch and batch are visible to alumni so they know who is asking.'
-                    : 'Recorded when your membership was verified against the degree register. Your name, branch and batch are visible to other verified members.'
+                state={
+                  noticeUpdate.readAt
+                    ? { tone: 'success', label: `Read ${formatDate(noticeUpdate.readAt)}` }
+                    : { tone: 'warning', label: 'Not read yet' }
                 }
+                detail="The notice now in force."
               />
-            </ol>
-          </CardBody>
-        </Card>
+            ) : null}
 
-        <p className="text-sm text-secondary">
-          To see the college&rsquo;s side of this — every time your record was read, exported or
-          changed by staff — ask for an access log through{' '}
-          <Link href="/settings/data" className="link">
-            your data requests
-          </Link>
-          . The college has 30 days to answer.
-        </p>
-      </Section>
+            <ConsentRow
+              title="Contact sharing"
+              when={null}
+              version={NOTICE_VERSION}
+              state={{ tone: 'brand', label: current?.label ?? 'Not chosen' }}
+              detail="Your current setting. Changing it adds a new entry and keeps this one."
+            />
+
+            <ConsentRow
+              title="Directory listing"
+              when={profile.verifiedAt}
+              version={NOTICE_VERSION}
+              state={{ tone: 'success', label: 'Given' }}
+              detail={
+                isStudent
+                  ? 'Recorded when the placement cell added you. Alumni see your name, branch and batch when you write to them.'
+                  : 'Recorded when your registration was verified. Other members see your name, branch and batch.'
+              }
+            />
+          </ol>
+        </Disclosure>
+      </div>
     </>
   );
 }
@@ -335,7 +352,7 @@ export default async function PrivacySettingsPage() {
 function AccessCell({ value }: { value: Access }) {
   if (value === 'yes') {
     return (
-      <span className="inline-flex items-center gap-1.5 text-sm">
+      <span className="inline-flex items-center gap-1.5 text-sm text-primary">
         <Eye className="size-3.5 shrink-0 text-brand-fg" aria-hidden="true" />
         Yes
       </span>
@@ -343,23 +360,23 @@ function AccessCell({ value }: { value: Access }) {
   }
   if (value === 'on_accept') {
     return (
-      <span className="inline-flex items-center gap-1.5 text-sm text-warning-fg">
-        <Clock className="size-3.5 shrink-0" aria-hidden="true" />
-        Only if you accept
+      <span className="inline-flex items-center gap-1.5 text-sm text-primary">
+        <Clock className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
+        If you accept
       </span>
     );
   }
   if (value === 'never') {
     return (
-      <span className="inline-flex items-center gap-1.5 text-sm font-medium">
+      <span className="inline-flex items-center gap-1.5 text-sm font-medium text-primary">
         <Lock className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
         Never
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5 text-sm text-muted">
-      <X className="size-3.5 shrink-0" aria-hidden="true" />
+    <span className="inline-flex items-center gap-1.5 text-sm text-secondary">
+      <X className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
       No
     </span>
   );
@@ -381,18 +398,18 @@ function ConsentRow({
   return (
     <li className="flex gap-3 border-b border-line pb-4 last:border-0 last:pb-0">
       <span
-        className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full bg-surface-sunken text-muted"
+        className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full bg-surface-sunken text-secondary"
         aria-hidden="true"
       >
         <Check className="size-4" />
       </span>
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex flex-wrap items-center gap-2">
-          <p className="text-sm font-semibold">{title}</p>
+          <p className="text-sm font-semibold text-primary">{title}</p>
           <Badge tone={state.tone}>{state.label}</Badge>
         </div>
         <p className="text-sm text-secondary">{detail}</p>
-        <p className="text-xs text-muted">
+        <p className="text-xs text-secondary">
           {when ? formatDate(when) : 'Current'} · notice {version}
         </p>
       </div>
@@ -404,25 +421,6 @@ function ConsentRow({
 // Copy
 // ---------------------------------------------------------------
 
-const SUMMARY: Record<ContactVisibility, { title: string; body: string }> = {
-  private: {
-    title: 'Nobody sees your contact details',
-    body: 'No member can see your email or mobile through the portal. People can still send you a connection request, and you can reply from your own inbox if you want to.',
-  },
-  on_accept: {
-    title: 'Released only when you accept a request',
-    body: 'Someone who asks sees a masked address and a note explaining that release is your decision, not a restriction the college applied to them. Accepting releases your email and mobile to that one person.',
-  },
-  alumni_only: {
-    title: 'Alumni and faculty only',
-    body: 'Alumni and faculty can see your email and mobile without asking. Students cannot — this setting is the reason they are told to send a request instead.',
-  },
-  all_members: {
-    title: 'Every verified member',
-    body: 'Any signed-in, verified member of the portal — students included — can see your email. Your mobile number stays out of the directory regardless.',
-  },
-};
-
 const ROLE_ROWS: Array<{ role: Role; label: string; note?: string }> = [
   { role: 'student', label: 'Final-year students' },
   { role: 'alumni', label: 'Other alumni' },
@@ -430,23 +428,23 @@ const ROLE_ROWS: Array<{ role: Role; label: string; note?: string }> = [
   {
     role: 'hod',
     label: 'Head of department',
-    note: 'Verification and communications are scoped to their own branch; reading a profile is not.',
+    note: 'Reviews registrations and messages for their own branch.',
   },
   {
     role: 'placement_officer',
     label: 'Placement officer',
-    note: 'Student-side role. Sees current students, not the alumni directory.',
+    note: 'Works with current students.',
   },
-  { role: 'alumni_cell_operator', label: 'Alumni cell staff', note: 'Cannot export in bulk, by design.' },
-  { role: 'finance', label: 'Finance', note: 'Donations and reconciliation only. No directory access at all.' },
+  { role: 'alumni_cell_operator', label: 'Office staff', note: 'Cannot export contact details.' },
+  { role: 'finance', label: 'Finance', note: 'Donations only. No directory access.' },
   {
     role: 'college_admin',
     label: 'College admin',
-    note: 'The only role that can export contact details in bulk. Every export is audit-logged with a reason.',
+    note: 'The only role that can export contact details, with a written reason that is logged.',
   },
   {
     role: 'platform_admin',
-    label: 'Platform admin (ifBash)',
-    note: 'Provisions colleges. Deliberately holds no capability that reads member data.',
+    label: 'Platform admin',
+    note: 'Sets up the portal for the college. Cannot see member data.',
   },
 ];

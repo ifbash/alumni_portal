@@ -2,53 +2,30 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { notFound, redirect } from 'next/navigation';
-import {
-  Clock,
-  Cookie,
-  KeyRound,
-  Laptop,
-  Lock,
-  LogOut,
-  Mail,
-  MonitorSmartphone,
-  ShieldAlert,
-  ShieldCheck,
-} from 'lucide-react';
-import {
-  Alert,
-  Badge,
-  ButtonLink,
-  Card,
-  CardBody,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  DetailRow,
-  Section,
-} from '@/components/ui';
+import { KeyRound, LogOut, ShieldAlert } from 'lucide-react';
+import { ButtonLink, Card, CardBody, CardTitle, Disclosure } from '@/components/ui';
 import { getSession } from '@/lib/auth/session';
 import { requireSession } from '@/lib/auth/guard';
 import { getOwnProfile } from '@/lib/data/repo';
 import { getTenantBrand } from '@/lib/tenant';
-import { ROLE_LABELS } from '@/lib/navigation';
 import { SESSION_COOKIE, OTP_TTL_SECONDS, OTP_MAX_ATTEMPTS } from '@/lib/config';
 import { formatDateTime } from '@/lib/format';
+import { vendorLabel } from '@/lib/branding/copy';
 
 /**
  * Security.
  *
  * The page's only job is to be accurate. A security screen that describes
- * protections the product does not have is worse than no security screen,
- * because it is the one page a cautious member will quote back at the
- * college later.
+ * protections the product does not have is worse than none, because it is
+ * the one page a cautious member will quote back at the college later.
  *
- * So: there is no per-device session list, and this page says so and
- * explains why rather than rendering a plausible-looking table of
- * "Chrome on Windows · Vijayawada". The session is a self-contained signed
- * cookie; the server keeps no record of the ones it has issued, which is
- * exactly why there is nothing to enumerate and nothing to revoke one at a
- * time. What *does* work — suspending the account, which strips every
- * capability on the next request on every device — is stated in its place.
+ * So there is no per-device session list, and the page does not draw a
+ * device list with places on it. The session is a self-contained signed
+ * cookie; the server keeps no record of the ones it has issued, so there
+ * is nothing to enumerate and nothing to revoke one at a time. What does
+ * work, suspending the account, is what the page points at. How the
+ * cookie and the code are protected is kept in one disclosure for anyone
+ * who asks.
  */
 
 export const metadata: Metadata = {
@@ -100,375 +77,152 @@ export default async function SecuritySettingsPage() {
   const timing = pack ? { locale: pack.locale.locale, timeZone: pack.locale.timeZone } : {};
   const supportEmail = pack?.copy.supportEmail ?? null;
   const supportPhone = pack?.copy.supportPhone ?? null;
+  const office = pack?.copy.officeName ?? 'alumni cell';
+  const shortName = pack?.copy.shortName ?? 'the college';
+  const vendor = pack ? vendorLabel(pack.copy) : 'the portal provider';
 
   const issued = await issuedAt();
   const expires = issued ? new Date(issued.getTime() + SESSION_DAYS * 86400000) : null;
 
   const otpMinutes = Math.round(OTP_TTL_SECONDS / 60);
+  const email = profile.contact?.email ?? null;
 
   return (
-    <>
-      {/* ---- This session ------------------------------------------------ */}
+    <div className="grid grid-cols-1 items-start gap-gutter xl:grid-cols-2">
+      {/* ---- 1. This device -------------------------------------------- */}
 
-      <Section
-        title="This session"
-        description="One browser on one device. Everything below describes the cookie sitting in the browser you are reading this in."
-      >
+      <Card>
+        <CardBody className="space-y-4">
+          <CardTitle as="h2">This device</CardTitle>
+          <dl className="divide-y divide-line border-y border-line text-sm">
+            <Row label="Signed in as">
+              <span className="font-medium">{profile.fullName}</span>
+              {email ? <span className="block break-all text-secondary">{email}</span> : null}
+            </Row>
+            <Row label="Since">
+              {issued ? formatDateTime(issued, timing) : <span className="text-secondary">Not known</span>}
+            </Row>
+            <Row label="Expires">
+              {expires ? (
+                <>
+                  {formatDateTime(expires, timing)}
+                  <span className="block text-xs text-secondary">
+                    {SESSION_DAYS} days after you signed in, however much you use it.
+                  </span>
+                </>
+              ) : (
+                <span className="text-secondary">Not known</span>
+              )}
+            </Row>
+          </dl>
+          <div className="flex flex-wrap items-center gap-3">
+            <ButtonLink href="/logout" prefetch={false} variant="secondary" className="min-h-11">
+              <LogOut className="size-4" aria-hidden="true" />
+              Sign out
+            </ButtonLink>
+            <p className="text-xs text-secondary">Signs out this browser only.</p>
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* ---- 2 and 4. How you sign in, and the code --------------------- */}
+
+      <div className="space-y-gutter">
         <Card>
-          <CardHeader>
+          <CardBody className="space-y-2">
+            <CardTitle as="h2" className="text-md">
+              How you sign in
+            </CardTitle>
+            <p className="text-sm text-secondary">
+              With a one-time code sent to {email ? <span className="font-medium text-primary">{email}</span> : 'your email'}.
+              There is no password, and your mobile number cannot be used to sign in.
+            </p>
+          </CardBody>
+        </Card>
+
+        <Card className="border-l-4 border-l-warning">
+          <CardBody className="flex gap-3">
+            <KeyRound className="mt-0.5 size-5 shrink-0 text-warning-fg" aria-hidden="true" />
             <div className="space-y-1">
-              <CardTitle as="h3" className="text-md">
-                Signed in as {profile.fullName}
+              <CardTitle as="h2" className="text-md">
+                Never share your code
               </CardTitle>
-              <CardDescription>
-                Started when you entered a one-time code. It ends when you sign out, or {SESSION_DAYS}{' '}
-                days after it started — whichever comes first.
-              </CardDescription>
-            </div>
-            <Laptop className="size-5 shrink-0 text-muted" aria-hidden="true" />
-          </CardHeader>
-
-          <CardBody className="space-y-4">
-            <dl className="divide-y divide-line">
-              <DetailRow label="Account">
-                <span className="font-mono">{profile.contact?.email ?? '—'}</span>
-              </DetailRow>
-              <DetailRow label="Signed in">
-                {issued ? (
-                  formatDateTime(issued, timing)
-                ) : (
-                  <span className="text-muted">
-                    Not readable — the cookie is present but its issue time could not be decoded.
-                  </span>
-                )}
-              </DetailRow>
-              <DetailRow label="Expires">
-                {expires ? (
-                  <span className="flex flex-wrap items-baseline gap-x-2">
-                    <span>{formatDateTime(expires, timing)}</span>
-                    <span className="text-xs text-muted">
-                      {SESSION_DAYS} days from sign-in. It is not extended by using the portal.
-                    </span>
-                  </span>
-                ) : (
-                  <span className="text-muted">Unknown</span>
-                )}
-              </DetailRow>
-              <DetailRow label="Roles in force">
-                <span className="flex flex-wrap items-center gap-1.5">
-                  {profile.roles.map((r) => (
-                    <Badge key={`${r.role}-${r.departmentCode ?? 'all'}`} tone="brand">
-                      {ROLE_LABELS[r.role] ?? r.role}
-                      {r.departmentCode ? ` · ${r.departmentCode}` : ''}
-                    </Badge>
-                  ))}
-                </span>
-              </DetailRow>
-            </dl>
-
-            <Alert tone="neutral" title="Your roles are re-read on every request" icon={<Clock className="size-4" />}>
-              They are not stored in the cookie. If the college grants or removes a role, the change
-              takes effect on your next page load rather than whenever your cookie happens to
-              expire — which is also why a revoked role cannot be kept alive by staying signed in.
-            </Alert>
-
-            <div className="flex flex-wrap items-center gap-3 border-t border-line pt-4">
-              <ButtonLink href="/logout" variant="secondary" size="sm">
-                <LogOut className="size-4" aria-hidden="true" />
-                Sign out
-              </ButtonLink>
-              <p className="text-xs text-muted">
-                Clears the cookie in this browser and sends you to the public page. Other devices are
-                unaffected — see below.
+              <p className="text-sm text-secondary">
+                Nobody from {shortName} or {vendor} will ever ask for it. Type it only into the
+                sign-in page you opened yourself.
               </p>
             </div>
           </CardBody>
         </Card>
-      </Section>
+      </div>
 
-      {/* ---- Credential -------------------------------------------------- */}
+      {/* ---- 3. If something looks wrong --------------------------------- */}
 
-      <Section
-        title="Your credential"
-        description="There is one, it arrives by email, and it works once."
-      >
-        <Card>
-          <CardHeader>
-            <div className="space-y-1">
-              <CardTitle as="h3" className="text-md">
-                Email one-time code
-              </CardTitle>
-              <CardDescription>
-                No password exists on this portal for anybody, at any role. There is nothing to
-                reuse from another site, nothing to leak in a breach, and nothing an attacker can
-                phish out of you that is still valid a minute later.
-              </CardDescription>
-            </div>
-            <KeyRound className="size-5 shrink-0 text-muted" aria-hidden="true" />
-          </CardHeader>
-
-          <CardBody className="space-y-4">
-            <dl className="divide-y divide-line">
-              <DetailRow label="Code lifetime">
-                {otpMinutes} minutes from the moment it is sent
-              </DetailRow>
-              <DetailRow label="Reuse">
-                <span className="flex flex-wrap items-baseline gap-x-2">
-                  <span>Single use</span>
-                  <span className="text-xs text-muted">
-                    The code is deleted the instant it is accepted. A code that still works after
-                    you have signed in is a code that works for whoever else read the message.
-                  </span>
-                </span>
-              </DetailRow>
-              <DetailRow label="Wrong guesses">
-                {OTP_MAX_ATTEMPTS} attempts, then that code is dead and a fresh one must be
-                requested
-              </DetailRow>
-              <DetailRow label="Asking again">
-                A new code replaces the previous one. Only the newest code in your inbox works.
-              </DetailRow>
-              <DetailRow label="Storage">
-                <span className="flex flex-wrap items-baseline gap-x-2">
-                  <span>Hashed</span>
-                  <span className="text-xs text-muted">
-                    The portal keeps a keyed hash of the code, never the digits, and compares in
-                    constant time.
-                  </span>
-                </span>
-              </DetailRow>
-              <DetailRow label="Rate limiting">
-                <span className="flex flex-wrap items-baseline gap-x-2">
-                  <span>By email address and by network address</span>
-                  <span className="text-xs text-muted">
-                    By email alone, one attacker walks the whole member list from a single machine.
-                    By address alone, a shared college lab locks out an entire batch at once.
-                  </span>
-                </span>
-              </DetailRow>
-            </dl>
-
-            <Alert tone="info" title="Your mobile number is not a way in" icon={<Lock className="size-4" />}>
-              It is captured for account recovery
-              {pack?.features.whatsapp ? ' and for WhatsApp reminders' : ''}, and it is never a
-              sign-in credential. Nobody who has your phone can sign in as you with it, and a SIM
-              swap does not reach this account.{' '}
-              <Link href="/settings" className="link">
-                Manage your number
-              </Link>
-              .
-            </Alert>
-
-            <p className="text-xs text-muted">
-              Because the code goes to your email, your email account is the real key to this
-              portal. Whatever protection that account has is the protection this one has.
-            </p>
-          </CardBody>
-        </Card>
-      </Section>
-
-      {/* ---- The cookie -------------------------------------------------- */}
-
-      <Section
-        title="What the session cookie holds"
-        description="Worth reading once. It is short, and it explains most of what this page can and cannot offer you."
-      >
-        <Card>
-          <CardHeader>
-            <div className="space-y-1">
-              <CardTitle as="h3" className="text-md">
-                A member id, a college id, and the time it was issued
-              </CardTitle>
-              <CardDescription>
-                That is the whole payload. It carries nothing secret, which is why it is signed
-                rather than encrypted — the signature stops somebody editing the member id to
-                another person&rsquo;s, and there is nothing inside worth hiding from the browser
-                that holds it.
-              </CardDescription>
-            </div>
-            <Cookie className="size-5 shrink-0 text-muted" aria-hidden="true" />
-          </CardHeader>
-
-          <CardBody className="space-y-4">
-            <dl className="divide-y divide-line">
-              <DetailRow label="HttpOnly">
-                <span className="flex flex-wrap items-baseline gap-x-2">
-                  <span>On</span>
-                  <span className="text-xs text-muted">
-                    JavaScript on the page cannot read it. A token readable by script is a token
-                    that leaves with the first cross-site scripting bug.
-                  </span>
-                </span>
-              </DetailRow>
-              <DetailRow label="SameSite">
-                <span className="flex flex-wrap items-baseline gap-x-2">
-                  <span className="font-mono">Lax</span>
-                  <span className="text-xs text-muted">
-                    Another site cannot make your browser perform an action here while you happen to
-                    be signed in.
-                  </span>
-                </span>
-              </DetailRow>
-              <DetailRow label="Secure">
-                <span className="flex flex-wrap items-baseline gap-x-2">
-                  <span>On in production</span>
-                  <span className="text-xs text-muted">
-                    Sent over HTTPS only, so it cannot be read off college Wi-Fi.
-                  </span>
-                </span>
-              </DetailRow>
-              <DetailRow label="Roles and permissions">
-                <span className="flex flex-wrap items-baseline gap-x-2">
-                  <span>Not in the cookie</span>
-                  <span className="text-xs text-muted">
-                    Resolved from your member record on every single request.
-                  </span>
-                </span>
-              </DetailRow>
-              <DetailRow label="Signature">
-                <span className="flex flex-wrap items-baseline gap-x-2">
-                  <span>HMAC-SHA256, compared in constant time</span>
-                  <span className="text-xs text-muted">
-                    A length-sensitive comparison on a signature is a timing oracle, and forging a
-                    session is the whole game.
-                  </span>
-                </span>
-              </DetailRow>
-              <DetailRow label="Lifetime">{SESSION_DAYS} days, not renewed by activity</DetailRow>
-            </dl>
-          </CardBody>
-        </Card>
-      </Section>
-
-      {/* ---- The gap ----------------------------------------------------- */}
-
-      <Section
-        title="Signed-in devices"
-        description="This is the one thing on this page the portal does not do, and it is better said plainly than dressed up."
-      >
-        <Card>
-          <CardHeader>
-            <div className="space-y-1">
-              <CardTitle as="h3" className="text-md">
-                There is no device list, and there is no way to sign out one device from another
-              </CardTitle>
-              <CardDescription>
-                Not hidden behind a role, not coming in a later release you are waiting on — it does
-                not exist today.
-              </CardDescription>
-            </div>
-            <MonitorSmartphone className="size-5 shrink-0 text-muted" aria-hidden="true" />
-          </CardHeader>
-
-          <CardBody className="space-y-4">
-            <p className="max-w-prose text-sm text-secondary">
-              The reason is the design above. The session is a self-contained signed cookie: the
-              server can check that one is genuine without keeping any record that it was issued.
-              That makes sign-in fast and stateless, and it means there is no list of your sessions
-              anywhere to show you — and equally nothing to switch off one at a time. Any screen
-              here claiming &ldquo;Chrome on Windows, Vijayawada, active now&rdquo; would be reading
-              a table that does not exist.
-            </p>
-
-            <div className="space-y-3">
-              <h4 className="text-sm font-semibold">What follows from that, in practice</h4>
-              <ul className="space-y-2.5 text-sm">
-                <Consequence icon={<LogOut className="size-4" />} title="Signing out is per device">
-                  It deletes the cookie in the browser you are using. A session you left open in the
-                  college lab stays open until it expires or somebody signs out there.
-                </Consequence>
-                <Consequence
-                  icon={<Clock className="size-4" />}
-                  title="A lost device stays signed in until its own cookie expires"
-                >
-                  Up to {SESSION_DAYS} days from the moment that session started. Every device
-                  carries its own clock:{' '}
-                  {expires
-                    ? `this one runs out on ${formatDateTime(expires, timing)}, and a session started on another device runs out ${SESSION_DAYS} days after it began.`
-                    : `each runs out ${SESSION_DAYS} days after it began.`}
-                </Consequence>
-                <Consequence
-                  icon={<ShieldCheck className="size-4" />}
-                  title="Suspending the account does work, everywhere, immediately"
-                >
-                  Your status and roles are read from the member record on every request. If the
-                  alumni cell moves the account out of active status, the cookie still decodes but
-                  it stops authorising anything — on every device, on the next page load. That is
-                  the lever to reach for, and it is the one this page can honestly point you at.
-                </Consequence>
-              </ul>
-            </div>
-
-            <p className="border-t border-line pt-4 text-xs text-muted">
-              Closing the gap properly means a server-side session record — one row per sign-in with
-              its own id in the cookie — so each device can be named, dated and revoked on its own.
-              That is a change to how sessions are stored, not a screen someone forgot to build, and
-              until it is made this page will keep saying so.
-            </p>
-          </CardBody>
-        </Card>
-      </Section>
-
-      {/* ---- If something is wrong --------------------------------------- */}
-
-      <Section title="If you think someone else has your account">
-        <Card>
-          <CardHeader>
-            <div className="space-y-1">
-              <CardTitle as="h3" className="text-md">
-                Three things, in this order
-              </CardTitle>
-              <CardDescription>
-                There is no password to change, so the usual first step does not apply here.
-              </CardDescription>
-            </div>
-            <ShieldAlert className="size-5 shrink-0 text-warning-fg" aria-hidden="true" />
-          </CardHeader>
-
-          <CardBody className="space-y-4">
-            <ol className="space-y-3 text-sm">
-              <Step n={1} title="Secure your email account first">
-                Every sign-in code goes there. Until that inbox is safe, nothing done on this portal
-                will hold — and check whether a forwarding rule has been added to it.
-              </Step>
-              <Step n={2} title="Tell the alumni cell">
-                Ask them to suspend the account. It takes effect on the next request from every
-                device.{' '}
-                {supportEmail ? (
-                  <a href={`mailto:${supportEmail}`} className="link">
-                    {supportEmail}
-                  </a>
-                ) : (
-                  'Use the contact details on your account page.'
-                )}
-                {supportPhone ? (
-                  <>
-                    {' · '}
+      <Card className="xl:col-span-2">
+        <CardBody className="space-y-4">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="size-5 shrink-0 text-muted" aria-hidden="true" />
+            <CardTitle as="h2">If something looks wrong</CardTitle>
+          </div>
+          <ol className="grid grid-cols-1 gap-4 text-sm md:grid-cols-3">
+            <Step n={1} title="Secure your email">
+              Every sign-in code goes there. Change its password and check it forwards nothing.
+            </Step>
+            <Step n={2} title={`Tell the ${office}`}>
+              Ask them to suspend your account. It stops working on every device at once.
+              {supportEmail || supportPhone ? (
+                <span className="mt-1 block">
+                  {supportEmail ? (
+                    <a href={`mailto:${supportEmail}`} className="link break-all">
+                      {supportEmail}
+                    </a>
+                  ) : null}
+                  {supportEmail && supportPhone ? ' · ' : null}
+                  {supportPhone ? (
                     <a href={`tel:${supportPhone.replace(/\s/g, '')}`} className="link">
                       {supportPhone}
                     </a>
-                  </>
-                ) : null}
-              </Step>
-              <Step n={3} title="Ask for the access log on your record">
-                Every staff action on your record is written to the audit log with who did it, when
-                and why. You are entitled to a copy of what it says about you — request it through{' '}
-                <Link href="/settings/data" className="link">
-                  your data requests
-                </Link>
-                , which starts the 30-day statutory clock.
-              </Step>
-            </ol>
+                  ) : null}
+                </span>
+              ) : null}
+            </Step>
+            <Step n={3} title="Ask what staff did">
+              Ask for the record of staff actions on your account through{' '}
+              <Link href="/settings/data" className="link">
+                your data
+              </Link>
+              .
+            </Step>
+          </ol>
+        </CardBody>
+      </Card>
 
-            <Alert tone="neutral" title="What the portal will never ask you for" icon={<Mail className="size-4" />}>
-              Nobody from the college or from ifBash will ever ask you to read out a sign-in code, and
-              no genuine message from this portal asks you to forward one. A code is only ever typed
-              into the sign-in screen by the person who requested it.
-            </Alert>
-          </CardBody>
-        </Card>
-      </Section>
-    </>
+      {/* ---- Technical details --------------------------------------------- */}
+
+      <Disclosure id="technical" summary="Technical details for your IT team" className="xl:col-span-2">
+        <dl className="divide-y divide-line">
+          <Tech label="Session">
+            A signed cookie holding a member id, a college id and the time it was issued. HttpOnly,
+            SameSite Lax, and Secure in production. Signed with HMAC-SHA256 and compared in constant
+            time. It lasts {SESSION_DAYS} days and is not renewed by activity.
+          </Tech>
+          <Tech label="Roles">
+            Not stored in the cookie. They are read from your record on every request, so a role
+            removed by the college stops working on your next page load.
+          </Tech>
+          <Tech label="Sign-in code">
+            Valid for {otpMinutes} minutes and used once. {OTP_MAX_ATTEMPTS} wrong attempts end it,
+            and a new request replaces the old code. Only a keyed hash of it is kept.
+          </Tech>
+          <Tech label="Rate limits">By email address and by network address.</Tech>
+          <Tech label="Other devices">
+            The server keeps no list of sessions, so there is no device list with places to show and
+            no way to sign out one device from another. Each device stays signed in until its own
+            cookie expires or you sign out there. Suspending the account stops every device at once.
+          </Tech>
+        </dl>
+      </Disclosure>
+    </div>
   );
 }
 
@@ -476,25 +230,21 @@ export default async function SecuritySettingsPage() {
 // Pieces
 // ---------------------------------------------------------------
 
-function Consequence({
-  icon,
-  title,
-  children,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  children: React.ReactNode;
-}) {
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <li className="flex gap-2.5">
-      <span className="mt-0.5 shrink-0 text-brand-fg" aria-hidden="true">
-        {icon}
-      </span>
-      <span className="min-w-0">
-        <span className="block font-medium">{title}</span>
-        <span className="block text-xs text-secondary">{children}</span>
-      </span>
-    </li>
+    <div className="grid grid-cols-1 gap-0.5 py-3 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-4">
+      <dt className="text-secondary">{label}</dt>
+      <dd className="min-w-0">{children}</dd>
+    </div>
+  );
+}
+
+function Tech({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-1 gap-1 py-3 first:pt-0 last:pb-0 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
+      <dt className="font-medium text-primary">{label}</dt>
+      <dd className="min-w-0">{children}</dd>
+    </div>
   );
 }
 
@@ -508,8 +258,8 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
         {n}
       </span>
       <span className="min-w-0">
-        <span className="block font-medium">{title}</span>
-        <span className="block text-xs text-secondary">{children}</span>
+        <span className="block font-medium text-primary">{title}</span>
+        <span className="block text-secondary">{children}</span>
       </span>
     </li>
   );

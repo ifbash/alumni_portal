@@ -3,12 +3,24 @@ import { redirect, notFound } from 'next/navigation';
 import { getSession } from '@/lib/auth/session';
 import { can, require as requireCap } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
-import { searchDirectory, getDepartments, getDegreeRegisterStats } from '@/lib/data/repo';
-import type { DirectoryQuery } from '@/lib/data/types';
+import {
+  searchDirectory,
+  getDepartments,
+  getDegreeRegisterStats,
+  getEvents,
+  getEventBySlug,
+} from '@/lib/data/repo';
+import { getNews } from '@/lib/data/content';
+import type { DirectoryQuery, EventItem } from '@/lib/data/types';
 import { PageHeader, Breadcrumbs } from '@/components/ui';
-import { ComposeForm, type Segment } from './ComposeForm';
+import { Logo, LogoMark } from '@/components/brand/Logo';
+import { siteOrigin } from '@/lib/share';
+import { eventShareText, portalShareText, storyShareText } from '@/lib/share-text';
+import { capitalise, deskFor } from '@/lib/branding/copy';
+import { daysUntil, formatDate, formatDateRange } from '@/lib/format';
+import { ComposeForm, type Segment, type StartingPoint } from './ComposeForm';
 
-export const metadata = { title: 'New message' };
+export const metadata = { title: 'New message · Staff console' };
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
@@ -31,10 +43,13 @@ export default async function NewCommsPage({
 
   const tier: 'all' | 'segment' | 'department' = all ? 'all' : segmentCap ? 'segment' : 'department';
   const myDepartment = session.roles.find((r) => r.role === 'hod')?.departmentId ?? session.departmentId;
+  const studentsAddressable = can(session, 'directory.search.students');
 
   const params = await searchParams;
   const raw = {
-    cohort: one(params.cohort),
+    // An account that cannot reach students writes to alumni, so that is
+    // where it starts. Narrowing only: the server refuses students anyway.
+    cohort: studentsAddressable ? one(params.cohort) : 'alumni',
     department: one(params.department) ?? '',
     batchFrom: one(params.batchFrom) ?? '',
     batchTo: one(params.batchTo) ?? '',
@@ -98,32 +113,117 @@ export default async function NewCommsPage({
         })),
       ];
 
+  const lockedDepartmentName = lockedDepartment
+    ? (departments.find((d) => d.code === lockedDepartment)?.name ?? lockedDepartment)
+    : null;
+
+  // ---------------------------------------------------------------
+  // Starting points: an event invite or a story, written out once here so
+  // the composer only fills fields. The API is unchanged — this is text.
+  // ---------------------------------------------------------------
+
+  const origin = await siteOrigin();
+  const timing = { locale: pack.locale.locale, timeZone: pack.locale.timeZone };
+  const held = new Set(session.roles.map((r) => r.role as string));
+  const myDepartmentName = myDepartment
+    ? (departments.find((d) => d.code === myDepartment)?.name ?? myDepartment)
+    : null;
+  const signOff = held.has('college_admin')
+    ? deskFor(pack.copy, 'college_admin')
+    : held.has('alumni_cell_operator')
+      ? deskFor(pack.copy, 'alumni_cell_operator')
+      : held.has('placement_officer')
+        ? deskFor(pack.copy, 'placement_officer')
+        : myDepartmentName
+          ? `Department of ${myDepartmentName}`
+          : capitalise(pack.copy.officeName);
+
+  const eventPoint = (e: EventItem): StartingPoint => {
+    const url = `${origin}/events/${e.slug}`;
+    const past = daysUntil(e.startsAt, timing.timeZone) < 0;
+    if (past) {
+      return {
+        key: `event:${e.slug}`,
+        kind: 'event',
+        label: e.title,
+        hint: `Held ${formatDate(e.startsAt, timing)}`,
+        subject: `Thank you for coming to ${e.title}`,
+        body: `Dear {{first_name}},\n\nThank you for coming to ${e.title}. The event page stays up with what comes next:\n${url}\n\n${signOff}`,
+        whatsapp: `Thank you to everyone who came to ${e.title}. What comes next: ${url}`,
+      };
+    }
+    return {
+      key: `event:${e.slug}`,
+      kind: 'event',
+      label: e.title,
+      hint: formatDate(e.startsAt, timing),
+      subject: `You are invited: ${e.title}`,
+      body: `Dear {{first_name}},\n\nYou are invited to ${e.title}.\n\n${formatDateRange(e.startsAt, e.endsAt, timing)}\n${e.venue ?? 'Venue to be announced'}\n\nRegister on ${pack.copy.portalName}:\n${url}\n\n${signOff}`,
+      whatsapp: `${eventShareText(pack, e)} ${url}`,
+    };
+  };
+
+  const eventParam = one(params.event);
+  const storyParam = one(params.story);
+
+  const upcoming = pack.features.events ? getEvents(session, { when: 'upcoming' }).slice(0, 10) : [];
+  // A past event arrives only by name, for "Thank the people who came".
+  const named = eventParam && pack.features.events ? getEventBySlug(session, eventParam) : null;
+  const eventsForStart =
+    named && named.published && !upcoming.some((e) => e.id === named.id) ? [named, ...upcoming] : upcoming;
+
+  // Obituaries are never broadcast: the news desk publishes them without a
+  // notification, and a message about one would undo that.
+  const stories = pack.features.news ? getNews().filter((n) => n.kind !== 'obituary').slice(0, 10) : [];
+
+  const starts: StartingPoint[] = [
+    ...eventsForStart.map(eventPoint),
+    ...stories.map((n) => {
+      const url = `${origin}/news/${n.slug}`;
+      return {
+        key: `story:${n.slug}`,
+        kind: 'story' as const,
+        label: n.title,
+        hint: formatDate(n.publishedAt, timing),
+        subject: n.title,
+        body: `Dear {{first_name}},\n\n${n.summary}\n\nRead the full story on ${pack.copy.portalName}:\n${url}\n\n${signOff}`,
+        whatsapp: `${storyShareText(pack, n)} ${url}`,
+      };
+    }),
+  ];
+
+  const initialKey =
+    (eventParam && starts.some((s) => s.key === `event:${eventParam}`) ? `event:${eventParam}` : null) ??
+    (storyParam && starts.some((s) => s.key === `story:${storyParam}`) ? `story:${storyParam}` : null);
+  const startParam = one(params.start);
+  const initialStart = initialKey
+    ? (initialKey.split(':')[0] as 'event' | 'story')
+    : startParam === 'event' || startParam === 'story'
+      ? startParam
+      : 'blank';
+
   return (
     <div className="space-y-6">
       <PageHeader
         breadcrumbs={
           <Breadcrumbs
             items={[
-              { label: 'Admin', href: '/admin' },
-              { label: 'Communications', href: '/admin/comms' },
+              { label: 'Staff console', href: '/admin' },
+              { label: 'Messages', href: '/admin/comms' },
               { label: 'New message' },
             ]}
           />
         }
-        eyebrow="Engagement"
+        eyebrow="Messages"
         title="New message"
-        description="Build the segment first and watch the count. A broadcast cannot be recalled, and a list that stops trusting the college's mail is not won back by the next one."
+        description="Choose the channel, then who, then what. The count is checked again when you send."
       />
 
       <ComposeForm
         tier={tier}
         segment={segment}
         lockedDepartment={lockedDepartment}
-        lockedDepartmentName={
-          lockedDepartment
-            ? (departments.find((d) => d.code === lockedDepartment)?.name ?? lockedDepartment)
-            : null
-        }
+        lockedDepartmentName={lockedDepartmentName}
         recipientCount={result.total}
         scopeTotal={scope.total}
         sampleNames={result.items.slice(0, 3).map((m) => m.fullName)}
@@ -133,12 +233,19 @@ export default async function NewCommsPage({
           label: `${f.label} (${f.count.toLocaleString('en-IN')})`,
         }))}
         batchYears={scope.facets.batches.map((f) => f.value)}
-        studentsAddressable={can(session, 'directory.search.students')}
+        studentsAddressable={studentsAddressable}
         whatsappEnabled={pack.features.whatsapp}
         portalName={pack.copy.portalName}
         institutionName={pack.copy.institutionName}
         supportEmail={pack.copy.supportEmail ?? null}
         unclaimedRegisterRows={registerStats.unclaimed}
+        starts={starts}
+        initialStart={initialStart}
+        initialStartKey={initialKey}
+        initialMode={one(params.channel) === 'whatsapp-draft' ? 'draft' : 'send'}
+        groupText={`${portalShareText(pack)} ${origin}/`}
+        brandHeader={<Logo pack={pack} height={24} />}
+        brandMark={<LogoMark pack={pack} size={32} />}
       />
     </div>
   );

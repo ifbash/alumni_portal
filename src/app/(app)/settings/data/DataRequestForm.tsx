@@ -2,50 +2,54 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
+import { Download, PencilLine, Trash2 } from 'lucide-react';
 import {
   Alert,
   Button,
   ConfirmDialog,
   Field,
-  Fieldset,
   FormActions,
   Radio,
   Textarea,
   useToast,
 } from '@/components/ui';
+import { cn } from '@/lib/cn';
+import { outcomeToast } from '@/lib/client/api';
 import type { DataRequest } from '@/lib/data/types';
 
 /**
- * Raise a DPDP request.
+ * Ask the college about your data: a copy, a correction, or deletion.
  *
- * Deletion goes through a typed confirmation, not a second button. It is
- * the one action here that cannot be undone by anybody at the college:
- * the profile, the contact record and the connection history go, and the
- * roll number stops matching a portal account. A misclick that costs
- * somebody their alumni membership is worth eight keystrokes to avoid.
+ * Three cards, one choice. Deletion goes through a typed confirmation, not
+ * a second button: it is the one action here nobody at the college can
+ * undo, and a misclick that costs somebody their alumni membership is worth
+ * a few keystrokes to avoid.
  */
 
 type Kind = DataRequest['kind'];
 
-const KINDS: Array<{ value: Kind; label: string; hint: string }> = [
+const KINDS: Array<{ value: Kind; label: string; hint: string; icon: React.ComponentType<{ className?: string }> }> = [
   {
     value: 'export',
-    label: 'Send me a copy of my data',
-    hint: 'A machine-readable file with your profile, contact record, connection history, event registrations, job applications and consent log. Delivered as a download link to your sign-in address.',
+    label: 'A copy of my data',
+    hint: 'A file with your profile, contact details, requests, registrations and consent history.',
+    icon: Download,
   },
   {
     value: 'correction',
-    label: 'Correct something that is wrong',
-    hint: 'For anything you cannot edit yourself — a misspelled name in the degree register, the wrong branch, the wrong year of passing. Say what it should be.',
+    label: 'A correction',
+    hint: 'For anything you cannot edit yourself, such as your name, branch or year in the register.',
+    icon: PencilLine,
   },
   {
     value: 'deletion',
-    label: 'Delete my account and data',
-    hint: 'Removes your profile, contact record and connection history. Records the college is legally required to keep — donation receipts, the audit trail of staff actions — survive this, and the notes below say exactly which.',
+    label: 'Delete my account',
+    hint: 'Removes your profile, contact details and requests. Some records must be kept.',
+    icon: Trash2,
   },
 ];
 
-export function DataRequestForm({ openKinds }: { openKinds: Kind[] }) {
+export function DataRequestForm({ openKinds, responseDays }: { openKinds: Kind[]; responseDays: number }) {
   const router = useRouter();
   const toast = useToast();
 
@@ -75,13 +79,13 @@ export function DataRequestForm({ openKinds }: { openKinds: Kind[] }) {
         throw new Error(body?.error ?? `The request was not accepted (${res.status}).`);
       }
 
-      toast.success(
-        'Request received',
-        'You will get an acknowledgement by email. The college has 30 days to answer.',
-      );
+      const body = (await res.json().catch(() => null)) as { persisted?: boolean } | null;
+      const persisted = body?.persisted !== false;
+      const t = outcomeToast({ status: 'ok', data: body, persisted }, 'Request received');
+      if (t) toast.show(t);
       setDetail('');
       setConfirming(false);
-      router.refresh();
+      if (persisted) router.refresh();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'The request was not sent.';
       setError(message);
@@ -102,75 +106,87 @@ export function DataRequestForm({ openKinds }: { openKinds: Kind[] }) {
 
   return (
     <>
-      <form onSubmit={onSubmit} className="space-y-5">
+      <form onSubmit={onSubmit} className="space-y-4" aria-labelledby="data-ask">
+        <h2 id="data-ask" className="font-display text-xl font-semibold">
+          What do you need?
+        </h2>
+
         {error ? (
-          <Alert tone="danger" title="Nothing was submitted">
+          <Alert tone="danger" title="Nothing was sent">
             {error}
           </Alert>
         ) : null}
 
-        <Fieldset legend="What do you want to ask for?">
-          <div className="space-y-3">
-            {KINDS.map((k) => (
-              <div
-                key={k.value}
-                className={
-                  kind === k.value
-                    ? 'rounded-lg border border-[var(--button-primary-bg)] bg-surface-sunken p-3.5'
-                    : 'rounded-lg border border-line p-3.5 hover:bg-surface-sunken'
-                }
-              >
-                <Radio
-                  id={`kind-${k.value}`}
-                  name="kind"
-                  value={k.value}
-                  label={k.label}
-                  hint={k.hint}
-                  checked={kind === k.value}
-                  onChange={() => setKind(k.value)}
-                />
-              </div>
-            ))}
+        <fieldset>
+          <legend className="sr-only">What do you need?</legend>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            {KINDS.map((k) => {
+              const selected = kind === k.value;
+              return (
+                <div
+                  key={k.value}
+                  className={cn(
+                    'relative rounded-lg border bg-surface-raised p-4 transition-colors duration-fast ease-brand',
+                    selected
+                      ? 'border-[var(--button-primary-bg)] ring-1 ring-[var(--button-primary-bg)]'
+                      : 'border-line hover:border-line-strong',
+                  )}
+                >
+                  <Radio
+                    id={`kind-${k.value}`}
+                    name="kind"
+                    value={k.value}
+                    checked={selected}
+                    // Above the card-wide label target, so the control itself stays clickable.
+                    className="relative z-10"
+                    onChange={() => setKind(k.value)}
+                    label={
+                      <span className="block space-y-1 after:absolute after:inset-0 after:rounded-lg">
+                        <span className="flex items-center gap-2 font-medium">
+                          <k.icon className="size-4 shrink-0 text-muted" aria-hidden="true" />
+                          {k.label}
+                        </span>
+                        <span className="block text-xs text-secondary">{k.hint}</span>
+                      </span>
+                    }
+                  />
+                </div>
+              );
+            })}
           </div>
-        </Fieldset>
+        </fieldset>
 
         <Field
           htmlFor="detail"
           label={needsDetail ? 'What is wrong, and what should it say?' : 'Anything to add (optional)'}
-          hint={
-            needsDetail
-              ? 'Be specific. "Name is Kandula Sridevi, register shows Sridevi K" is actionable; "my details are wrong" starts a week of email.'
-              : 'The alumni cell reads this. It does not change how long they have to answer.'
-          }
+          hint={needsDetail ? 'Be specific, so the college can act on it.' : undefined}
           required={needsDetail}
+          className="max-w-2xl"
         >
           <Textarea
             id="detail"
             value={detail}
             onChange={(e) => setDetail(e.currentTarget.value)}
-            rows={4}
+            rows={3}
             maxLength={800}
-            placeholder={
-              needsDetail
-                ? 'My year of passing shows 2018. I graduated in 2017 — roll 12KN1A0512.'
-                : ''
-            }
+            placeholder={needsDetail ? 'My year of passing shows 2018. It should be 2017.' : ''}
+            aria-describedby={needsDetail ? 'detail-hint' : undefined}
           />
         </Field>
 
         {alreadyOpen ? (
           <Alert tone="warning" title="You already have a request of this kind open">
-            Sending a second one does not make it faster and restarts nothing. The due date on the
-            existing request is below.
+            A second one does not make it faster. Its due date is shown above.
           </Alert>
         ) : null}
 
         <FormActions>
-          <p className="mr-auto text-xs text-muted">
-            The college must answer within 30 days of receiving this.
+          <p className="mr-auto text-xs text-secondary">
+            The college must answer within {responseDays} days of receiving this.
           </p>
           <Button
             type="submit"
+            className="min-h-11"
             variant={kind === 'deletion' ? 'danger' : 'primary'}
             loading={saving}
             disabled={alreadyOpen || detailMissing}
@@ -191,17 +207,15 @@ export function DataRequestForm({ openKinds }: { openKinds: Kind[] }) {
         body={
           <div className="space-y-2">
             <p>
-              Your profile, contact record, connection history and event registrations are removed.
-              You disappear from the directory, and anyone who was connected to you loses your
-              details.
+              Your profile, contact details, requests and event registrations are removed. You
+              disappear from the directory, and people you were connected to lose your details.
             </p>
             <p>
-              Your row in the college&rsquo;s degree register is <strong>not</strong> touched — that
-              is the examinations branch&rsquo;s record of your degree, not portal data. Donation
-              receipts and the audit trail of staff actions on your record are retained under the
-              legal exception explained on this page.
+              Your row in the college&rsquo;s degree register is <strong>not</strong> touched.
+              Donation records, tax receipts and the record of staff actions are kept, as the law
+              requires.
             </p>
-            <p>Signing up again later means going through verification again.</p>
+            <p>Registering again later means being verified again.</p>
           </div>
         }
       />

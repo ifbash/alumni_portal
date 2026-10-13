@@ -17,7 +17,14 @@ type Theme = 'light' | 'dark' | 'system';
  * in the document head (see `layout.tsx`), so a returning user never sees
  * a light frame before the swap.
  */
-export function ThemeToggle({ className }: { className?: string }) {
+export function ThemeToggle({
+  className,
+  size = 'sm',
+}: {
+  className?: string;
+  /** `sm` for dense headers; `lg` gives each segment a 44px touch target. */
+  size?: 'sm' | 'lg';
+}) {
   const [theme, setTheme] = React.useState<Theme>('system');
 
   React.useEffect(() => {
@@ -36,10 +43,11 @@ export function ThemeToggle({ className }: { className?: string }) {
     }
   };
 
+  const iconSize = size === 'lg' ? 'size-4' : 'size-3.5';
   const options: Array<{ value: Theme; icon: React.ReactNode; label: string }> = [
-    { value: 'light', icon: <Sun className="size-3.5" />, label: 'Light' },
-    { value: 'dark', icon: <Moon className="size-3.5" />, label: 'Dark' },
-    { value: 'system', icon: <Monitor className="size-3.5" />, label: 'System' },
+    { value: 'light', icon: <Sun className={iconSize} />, label: 'Light' },
+    { value: 'dark', icon: <Moon className={iconSize} />, label: 'Dark' },
+    { value: 'system', icon: <Monitor className={iconSize} />, label: 'System' },
   ];
 
   return (
@@ -57,7 +65,8 @@ export function ThemeToggle({ className }: { className?: string }) {
           onClick={() => apply(o.value)}
           title={o.label}
           className={cn(
-            'grid size-7 place-items-center rounded-full transition-colors duration-fast ease-brand',
+            'grid place-items-center rounded-full transition-colors duration-fast ease-brand',
+            size === 'lg' ? 'size-11' : 'size-7',
             theme === o.value
               ? 'bg-surface-raised text-primary shadow-sm'
               : 'text-muted hover:text-primary',

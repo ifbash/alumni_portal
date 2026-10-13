@@ -1,19 +1,17 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Plus, X, Trash2, BadgeCheck } from 'lucide-react';
+import { Lock, Plus, Trash2, X } from 'lucide-react';
 import {
   Alert,
-  Badge,
+  Avatar,
   Button,
-  ButtonLink,
   Card,
   CardBody,
   CardDescription,
-  CardHeader,
   CardTitle,
-  DetailRow,
   Field,
   FormActions,
   Input,
@@ -23,25 +21,19 @@ import {
   describedBy,
   useToast,
 } from '@/components/ui';
-import { formatDate } from '@/lib/format';
+import { outcomeToast } from '@/lib/client/api';
+import { availabilityCopy, type AvailabilityContext } from '@/lib/availability-copy';
 import type { EducationEntry, EmploymentEntry } from '@/lib/data/types';
 
 /**
  * The profile editor.
  *
- * Three decisions worth stating:
- *
- *  1. **Identity is read-only and says so.** Roll number, branch and batch
- *     came from the college's degree register. A portal that lets a member
- *     retype their own roll number has thrown away the only evidence its
- *     verification decision was ever based on.
- *  2. **The availability switches carry the commitment, not a label.** A
- *     switch called "Open to mentoring" with no consequence written next
- *     to it gets switched on once and regretted the first time a student
- *     actually writes.
- *  3. **Email is not editable here.** It is the sign-in credential; moving
- *     it is an account-recovery flow with its own verification, not a text
- *     field on a form.
+ * Three blocks, in the order a member thinks about them: what everyone
+ * sees, how people reach you and what you are open to, then the history.
+ * Identity (name, roll number, branch, batch, sign-in email) came from the
+ * college register and is shown as facts, not as inputs. The save bar
+ * appears only once something has changed, and stays pinned to the bottom
+ * of the screen, so a change made halfway down is saved where it was made.
  */
 
 export interface ProfileFormValues {
@@ -79,21 +71,51 @@ export interface ProfileFormIdentity {
   isStudent: boolean;
 }
 
+/** College copy the form needs. Resolved on the server; never tenant facts in here. */
+export interface ProfileFormCollege {
+  shortName: string;
+  officeName: string;
+  rollNumberLabel: string;
+  whatsapp: boolean;
+  /** `faculty` for faculty without the alumni role: no referrals entry. */
+  audience: AvailabilityContext['audience'];
+  openLimit: number;
+}
+
 type FieldErrors = Record<string, string | undefined>;
+
+const SECTIONS = [
+  { id: 'basics', label: 'Basics' },
+  { id: 'about', label: 'About' },
+  { id: 'work', label: 'Work' },
+  { id: 'skills-section', label: 'Skills' },
+  { id: 'contact', label: 'Contact' },
+  { id: 'availability', label: 'Open to' },
+  { id: 'employment', label: 'Experience' },
+  { id: 'education', label: 'Education' },
+] as const;
+
+/** Anchored inputs land below the sticky top bar with their label in view. */
+const ANCHORED = 'scroll-mt-32';
 
 export function ProfileForm({
   values: initial,
   identity,
   supportEmail,
+  college,
 }: {
   values: ProfileFormValues;
   identity: ProfileFormIdentity;
   supportEmail: string | null;
+  college: ProfileFormCollege;
 }) {
   const router = useRouter();
   const toast = useToast();
 
   const [values, setValues] = React.useState<ProfileFormValues>(initial);
+  // What "unchanged" means. Moves forward when a save is recorded but not
+  // stored (demo data), so the bar does not keep asking to save it again.
+  const [baseline, setBaseline] = React.useState<ProfileFormValues>(initial);
   const [errors, setErrors] = React.useState<FieldErrors>({});
   const [saving, setSaving] = React.useState(false);
   const [formError, setFormError] = React.useState<string | null>(null);
@@ -104,8 +126,8 @@ export function ProfileForm({
   }
 
   const dirty = React.useMemo(
-    () => JSON.stringify(values) !== JSON.stringify(initial),
-    [values, initial],
+    () => JSON.stringify(values) !== JSON.stringify(baseline),
+    [values, baseline],
   );
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -143,9 +165,17 @@ export function ProfileForm({
         throw new Error(body?.error ?? `The server refused the change (${res.status}).`);
       }
 
-      toast.success('Profile saved', 'The directory shows the new version immediately.');
-      router.push('/profile');
-      router.refresh();
+      const body = (await res.json().catch(() => null)) as { persisted?: boolean } | null;
+      const persisted = body?.persisted !== false;
+      const t = outcomeToast({ status: 'ok', data: body, persisted }, 'Profile saved');
+      if (t) toast.show(t);
+
+      if (persisted) {
+        router.push('/profile');
+        router.refresh();
+      } else {
+        setBaseline(values);
+      }
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Something went wrong. Nothing was saved.';
@@ -225,612 +255,665 @@ export function ProfileForm({
     );
   }
 
+  // ---- availability -----------------------------------------------------
+
+  const ctx: AvailabilityContext = {
+    audience: college.audience,
+    company: values.currentCompany,
+    officeName: college.officeName,
+    openLimit: college.openLimit,
+  };
+  const mentoring = availabilityCopy('mentoring', ctx);
+  const referrals = availabilityCopy('referrals', ctx);
+  const speaking = availabilityCopy('speaking', ctx);
+
+  const photoPreview = /^https?:\/\/\S+\.\S+/.test(values.photoUrl.trim()) ? values.photoUrl.trim() : null;
+
   return (
-    <form onSubmit={onSubmit} className="space-y-6">
-      {formError ? (
-        <Alert tone="danger" title="Nothing was saved">
-          {formError}
-        </Alert>
-      ) : null}
-
-      {/* ---- Identity: read-only ------------------------------------- */}
-
-      <Card>
-        <CardHeader>
-          <div className="space-y-1">
-            <CardTitle as="h2">Identity</CardTitle>
-            <CardDescription>
-              These came from the college&rsquo;s degree register. Only the alumni cell can change
-              them, and every change is audited.
-            </CardDescription>
-          </div>
-          {identity.verifiedAt ? (
-            <Badge tone="success">
-              <BadgeCheck className="size-3.5" aria-hidden="true" />
-              Verified {formatDate(identity.verifiedAt)}
-            </Badge>
-          ) : (
-            <Badge tone="warning" dot>
-              Not verified
-            </Badge>
-          )}
-        </CardHeader>
-
-        <CardBody className="space-y-5">
-          <dl className="divide-y divide-line">
-            <DetailRow label="Roll number">
-              <span className="font-mono">{identity.rollNumber ?? '—'}</span>
-            </DetailRow>
-            <DetailRow label="Branch">
-              {identity.departmentName ?? identity.departmentCode ?? '—'}
-            </DetailRow>
-            <DetailRow label="Programme and batch">
-              {[identity.programme, identity.batchYear].filter(Boolean).join(' · ') || '—'}
-            </DetailRow>
-            <DetailRow label="Sign-in email">
-              <span className="font-mono text-sm">{identity.email ?? '—'}</span>
-            </DetailRow>
-          </dl>
-
-          <p className="text-xs text-muted">
-            Your email is how you sign in — there is no password on this portal. To move your
-            account to a different address, write to{' '}
-            {supportEmail ? (
-              <a href={`mailto:${supportEmail}`} className="link">
-                {supportEmail}
+    <form onSubmit={onSubmit} className="lg:grid lg:grid-cols-[10rem_minmax(0,1fr)] lg:gap-gutter">
+      {/* Jump-nav over the form's sections, lg only. */}
+      <nav aria-label="Profile sections" className="hidden lg:block">
+        <ul className="sticky top-20 space-y-0.5">
+          {SECTIONS.map((s) => (
+            <li key={s.id}>
+              <a
+                href={`#${s.id}`}
+                className="flex min-h-9 items-center rounded px-3 text-sm font-medium text-secondary transition-colors duration-fast ease-brand hover:bg-surface-sunken hover:text-primary"
+              >
+                {s.label}
               </a>
-            ) : (
-              'the alumni cell'
-            )}{' '}
-            from the address you use today.
-          </p>
+            </li>
+          ))}
+        </ul>
+      </nav>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field
-              htmlFor="preferredName"
-              label="Preferred name"
-              hint="What people actually call you. Shown next to your full name."
-            >
-              <Input
-                id="preferredName"
-                value={values.preferredName}
-                onChange={(e) => set('preferredName', e.currentTarget.value)}
-                placeholder="Vamsi"
-                maxLength={40}
-              />
-            </Field>
+      <div className="min-w-0 space-y-8">
+        {formError ? (
+          <Alert tone="danger" title="Nothing was saved">
+            {formError}
+          </Alert>
+        ) : null}
 
-            <Field
-              htmlFor="photo"
-              label="Photo link"
-              hint="A link to an image. The portal does not host photos yet, so this points at wherever it already lives."
-              error={errors.photoUrl}
-            >
-              <Input
-                id="photo"
-                type="url"
-                inputMode="url"
-                value={values.photoUrl}
-                onChange={(e) => set('photoUrl', e.currentTarget.value)}
-                placeholder="https://…"
-                invalid={Boolean(errors.photoUrl)}
-                aria-describedby={describedBy('photo', { hint: true, error: Boolean(errors.photoUrl) })}
-              />
-            </Field>
-          </div>
-        </CardBody>
-      </Card>
+        {/* ================================================================
+            Public profile
+            ================================================================ */}
 
-      {/* ---- About ---------------------------------------------------- */}
+        <section aria-labelledby="block-public" className="space-y-4">
+          <BlockHeading id="block-public" title="Public profile" line="What signed-in members see when they find you." />
 
-      <Card>
-        <CardHeader>
-          <div className="space-y-1">
-            <CardTitle as="h2">About you</CardTitle>
-            <CardDescription>
-              Visible to every verified member of the portal. Not to the public — the directory is
-              never anonymous.
-            </CardDescription>
-          </div>
-        </CardHeader>
+          <Card id="basics" className="scroll-mt-20">
+            <CardBody className="space-y-5">
+              <CardTitle as="h3" className="text-md">
+                Basics
+              </CardTitle>
 
-        <CardBody className="space-y-5">
-          <Field
-            htmlFor="bio"
-            label="Short introduction"
-            hint={
-              identity.isStudent
-                ? 'What you are looking for and what you have built. An alumnus decides whether to reply on this alone.'
-                : 'What you work on, and what you are happy to be asked about. Two sentences is plenty.'
-            }
-            error={errors.bio}
-          >
-            <Textarea
-              id="bio"
-              value={values.bio}
-              onChange={(e) => set('bio', e.currentTarget.value)}
-              rows={4}
-              maxLength={600}
-              invalid={Boolean(errors.bio)}
-              aria-describedby={describedBy('bio', { hint: true, error: Boolean(errors.bio) })}
-              placeholder="Senior Software Engineer at Amazon. CSE, batch of 2017. Happy to talk to final-years about interview prep."
-            />
-          </Field>
-          <p className="-mt-3 text-right text-xs text-muted tabular">
-            {values.bio.length} / 600
-          </p>
-        </CardBody>
-      </Card>
+              <div className="rounded-lg border border-line bg-surface p-4">
+                <p className="mb-3 flex items-center gap-2 text-xs font-medium text-secondary">
+                  <Lock className="size-3.5 text-muted" aria-hidden="true" />
+                  From the college register. The {college.officeName} can correct these.
+                </p>
+                <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+                  <Fact label="Name">{values.fullName}</Fact>
+                  <Fact label={college.rollNumberLabel}>
+                    <span className="font-mono">{identity.rollNumber ?? '—'}</span>
+                  </Fact>
+                  <Fact label="Branch">{identity.departmentName ?? identity.departmentCode ?? '—'}</Fact>
+                  <Fact label={identity.isStudent ? 'Programme' : 'Programme and batch'}>
+                    {[identity.programme, identity.isStudent ? null : identity.batchYear]
+                      .filter(Boolean)
+                      .join(' · ') || '—'}
+                  </Fact>
+                  <Fact label="Sign-in email" className="sm:col-span-2">
+                    <span className="break-all">{identity.email ?? '—'}</span>
+                    <span className="mt-0.5 block text-xs font-normal text-secondary">
+                      To change it, write to{' '}
+                      {supportEmail ? (
+                        <a href={`mailto:${supportEmail}`} className="link">
+                          {supportEmail}
+                        </a>
+                      ) : (
+                        `the ${college.officeName}`
+                      )}{' '}
+                      from this address.
+                    </span>
+                  </Fact>
+                </dl>
+              </div>
 
-      {/* ---- Current work --------------------------------------------- */}
-
-      <Card>
-        <CardHeader>
-          <div className="space-y-1">
-            <CardTitle as="h2">Current work and location</CardTitle>
-            <CardDescription>
-              Company, designation and city are the three fields the directory is searched on most.
-            </CardDescription>
-          </div>
-        </CardHeader>
-
-        <CardBody className="space-y-5">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field htmlFor="company" label="Employer" error={errors.currentCompany}>
-              <Input
-                id="company"
-                value={values.currentCompany}
-                onChange={(e) => set('currentCompany', e.currentTarget.value)}
-                placeholder={identity.isStudent ? 'Internship or none' : 'Amazon'}
-                invalid={Boolean(errors.currentCompany)}
-              />
-            </Field>
-
-            <Field htmlFor="designation" label="Designation" error={errors.designation}>
-              <Input
-                id="designation"
-                value={values.designation}
-                onChange={(e) => set('designation', e.currentTarget.value)}
-                placeholder="Senior Software Engineer"
-                invalid={Boolean(errors.designation)}
-              />
-            </Field>
-
-            <Field
-              htmlFor="industry"
-              label="Industry"
-              hint="Used to group alumni for placement outreach."
-            >
-              <Input
-                id="industry"
-                list="industry-options"
-                value={values.industry}
-                onChange={(e) => set('industry', e.currentTarget.value)}
-                placeholder="Information Technology"
-              />
-              <datalist id="industry-options">
-                {INDUSTRIES.map((i) => (
-                  <option key={i} value={i} />
-                ))}
-              </datalist>
-            </Field>
-
-            <Field htmlFor="city" label="City" error={errors.city}>
-              <Input
-                id="city"
-                list="city-options"
-                value={values.city}
-                onChange={(e) => set('city', e.currentTarget.value)}
-                placeholder="Hyderabad"
-                invalid={Boolean(errors.city)}
-              />
-              <datalist id="city-options">
-                {CITIES.map((c) => (
-                  <option key={c} value={c} />
-                ))}
-              </datalist>
-            </Field>
-
-            <Field htmlFor="state" label="State or region">
-              <Input
-                id="state"
-                value={values.state}
-                onChange={(e) => set('state', e.currentTarget.value)}
-                placeholder="Telangana"
-              />
-            </Field>
-
-            <Field htmlFor="country" label="Country">
-              <Select
-                id="country"
-                value={values.country}
-                onChange={(e) => set('country', e.currentTarget.value)}
-              >
-                {COUNTRIES.map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          </div>
-        </CardBody>
-      </Card>
-
-      {/* ---- Skills ---------------------------------------------------- */}
-
-      <Card>
-        <CardHeader>
-          <div className="space-y-1">
-            <CardTitle as="h2">Skills</CardTitle>
-            <CardDescription>
-              Three or more. Below that you only appear in searches for your own name.
-            </CardDescription>
-          </div>
-        </CardHeader>
-
-        <CardBody className="space-y-3">
-          {values.skills.length ? (
-            <ul className="flex flex-wrap gap-1.5">
-              {values.skills.map((s) => (
-                <li key={s}>
-                  <span className="inline-flex items-center gap-1 rounded-full bg-brand-soft px-2.5 py-1 text-xs font-semibold text-brand-soft-fg">
-                    {s}
-                    <button
-                      type="button"
-                      onClick={() => set('skills', values.skills.filter((x) => x !== s))}
-                      aria-label={`Remove ${s}`}
-                      className="grid size-4 place-items-center rounded-full hover:bg-surface-raised"
-                    >
-                      <X className="size-3" aria-hidden="true" />
-                    </button>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-
-          <Field
-            htmlFor="skills"
-            label="Add a skill"
-            hint="Press Enter or comma after each one. Backspace removes the last."
-          >
-            <div className="flex gap-2">
-              <Input
-                id="skills"
-                value={skillDraft}
-                onChange={(e) => setSkillDraft(e.currentTarget.value)}
-                onKeyDown={onSkillKeyDown}
-                onBlur={() => addSkill(skillDraft)}
-                placeholder="System Design"
-                aria-describedby={describedBy('skills', { hint: true })}
-              />
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => addSkill(skillDraft)}
-                disabled={!skillDraft.trim()}
-              >
-                <Plus className="size-4" aria-hidden="true" />
-                Add
-              </Button>
-            </div>
-          </Field>
-        </CardBody>
-      </Card>
-
-      {/* ---- Contact --------------------------------------------------- */}
-
-      <Card>
-        <CardHeader>
-          <div className="space-y-1">
-            <CardTitle as="h2">Contact details</CardTitle>
-            <CardDescription>
-              Held in a separate table from your profile and released only under the rule you set
-              on the privacy page. Adding a number here does not publish it.
-            </CardDescription>
-          </div>
-        </CardHeader>
-
-        <CardBody className="grid gap-4 sm:grid-cols-2">
-          <Field
-            htmlFor="mobile"
-            label="Mobile"
-            hint="For account recovery and WhatsApp. Never used to sign in, never shown in the directory."
-            error={errors.mobile}
-          >
-            <Input
-              id="mobile"
-              type="tel"
-              inputMode="tel"
-              value={values.mobile}
-              onChange={(e) => set('mobile', e.currentTarget.value)}
-              placeholder="+91 98480 00000"
-              invalid={Boolean(errors.mobile)}
-              aria-describedby={describedBy('mobile', { hint: true, error: Boolean(errors.mobile) })}
-            />
-          </Field>
-
-          <Field htmlFor="linkedin" label="LinkedIn" error={errors.linkedin}>
-            <Input
-              id="linkedin"
-              type="url"
-              inputMode="url"
-              value={values.linkedin}
-              onChange={(e) => set('linkedin', e.currentTarget.value)}
-              placeholder="https://linkedin.com/in/…"
-              invalid={Boolean(errors.linkedin)}
-            />
-          </Field>
-
-          <Field htmlFor="github" label="GitHub" error={errors.github}>
-            <Input
-              id="github"
-              type="url"
-              inputMode="url"
-              value={values.github}
-              onChange={(e) => set('github', e.currentTarget.value)}
-              placeholder="https://github.com/…"
-              invalid={Boolean(errors.github)}
-            />
-          </Field>
-
-          <Field htmlFor="portfolio" label="Website or portfolio" error={errors.portfolio}>
-            <Input
-              id="portfolio"
-              type="url"
-              inputMode="url"
-              value={values.portfolio}
-              onChange={(e) => set('portfolio', e.currentTarget.value)}
-              placeholder="https://…"
-              invalid={Boolean(errors.portfolio)}
-            />
-          </Field>
-        </CardBody>
-      </Card>
-
-      {/* ---- Availability ---------------------------------------------- */}
-
-      <Card id="availability">
-        <CardHeader>
-          <div className="space-y-1">
-            <CardTitle as="h2">What you are open to</CardTitle>
-            <CardDescription>
-              Each one is a standing yes to being asked. None of them obliges you to say yes to a
-              particular person.
-            </CardDescription>
-          </div>
-        </CardHeader>
-
-        <CardBody className="space-y-5">
-          <Switch
-            id="openToMentoring"
-            label="Open to mentoring"
-            hint="Students may send you a mentorship request with a message. Five open requests each, ten a month — so you will not be flooded. Declining is silent."
-            checked={values.openToMentoring}
-            onChange={(e) => set('openToMentoring', e.currentTarget.checked)}
-          />
-          <Switch
-            id="openToReferrals"
-            label="Open to referral requests"
-            hint={
-              values.currentCompany.trim()
-                ? `Students may ask you to refer them at ${values.currentCompany.trim()}. You see who is asking and what they have built before you decide.`
-                : 'Add your employer above first — a referral request needs a company to point at.'
-            }
-            checked={values.openToReferrals}
-            disabled={!values.currentCompany.trim()}
-            onChange={(e) => set('openToReferrals', e.currentTarget.checked)}
-          />
-          <Switch
-            id="openToSpeaking"
-            label="Open to speaking on campus"
-            hint="The alumni cell may invite you to a session — usually two hours on a Saturday, in Ganguru or over video. An invitation, not a booking."
-            checked={values.openToSpeaking}
-            onChange={(e) => set('openToSpeaking', e.currentTarget.checked)}
-          />
-        </CardBody>
-      </Card>
-
-      {/* ---- Employment history ---------------------------------------- */}
-
-      <Card id="employment">
-        <CardHeader>
-          <div className="space-y-1">
-            <CardTitle as="h2">Work history</CardTitle>
-            <CardDescription>
-              A student changing tracks wants to find somebody who already made that jump. This is
-              how they find you.
-            </CardDescription>
-          </div>
-          <Button type="button" variant="secondary" size="sm" onClick={addEmployment}>
-            <Plus className="size-4" aria-hidden="true" />
-            Add a role
-          </Button>
-        </CardHeader>
-
-        <CardBody className="space-y-5">
-          {values.employment.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-line px-4 py-8 text-center text-sm text-secondary">
-              No roles listed yet.
-            </p>
-          ) : null}
-
-          {values.employment.map((row, i) => (
-            <fieldset key={row.id} className="space-y-4 rounded-lg border border-line p-4">
-              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-muted">
-                Role {i + 1}
-              </legend>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field htmlFor={`emp-company-${row.id}`} label="Company" required>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field
+                  htmlFor="preferredName"
+                  label="Preferred name"
+                  hint="Shown next to your full name."
+                >
                   <Input
-                    id={`emp-company-${row.id}`}
-                    value={row.company}
-                    onChange={(e) => updateEmployment(row.id, { company: e.currentTarget.value })}
-                    placeholder="Infosys"
+                    id="preferredName"
+                    value={values.preferredName}
+                    onChange={(e) => set('preferredName', e.currentTarget.value)}
+                    maxLength={40}
+                    aria-describedby={describedBy('preferredName', { hint: true })}
                   />
                 </Field>
-                <Field htmlFor={`emp-title-${row.id}`} label="Designation">
-                  <Input
-                    id={`emp-title-${row.id}`}
-                    value={row.designation ?? ''}
-                    onChange={(e) => updateEmployment(row.id, { designation: e.currentTarget.value })}
-                    placeholder="Systems Engineer"
-                  />
-                </Field>
-                <Field htmlFor={`emp-loc-${row.id}`} label="Location">
-                  <Input
-                    id={`emp-loc-${row.id}`}
-                    value={row.location ?? ''}
-                    onChange={(e) => updateEmployment(row.id, { location: e.currentTarget.value })}
-                    placeholder="Hyderabad"
-                  />
-                </Field>
-                <Field htmlFor={`emp-start-${row.id}`} label="Started">
-                  <Input
-                    id={`emp-start-${row.id}`}
-                    type="date"
-                    value={(row.startedOn ?? '').slice(0, 10)}
-                    onChange={(e) => updateEmployment(row.id, { startedOn: e.currentTarget.value })}
-                  />
-                </Field>
-                {!row.isCurrent ? (
-                  <Field htmlFor={`emp-end-${row.id}`} label="Ended">
+
+                <Field
+                  htmlFor="photo"
+                  label="Photo link"
+                  hint="A link to a photo that is already online."
+                  error={errors.photoUrl}
+                >
+                  <div className="flex items-center gap-3">
+                    <Avatar name={values.fullName} src={photoPreview} size="md" />
                     <Input
-                      id={`emp-end-${row.id}`}
-                      type="date"
-                      value={(row.endedOn ?? '').slice(0, 10)}
-                      onChange={(e) => updateEmployment(row.id, { endedOn: e.currentTarget.value })}
+                      id="photo"
+                      type="url"
+                      inputMode="url"
+                      value={values.photoUrl}
+                      onChange={(e) => set('photoUrl', e.currentTarget.value)}
+                      placeholder="https://…"
+                      invalid={Boolean(errors.photoUrl)}
+                      aria-describedby={describedBy('photo', { hint: true, error: Boolean(errors.photoUrl) })}
+                      className={ANCHORED}
                     />
-                  </Field>
-                ) : null}
+                  </div>
+                </Field>
               </div>
+            </CardBody>
+          </Card>
 
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <Switch
-                  id={`emp-current-${row.id}`}
-                  label="This is my current role"
-                  checked={row.isCurrent}
-                  onChange={(e) =>
-                    updateEmployment(row.id, {
-                      isCurrent: e.currentTarget.checked,
-                      endedOn: e.currentTarget.checked ? null : row.endedOn,
-                    })
-                  }
-                  className="max-w-md"
+          <Card id="about" className="scroll-mt-20">
+            <CardBody className="space-y-4">
+              <CardTitle as="h3" className="text-md">
+                About
+              </CardTitle>
+              <Field
+                htmlFor="bio"
+                label="Short introduction"
+                hint={
+                  identity.isStudent
+                    ? 'What you are looking for, and what you have built.'
+                    : 'What you work on, and what you are happy to be asked about.'
+                }
+                error={errors.bio}
+              >
+                <Textarea
+                  id="bio"
+                  value={values.bio}
+                  onChange={(e) => set('bio', e.currentTarget.value)}
+                  rows={4}
+                  maxLength={600}
+                  invalid={Boolean(errors.bio)}
+                  aria-describedby={describedBy('bio', { hint: true, error: Boolean(errors.bio) })}
+                  className={ANCHORED}
                 />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    set('employment', values.employment.filter((r) => r.id !== row.id))
+              </Field>
+              <p className="-mt-2 text-right text-xs text-secondary tabular">{values.bio.length} / 600</p>
+            </CardBody>
+          </Card>
+
+          <Card id="work" className="scroll-mt-20">
+            <CardBody className="space-y-4">
+              <div className="space-y-1">
+                <CardTitle as="h3" className="text-md">
+                  Work and location
+                </CardTitle>
+                <CardDescription>The fields students search on most.</CardDescription>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field htmlFor="company" label="Employer" error={errors.currentCompany}>
+                  <Input
+                    id="company"
+                    value={values.currentCompany}
+                    onChange={(e) => set('currentCompany', e.currentTarget.value)}
+                    placeholder={identity.isStudent ? 'Internship, if any' : undefined}
+                    invalid={Boolean(errors.currentCompany)}
+                    className={ANCHORED}
+                  />
+                </Field>
+
+                <Field htmlFor="designation" label="Designation" error={errors.designation}>
+                  <Input
+                    id="designation"
+                    value={values.designation}
+                    onChange={(e) => set('designation', e.currentTarget.value)}
+                    invalid={Boolean(errors.designation)}
+                  />
+                </Field>
+
+                <Field htmlFor="industry" label="Industry">
+                  <Input
+                    id="industry"
+                    list="industry-options"
+                    value={values.industry}
+                    onChange={(e) => set('industry', e.currentTarget.value)}
+                  />
+                  <datalist id="industry-options">
+                    {INDUSTRIES.map((i) => (
+                      <option key={i} value={i} />
+                    ))}
+                  </datalist>
+                </Field>
+
+                <Field htmlFor="city" label="City" error={errors.city}>
+                  <Input
+                    id="city"
+                    list="city-options"
+                    value={values.city}
+                    onChange={(e) => set('city', e.currentTarget.value)}
+                    invalid={Boolean(errors.city)}
+                    className={ANCHORED}
+                  />
+                  <datalist id="city-options">
+                    {CITIES.map((c) => (
+                      <option key={c} value={c} />
+                    ))}
+                  </datalist>
+                </Field>
+
+                <Field htmlFor="state" label="State or region">
+                  <Input
+                    id="state"
+                    value={values.state}
+                    onChange={(e) => set('state', e.currentTarget.value)}
+                  />
+                </Field>
+
+                <Field htmlFor="country" label="Country">
+                  <Select
+                    id="country"
+                    value={values.country}
+                    onChange={(e) => set('country', e.currentTarget.value)}
+                  >
+                    {COUNTRIES.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
+            </CardBody>
+          </Card>
+
+          <Card id="skills-section" className="scroll-mt-20">
+            <CardBody className="space-y-4">
+              <div className="space-y-1">
+                <CardTitle as="h3" className="text-md">
+                  Skills
+                </CardTitle>
+                <CardDescription>Three or more, so you turn up when the directory is filtered.</CardDescription>
+              </div>
+
+              {values.skills.length ? (
+                <ul className="flex flex-wrap gap-1.5" aria-label="Your skills">
+                  {values.skills.map((s) => (
+                    <li key={s}>
+                      <span className="inline-flex items-center gap-0.5 rounded-full bg-brand-soft py-0.5 pl-3 pr-0.5 text-sm font-medium text-brand-soft-fg">
+                        {s}
+                        <button
+                          type="button"
+                          onClick={() => set('skills', values.skills.filter((x) => x !== s))}
+                          aria-label={`Remove ${s}`}
+                          className="relative grid size-7 place-items-center rounded-full transition-colors duration-fast ease-brand after:absolute after:-inset-2 after:content-[''] hover:bg-surface-raised"
+                        >
+                          <X className="size-3.5" aria-hidden="true" />
+                        </button>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+
+              <Field htmlFor="skills" label="Add a skill" hint="Press Enter or a comma after each one.">
+                <div className="flex gap-2">
+                  <Input
+                    id="skills"
+                    value={skillDraft}
+                    onChange={(e) => setSkillDraft(e.currentTarget.value)}
+                    onKeyDown={onSkillKeyDown}
+                    onBlur={() => addSkill(skillDraft)}
+                    aria-describedby={describedBy('skills', { hint: true })}
+                    className={ANCHORED}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => addSkill(skillDraft)}
+                    disabled={!skillDraft.trim()}
+                  >
+                    <Plus className="size-4" aria-hidden="true" />
+                    Add
+                  </Button>
+                </div>
+              </Field>
+            </CardBody>
+          </Card>
+        </section>
+
+        {/* ================================================================
+            Contact and availability
+            ================================================================ */}
+
+        <section aria-labelledby="block-contact" className="space-y-4">
+          <BlockHeading
+            id="block-contact"
+            title="Contact and availability"
+            line="How people reach you, and what you are happy to be asked."
+          />
+
+          <Card id="contact" className="scroll-mt-20">
+            <CardBody className="space-y-4">
+              <div className="space-y-1">
+                <CardTitle as="h3" className="text-md">
+                  Contact details
+                </CardTitle>
+                <CardDescription>
+                  Shown only as your{' '}
+                  <Link href="/settings/privacy" className="link">
+                    privacy setting
+                  </Link>{' '}
+                  allows.
+                </CardDescription>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field
+                  htmlFor="mobile"
+                  label="Mobile"
+                  hint={
+                    college.whatsapp
+                      ? 'For account recovery and WhatsApp. Never used to sign in.'
+                      : 'For account recovery. Never used to sign in.'
                   }
+                  error={errors.mobile}
                 >
-                  <Trash2 className="size-4" aria-hidden="true" />
-                  Remove
+                  <Input
+                    id="mobile"
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    value={values.mobile}
+                    onChange={(e) => set('mobile', e.currentTarget.value)}
+                    placeholder="+91"
+                    invalid={Boolean(errors.mobile)}
+                    aria-describedby={describedBy('mobile', { hint: true, error: Boolean(errors.mobile) })}
+                    className={ANCHORED}
+                  />
+                </Field>
+
+                <Field htmlFor="linkedin" label="LinkedIn" error={errors.linkedin}>
+                  <Input
+                    id="linkedin"
+                    type="url"
+                    inputMode="url"
+                    value={values.linkedin}
+                    onChange={(e) => set('linkedin', e.currentTarget.value)}
+                    placeholder="https://linkedin.com/in/…"
+                    invalid={Boolean(errors.linkedin)}
+                    className={ANCHORED}
+                  />
+                </Field>
+
+                <Field htmlFor="github" label="GitHub" error={errors.github}>
+                  <Input
+                    id="github"
+                    type="url"
+                    inputMode="url"
+                    value={values.github}
+                    onChange={(e) => set('github', e.currentTarget.value)}
+                    placeholder="https://github.com/…"
+                    invalid={Boolean(errors.github)}
+                    className={ANCHORED}
+                  />
+                </Field>
+
+                <Field htmlFor="portfolio" label="Website or portfolio" error={errors.portfolio}>
+                  <Input
+                    id="portfolio"
+                    type="url"
+                    inputMode="url"
+                    value={values.portfolio}
+                    onChange={(e) => set('portfolio', e.currentTarget.value)}
+                    placeholder="https://…"
+                    invalid={Boolean(errors.portfolio)}
+                  />
+                </Field>
+              </div>
+            </CardBody>
+          </Card>
+
+          <Card id="availability" className="scroll-mt-20">
+            <CardBody className="space-y-5">
+              <div className="space-y-1">
+                <CardTitle as="h3" className="text-md">
+                  Open to
+                </CardTitle>
+                <CardDescription>
+                  {identity.isStudent
+                    ? 'Final-year students are not asked for mentoring, referrals or talks.'
+                    : 'Each is a standing yes to being asked. You still choose who to help.'}
+                </CardDescription>
+              </div>
+
+              {identity.isStudent ? null : (
+                <>
+                  {mentoring ? (
+                    <Switch
+                      id="openToMentoring"
+                      label={mentoring.label}
+                      hint={mentoring.line}
+                      checked={values.openToMentoring}
+                      onChange={(e) => set('openToMentoring', e.currentTarget.checked)}
+                    />
+                  ) : null}
+                  {referrals ? (
+                    <Switch
+                      id="openToReferrals"
+                      label={referrals.label}
+                      hint={values.currentCompany.trim() ? referrals.line : 'Add your employer above first.'}
+                      checked={values.openToReferrals}
+                      disabled={!values.currentCompany.trim()}
+                      onChange={(e) => set('openToReferrals', e.currentTarget.checked)}
+                    />
+                  ) : null}
+                  {speaking ? (
+                    <Switch
+                      id="openToSpeaking"
+                      label={speaking.label}
+                      hint={speaking.line}
+                      checked={values.openToSpeaking}
+                      onChange={(e) => set('openToSpeaking', e.currentTarget.checked)}
+                    />
+                  ) : null}
+                </>
+              )}
+            </CardBody>
+          </Card>
+        </section>
+
+        {/* ================================================================
+            Experience and education
+            ================================================================ */}
+
+        <section aria-labelledby="block-history" className="space-y-4">
+          <BlockHeading id="block-history" title="Experience and education" />
+
+          <Card id="employment" className="scroll-mt-20">
+            <CardBody className="space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <CardTitle as="h3" className="text-md">
+                    Experience
+                  </CardTitle>
+                  <CardDescription>
+                    {identity.isStudent ? 'Internships count.' : 'Where you have worked, most recent first.'}
+                  </CardDescription>
+                </div>
+                <Button type="button" variant="secondary" size="sm" className="min-h-11" onClick={addEmployment}>
+                  <Plus className="size-4" aria-hidden="true" />
+                  Add a role
                 </Button>
               </div>
-            </fieldset>
-          ))}
-        </CardBody>
-      </Card>
 
-      {/* ---- Education -------------------------------------------------- */}
+              {values.employment.length === 0 ? (
+                <p className="text-sm text-secondary">No roles yet.</p>
+              ) : null}
 
-      <Card id="education">
-        <CardHeader>
-          <div className="space-y-1">
-            <CardTitle as="h2">Education</CardTitle>
-            <CardDescription>
-              Your DIET degree comes from the register and stays. Add anything you studied after it.
-            </CardDescription>
-          </div>
-          <Button type="button" variant="secondary" size="sm" onClick={addEducation}>
-            <Plus className="size-4" aria-hidden="true" />
-            Add a qualification
-          </Button>
-        </CardHeader>
+              {values.employment.map((row, i) => (
+                <fieldset key={row.id} className="space-y-4 rounded-lg border border-line p-4">
+                  <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-secondary">
+                    {row.company.trim() || `Role ${i + 1}`}
+                  </legend>
 
-        <CardBody className="space-y-5">
-          {values.education.map((row, i) => (
-            <fieldset key={row.id} className="space-y-4 rounded-lg border border-line p-4">
-              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-muted">
-                Qualification {i + 1}
-              </legend>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <Field htmlFor={`emp-company-${row.id}`} label="Company" required>
+                      <Input
+                        id={`emp-company-${row.id}`}
+                        value={row.company}
+                        onChange={(e) => updateEmployment(row.id, { company: e.currentTarget.value })}
+                      />
+                    </Field>
+                    <Field htmlFor={`emp-title-${row.id}`} label="Designation">
+                      <Input
+                        id={`emp-title-${row.id}`}
+                        value={row.designation ?? ''}
+                        onChange={(e) => updateEmployment(row.id, { designation: e.currentTarget.value })}
+                      />
+                    </Field>
+                    <Field htmlFor={`emp-loc-${row.id}`} label="Location">
+                      <Input
+                        id={`emp-loc-${row.id}`}
+                        value={row.location ?? ''}
+                        onChange={(e) => updateEmployment(row.id, { location: e.currentTarget.value })}
+                      />
+                    </Field>
+                    <Field htmlFor={`emp-start-${row.id}`} label="Started">
+                      <Input
+                        id={`emp-start-${row.id}`}
+                        type="date"
+                        value={(row.startedOn ?? '').slice(0, 10)}
+                        onChange={(e) => updateEmployment(row.id, { startedOn: e.currentTarget.value })}
+                      />
+                    </Field>
+                    {!row.isCurrent ? (
+                      <Field htmlFor={`emp-end-${row.id}`} label="Ended">
+                        <Input
+                          id={`emp-end-${row.id}`}
+                          type="date"
+                          value={(row.endedOn ?? '').slice(0, 10)}
+                          onChange={(e) => updateEmployment(row.id, { endedOn: e.currentTarget.value })}
+                        />
+                      </Field>
+                    ) : null}
+                  </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field htmlFor={`edu-inst-${row.id}`} label="Institution" required>
-                  <Input
-                    id={`edu-inst-${row.id}`}
-                    value={row.institution}
-                    onChange={(e) => updateEducation(row.id, { institution: e.currentTarget.value })}
-                    placeholder="NIT Warangal"
-                  />
-                </Field>
-                <Field htmlFor={`edu-qual-${row.id}`} label="Qualification">
-                  <Input
-                    id={`edu-qual-${row.id}`}
-                    value={row.qualification ?? ''}
-                    onChange={(e) => updateEducation(row.id, { qualification: e.currentTarget.value })}
-                    placeholder="M.Tech"
-                  />
-                </Field>
-                <Field htmlFor={`edu-field-${row.id}`} label="Field">
-                  <Input
-                    id={`edu-field-${row.id}`}
-                    value={row.field ?? ''}
-                    onChange={(e) => updateEducation(row.id, { field: e.currentTarget.value })}
-                    placeholder="Computer Science"
-                  />
-                </Field>
-                <Field htmlFor={`edu-start-${row.id}`} label="Started">
-                  <Input
-                    id={`edu-start-${row.id}`}
-                    type="date"
-                    value={(row.startedOn ?? '').slice(0, 10)}
-                    onChange={(e) => updateEducation(row.id, { startedOn: e.currentTarget.value })}
-                  />
-                </Field>
-                <Field htmlFor={`edu-end-${row.id}`} label="Ended">
-                  <Input
-                    id={`edu-end-${row.id}`}
-                    type="date"
-                    value={(row.endedOn ?? '').slice(0, 10)}
-                    onChange={(e) => updateEducation(row.id, { endedOn: e.currentTarget.value })}
-                  />
-                </Field>
-              </div>
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <Switch
+                      id={`emp-current-${row.id}`}
+                      label="This is my current role"
+                      checked={row.isCurrent}
+                      onChange={(e) =>
+                        updateEmployment(row.id, {
+                          isCurrent: e.currentTarget.checked,
+                          endedOn: e.currentTarget.checked ? null : row.endedOn,
+                        })
+                      }
+                      className="max-w-md"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="min-h-11"
+                      onClick={() => set('employment', values.employment.filter((r) => r.id !== row.id))}
+                    >
+                      <Trash2 className="size-4" aria-hidden="true" />
+                      Remove
+                    </Button>
+                  </div>
+                </fieldset>
+              ))}
+            </CardBody>
+          </Card>
 
-              <div className="flex justify-end">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => set('education', values.education.filter((r) => r.id !== row.id))}
-                >
-                  <Trash2 className="size-4" aria-hidden="true" />
-                  Remove
+          <Card id="education" className="scroll-mt-20">
+            <CardBody className="space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <CardTitle as="h3" className="text-md">
+                    Education
+                  </CardTitle>
+                  <CardDescription>
+                    Your {college.shortName} degree comes from the register and stays. Add anything you
+                    studied after it.
+                  </CardDescription>
+                </div>
+                <Button type="button" variant="secondary" size="sm" className="min-h-11" onClick={addEducation}>
+                  <Plus className="size-4" aria-hidden="true" />
+                  Add a qualification
                 </Button>
               </div>
-            </fieldset>
-          ))}
-        </CardBody>
-      </Card>
 
-      <FormActions>
-        <p className="mr-auto text-xs text-muted">
-          {dirty ? 'Unsaved changes.' : 'No changes yet.'} Saving updates the directory immediately.
-        </p>
-        <ButtonLink href="/profile" variant="secondary">
-          Cancel
-        </ButtonLink>
-        <Button type="submit" loading={saving} disabled={!dirty}>
-          Save profile
-        </Button>
-      </FormActions>
+              {values.education.map((row, i) => (
+                <fieldset key={row.id} className="space-y-4 rounded-lg border border-line p-4">
+                  <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-secondary">
+                    {row.institution.trim() || `Qualification ${i + 1}`}
+                  </legend>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <Field htmlFor={`edu-inst-${row.id}`} label="Institution" required>
+                      <Input
+                        id={`edu-inst-${row.id}`}
+                        value={row.institution}
+                        onChange={(e) => updateEducation(row.id, { institution: e.currentTarget.value })}
+                      />
+                    </Field>
+                    <Field htmlFor={`edu-qual-${row.id}`} label="Qualification">
+                      <Input
+                        id={`edu-qual-${row.id}`}
+                        value={row.qualification ?? ''}
+                        onChange={(e) => updateEducation(row.id, { qualification: e.currentTarget.value })}
+                        placeholder="M.Tech"
+                      />
+                    </Field>
+                    <Field htmlFor={`edu-field-${row.id}`} label="Field">
+                      <Input
+                        id={`edu-field-${row.id}`}
+                        value={row.field ?? ''}
+                        onChange={(e) => updateEducation(row.id, { field: e.currentTarget.value })}
+                      />
+                    </Field>
+                    <Field htmlFor={`edu-start-${row.id}`} label="Started">
+                      <Input
+                        id={`edu-start-${row.id}`}
+                        type="date"
+                        value={(row.startedOn ?? '').slice(0, 10)}
+                        onChange={(e) => updateEducation(row.id, { startedOn: e.currentTarget.value })}
+                      />
+                    </Field>
+                    <Field htmlFor={`edu-end-${row.id}`} label="Ended">
+                      <Input
+                        id={`edu-end-${row.id}`}
+                        type="date"
+                        value={(row.endedOn ?? '').slice(0, 10)}
+                        onChange={(e) => updateEducation(row.id, { endedOn: e.currentTarget.value })}
+                      />
+                    </Field>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="min-h-11"
+                      onClick={() => set('education', values.education.filter((r) => r.id !== row.id))}
+                    >
+                      <Trash2 className="size-4" aria-hidden="true" />
+                      Remove
+                    </Button>
+                  </div>
+                </fieldset>
+              ))}
+            </CardBody>
+          </Card>
+        </section>
+
+        {dirty ? (
+          <FormActions sticky>
+            <p className="mr-auto text-sm font-medium" role="status">
+              Unsaved changes
+            </p>
+            <Button type="button" variant="ghost" className="min-h-11" onClick={() => setValues(baseline)}>
+              Discard
+            </Button>
+            <Button type="submit" className="min-h-11" loading={saving}>
+              Save profile
+            </Button>
+          </FormActions>
+        ) : null}
+      </div>
     </form>
+  );
+}
+
+function BlockHeading({ id, title, line }: { id: string; title: string; line?: string }) {
+  return (
+    <div className="space-y-0.5">
+      <h2 id={id} className="font-display text-xl font-semibold">
+        {title}
+      </h2>
+      {line ? <p className="text-sm text-secondary">{line}</p> : null}
+    </div>
+  );
+}
+
+function Fact({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
+  return (
+    <div className={className}>
+      <dt className="text-xs text-secondary">{label}</dt>
+      <dd className="font-medium">{children}</dd>
+    </div>
   );
 }
 
@@ -850,23 +933,19 @@ const INDUSTRIES = [
   'Telecom',
 ];
 
+/** Large Indian cities only, alphabetical. The field still takes any city. */
 const CITIES = [
-  'Hyderabad',
+  'Ahmedabad',
   'Bengaluru',
   'Chennai',
-  'Pune',
-  'Mumbai',
-  'Vijayawada',
-  'Visakhapatnam',
-  'Guntur',
-  'Tirupati',
-  'Noida',
+  'Delhi',
   'Gurugram',
+  'Hyderabad',
   'Kochi',
   'Kolkata',
-  'Ahmedabad',
-  'Bhubaneswar',
-  'Nellore',
+  'Mumbai',
+  'Noida',
+  'Pune',
 ];
 
 const COUNTRIES = [

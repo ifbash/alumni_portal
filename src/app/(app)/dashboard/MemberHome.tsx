@@ -1,37 +1,34 @@
+import * as React from 'react';
 import Link from 'next/link';
 import {
-  Handshake,
-  CalendarDays,
-  Briefcase,
   ArrowRight,
-  MapPin,
-  Users,
-  Bell,
-  Check,
-  X,
-  UserCheck,
-  Heart,
+  Briefcase,
+  Handshake,
+  HeartHandshake,
+  LayoutDashboard,
+  Mic,
+  UserRoundPen,
 } from 'lucide-react';
 import {
   Avatar,
-  Badge,
   ButtonLink,
   Card,
   CardBody,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
-  Progress,
-  Section,
-  Stat,
+  NeedsYou,
+  ShareActions,
+  type TaskItem,
 } from '@/components/ui';
-import { Sparkline } from '@/components/charts';
+import { EventSummary, JobSummary } from '@/components/content';
 import { MemberCard } from '@/components/members/MemberCard';
-import { can, type Session } from '@/lib/auth/guard';
+import { can, isActive, type Session } from '@/lib/auth/guard';
+import { cn } from '@/lib/cn';
 import {
   getCampaigns,
   getConnections,
+  getDepartments,
   getEvents,
   getJobs,
   getNotifications,
@@ -39,42 +36,56 @@ import {
   getStats,
   searchDirectory,
 } from '@/lib/data/repo';
-import {
-  formatCompactINR,
-  formatDate,
-  formatDateRange,
-  formatRelative,
-  memberLine,
-  yearsOut,
-} from '@/lib/format';
+import { getNews } from '@/lib/data/content';
+import { formatRelative } from '@/lib/format';
+import { firstNameOf, identityLine, viewerBatchYear, viewerBranch } from '@/lib/identity';
+import { deskFor, greetingFor, inSentence } from '@/lib/branding/copy';
+import { availabilityEntries } from '@/lib/availability-copy';
+import { batchShareText, portalShareText } from '@/lib/share-text';
+import { siteOrigin, whatsappShareUrl } from '@/lib/share';
+import { notificationAction } from '@/lib/notifications-view';
+import { staffTasks } from '@/lib/staff-tasks';
+import { seatStatus, isOnlineVenue } from '@/lib/event-status';
+import { hasStaffConsole } from '@/lib/navigation';
+import { CONNECTION_LIMITS } from '@/lib/config';
 import { profileChecks, completenessScore } from '../profile/completeness';
 import { AvailabilityCard } from './AvailabilityCard';
+import { HomeBand, type BandAction } from './HomeBand';
+import { BlockHead, HappeningAt, SNAP_ITEM, SNAP_ROW } from './HappeningAt';
 import type { BrandPack } from '@/lib/branding/pack';
-import type { JobState } from '@/lib/data/types';
+import type { EventItem } from '@/lib/data/types';
 
 /**
- * The alumni home.
+ * The home for everyone who is not a final-year student: alumni, faculty
+ * and every staff role.
  *
- * An alumnus is not here to search. They are here to answer, or to decide
- * they cannot — so the page opens with the people waiting on them, by
- * name, with what was actually asked. Everything else is secondary: their
- * own postings, their batch, the events they might come back for.
+ * It opens on the college band with one next step, then the things that
+ * need the viewer (requests, their own posting under review, and the staff
+ * queues from `staffTasks`), then what the college is running and the
+ * viewer's own people. The rail holds what they can offer (or, for staff,
+ * their department or review queue) and their recent activity.
  *
- * Faculty and staff who hold no student role land here too. The blocks
- * are individually capability-gated rather than role-gated, so an HOD
- * sees the parts of the member portal they genuinely have, and nothing
- * that would 403 on click.
+ * Every block is gated on a capability, not a role, so a viewer never sees
+ * a door that would refuse them. Roles only choose the *shape*:
+ *
+ *  - Holders of the alumni role (including the Dean and the alumni cell,
+ *    who are graduates) get their batch and "Give back".
+ *  - Faculty without the alumni role get "Your department" instead of
+ *    "Give back", and are never shown a batch.
+ *  - The placement officer also gets the postings waiting for review.
+ *  - An account with no member capabilities at all (finance) gets the
+ *    band, its queues, the way into the staff console, and the news.
  */
-export function MemberHome({ session, pack }: { session: Session; pack: BrandPack }) {
+export async function MemberHome({ session, pack }: { session: Session; pack: BrandPack }) {
   const profile = getOwnProfile(session);
-  const firstName = (profile?.preferredName ?? profile?.fullName ?? 'there').split(' ')[0]!;
+  const { copy, locale } = pack;
+  const fmt = { locale: locale.locale, timeZone: locale.timeZone };
 
   const canSearch = pack.features.directory && can(session, 'directory.search.alumni');
   const canReceive = pack.features.connections && can(session, 'connection.receive');
 
   const received = canReceive ? getConnections(session, 'received') : [];
   const waiting = received.filter((c) => c.state === 'pending');
-  const accepted = canReceive ? getConnections(session, 'accepted') : [];
 
   const events =
     pack.features.events && can(session, 'event.register')
@@ -82,15 +93,14 @@ export function MemberHome({ session, pack }: { session: Session; pack: BrandPac
       : [];
 
   const myJobs = pack.features.jobs && can(session, 'job.post') ? getJobs(session, { mine: true }) : [];
-  const liveJobs = myJobs.filter((j) => j.state === 'live');
+  const postsUnderReview = myJobs.filter((j) => j.state === 'pending_moderation');
 
   const stats = getStats(session);
 
-  const available = Boolean(
-    profile?.openToMentoring || profile?.openToReferrals || profile?.openToSpeaking,
-  );
-
-  const deptCode = profile?.departmentCode ?? session.departmentId;
+  // The viewer's own branch: their record's for alumni, their grant's for
+  // faculty, none for a college-wide officer.
+  const deptCode = viewerBranch(session);
+  const batchYear = viewerBatchYear(session);
 
   // Something to do when nothing is waiting. An alumnus with an empty
   // inbox and no next step closes the tab and does not come back.
@@ -104,258 +114,349 @@ export function MemberHome({ session, pack }: { session: Session; pack: BrandPac
     : null;
 
   const batch =
-    canSearch && session.batchYear
+    canSearch && batchYear
       ? searchDirectory(session, {
           cohort: 'alumni',
-          batchFrom: session.batchYear,
-          batchTo: session.batchYear,
+          batchFrom: batchYear,
+          batchTo: batchYear,
           sort: 'recent',
           perPage: 6,
         })
       : null;
 
-  const notifications = getNotifications(session).slice(0, 4);
+  const notifications = getNotifications(session).slice(0, 3);
 
   const checks = profile ? profileChecks(profile) : [];
   const score = completenessScore(checks);
-  const nextGap = checks.find((c) => !c.done);
 
   const isStudent = session.roles.some((r) => r.role === 'student');
   const showGiving = pack.features.donations && can(session, 'donation.give') && !isStudent;
   const campaigns = showGiving ? getCampaigns().filter((c) => c.active).slice(0, 2) : [];
 
-  // A finance or platform account holds none of the member capabilities.
-  // Four tiles reading zero would be a lie about what they can do here,
-  // so the row is only as long as the things they actually have.
-  const tiles = [
-    canReceive ? (
-      <Stat
-        key="waiting"
-        label="Waiting on your reply"
-        value={waiting.length}
-        hint={waiting.length ? 'Oldest first, below' : 'Nothing pending'}
-        icon={<Handshake className="size-4" />}
-      />
-    ) : null,
-    canReceive ? (
-      <Stat
-        key="connected"
-        label="People you are connected to"
-        value={accepted.length}
-        hint="Contact details released both ways"
-        icon={<UserCheck className="size-4" />}
-      />
-    ) : null,
-    pack.features.jobs && can(session, 'job.post') ? (
-      <Stat
-        key="jobs"
-        label="Your live job postings"
-        value={liveJobs.length}
-        hint={
-          myJobs.length > liveJobs.length
-            ? `${myJobs.length - liveJobs.length} not live yet`
-            : 'Moderated before they appear'
-        }
-        icon={<Briefcase className="size-4" />}
-      />
-    ) : null,
-    <Stat
-      key="profile"
-      label="Profile completeness"
-      value={`${score}%`}
-      hint={nextGap ? `Next: ${nextGap.label.toLowerCase()}` : 'Nothing left to add'}
-      icon={<Users className="size-4" />}
-    />,
-  ].filter(Boolean);
+  // ---- Shape --------------------------------------------------------
+  const held = new Set(session.roles.map((r) => r.role));
+  const alumnus = held.has('alumni');
+  const canRegister = pack.features.events && can(session, 'event.register');
+  const canWrite = can(session, 'profile.write.own');
+  const canPost = pack.features.jobs && can(session, 'job.post');
+  const memberShaped = canSearch || canReceive || canRegister || canWrite;
+  const facultyShaped = !alumnus && (held.has('faculty') || held.has('hod'));
+  const moderator = pack.features.jobs && can(session, 'job.moderate') && !alumnus;
 
-  return (
-    <>
-      <header className="space-y-3">
-        <p className="text-xs font-semibold uppercase tracking-wider text-brand-fg">
-          {memberLine([
-            profile?.departmentCode,
-            profile?.batchYear ? `Batch of ${profile.batchYear}` : null,
-            yearsOut(profile?.batchYear ?? null),
-          ])}
-        </p>
-        <h1 className="font-display text-display-xs font-bold">Namaste, {firstName}</h1>
-        <p className="max-w-prose text-sm text-secondary">
-          {!canReceive
-            ? 'Your account is a staff account. The member portal is here for your own record; the work your role does lives in the console.'
-            : waiting.length
-              ? `${waiting.length} ${waiting.length === 1 ? 'person is' : 'people are'} waiting for an answer from you. A reply of two lines is worth more than a reply you never get around to.`
-              : 'Nothing is waiting on you. The portal will tell you when a student asks — by email, and on WhatsApp once the college finishes that setup.'}
-        </p>
-      </header>
+  const departments = getDepartments();
+  const deptName = departments.find((d) => d.code === deptCode)?.name ?? null;
 
-      {/* ---- The four numbers that matter ------------------------------ */}
+  // ---- Band ---------------------------------------------------------
+  const first = profile ? firstNameOf(profile.fullName, profile.preferredName) : null;
+  const eyebrow = identityLine({
+    roles: session.roles,
+    departmentCode: deptCode,
+    departmentName: deptName,
+    batchYear,
+    designation: profile?.designation ?? null,
+    isStudent: false,
+  });
 
-      <section aria-label="Your activity" className={TILE_GRID[tiles.length] ?? TILE_GRID[4]}>
-        {tiles}
+  const nextEvent = events.find((e) => e.viewerRegistration || !seatStatus(e).full) ?? null;
+  const pinned = pack.features.news ? (getNews().find((n) => n.pinned && n.kind !== 'obituary') ?? null) : null;
+
+  let lead: string | null = null;
+  const actions: BandAction[] = [];
+
+  // The staff queues this person works, read behind their own can() checks.
+  const staff = staffTasks(session, pack).filter((t) => t.count > 0);
+  const topStaff = staff.find((t) => t.tone === 'attention') ?? staff[0] ?? null;
+  /** The task the band already leads with, so Needs you does not repeat it. */
+  let bandTask: string | null = null;
+
+  if (waiting.length === 1) {
+    const c = waiting[0]!;
+    const yy = c.from.batchYear ? `’${String(c.from.batchYear).slice(-2)}` : null;
+    const tag = [c.from.departmentCode, yy].filter(Boolean).join(' ');
+    lead = `${firstNameOf(c.from.fullName)}${tag ? ` (${tag})` : ''} asked you about ${KIND_WORDS[c.kind] ?? 'a request'}.`;
+    actions.push({ href: '/connections', label: 'Reply' });
+    bandTask = 'requests';
+  } else if (waiting.length > 1) {
+    lead = `${waiting.length} people are waiting for your reply.`;
+    actions.push({ href: '/connections', label: 'Reply' });
+    bandTask = 'requests';
+  } else if (topStaff) {
+    // Staff work outranks the next event: it is what this person came for.
+    lead = `${topStaff.count.toLocaleString('en-IN')} ${topStaff.label}${topStaff.detail ? ` · ${topStaff.detail}` : ''}.`;
+    actions.push({ href: topStaff.href, label: topStaff.action });
+    bandTask = topStaff.key;
+  } else if (nextEvent) {
+    lead = [nextEvent.title, bandDate(nextEvent.startsAt, pack), venueWords(nextEvent)].filter(Boolean).join(' · ');
+    actions.push(
+      nextEvent.viewerRegistration
+        ? { href: `/events/${nextEvent.slug}/ticket`, label: 'Show my ticket' }
+        : { href: `/events/${nextEvent.slug}`, label: 'Register' },
+    );
+  } else if (pinned) {
+    lead = pinned.title;
+    actions.push({ href: `/news/${pinned.slug}`, label: 'Read the story' });
+  } else if (canSearch) {
+    lead = `Find your batchmates and see what ${copy.shortName} is running.`;
+    actions.push({ href: '/directory', label: 'Open the directory' });
+  }
+
+  if (batchYear && canSearch) {
+    actions.push({ href: `/directory/batch/${batchYear}`, label: 'See your batch', variant: 'band-outline' });
+  }
+
+  // ---- Needs you ----------------------------------------------------
+  const tasks: TaskItem[] = [];
+  if (canReceive && waiting.length) {
+    const oldest = waiting.reduce((a, c) => (c.createdAt < a ? c.createdAt : a), waiting[0]!.createdAt);
+    tasks.push({
+      key: 'requests',
+      count: waiting.length,
+      label: waiting.length === 1 ? 'request waiting for your reply' : 'requests waiting for your reply',
+      detail: `oldest ${formatRelative(oldest, fmt)}`,
+      href: '/connections',
+      action: 'Reply',
+      icon: <Handshake />,
+    });
+  }
+  if (canPost && postsUnderReview.length) {
+    const desk = inSentence(deskFor(copy, 'placement_officer'));
+    tasks.push({
+      key: 'postings',
+      count: postsUnderReview.length,
+      label: `${postsUnderReview.length === 1 ? 'posting' : 'postings'} with the ${desk}`,
+      href: '/jobs?tab=mine',
+      action: postsUnderReview.length === 1 ? 'See it' : 'See them',
+      icon: <Briefcase />,
+    });
+  }
+  tasks.push(...staff);
+  const needs = tasks.filter((t) => t.count > 0 && t.key !== bandTask);
+
+  // ---- Profile nudge ------------------------------------------------
+  // Counted in the welcome wizard's own steps, not in checks: "3 short
+  // steps" has to be three screens, not three fields.
+  const gaps = new Set(checks.filter((c) => !c.done).map((c) => c.id));
+  const stepsLeft = WIZARD_STEPS.filter((ids) => ids.some((id) => gaps.has(id))).length;
+  const showNudge = canWrite && profile !== null && score < 80 && stepsLeft > 0;
+
+  // ---- People -------------------------------------------------------
+  const origin = await siteOrigin();
+  const shareUrl = batchYear ? `${origin}/claim?year=${batchYear}` : `${origin}/`;
+  const shareText = batchYear ? batchShareText(pack, batchYear) : portalShareText(pack);
+  const batchmates = batch ? batch.items.filter((m) => m.id !== session.memberId).slice(0, 5) : [];
+  const activeNow = active ? active.items.filter((m) => m.id !== session.memberId).slice(0, 3) : [];
+
+  // ---- Your department (faculty) ------------------------------------
+  const deptEvents =
+    facultyShaped && canRegister && deptCode
+      ? getEvents(session, { when: 'upcoming', department: deptCode })
+          .filter((e) => e.departmentCode === deptCode)
+          .slice(0, 2)
+      : [];
+  const speakers =
+    facultyShaped && canSearch && deptCode
+      ? searchDirectory(session, { department: deptCode, speaking: true, cohort: 'alumni', perPage: 3 })
+      : null;
+
+  // ---- Postings to review (placement officer) -----------------------
+  const toReview = moderator ? getJobs(session, { state: 'pending_moderation' }).slice(0, 3) : [];
+
+  // ---- Give back ----------------------------------------------------
+  const entries =
+    canWrite && profile
+      ? availabilityEntries({
+          audience: alumnus ? 'alumni' : 'faculty',
+          company: profile.currentCompany,
+          officeName: copy.officeName,
+          openLimit: CONNECTION_LIMITS.studentOpenRequests,
+        })
+      : [];
+  const showGiveBack = !facultyShaped && memberShaped && (canWrite || canPost || showGiving);
+
+  const consoleCard =
+    !memberShaped && hasStaffConsole(session, pack) ? (
+      <Card>
+        <CardBody className="space-y-4">
+          <span
+            className="grid size-10 place-items-center rounded-full bg-brand-soft text-brand-soft-fg"
+            aria-hidden="true"
+          >
+            <LayoutDashboard className="size-5" />
+          </span>
+          <h2 className="font-display text-md font-semibold">Your work is in the staff console</h2>
+          <ButtonLink href="/admin" className="min-h-11">
+            Open the staff console
+            <ArrowRight className="size-4" aria-hidden="true" />
+          </ButtonLink>
+        </CardBody>
+      </Card>
+    ) : null;
+
+  // ---- Render -------------------------------------------------------
+  const rail: React.ReactNode[] = [];
+
+  if (consoleCard) rail.push(<div key="console" className="hidden lg:block">{consoleCard}</div>);
+
+  // Your people sits in the main column, after what the college is
+  // running: on a phone that is its place in the order, and on a desktop
+  // it keeps the main column the longer of the two.
+  const people =
+    canSearch && (batch || activeNow.length) ? (
+      <section aria-labelledby="people-title" className="space-y-4">
+        <h2 id="people-title" className="font-display text-xl font-semibold">
+          Your people
+        </h2>
+
+        <Card className="grid grid-cols-1 divide-y divide-line md:grid-cols-2 md:divide-x md:divide-y-0">
+          {batch && batchYear ? (
+            <div className="min-w-0 space-y-1 p-4">
+              <div className="flex items-center gap-3">
+                {batchmates.length ? (
+                  <ul className="flex shrink-0 -space-x-2" aria-label={`Some of the ${batchYear} batch`}>
+                    {batchmates.map((m) => (
+                      <li key={m.id}>
+                        <Avatar name={m.fullName} src={m.photoUrl} size="sm" className="ring-2 ring-[var(--surface-raised)]" />
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                <p className="min-w-0 text-sm text-secondary">
+                  <span className="font-semibold tabular text-primary">{batch.total.toLocaleString('en-IN')}</span> of
+                  the {batchYear} batch {batch.total === 1 ? 'is' : 'are'} here
+                </p>
+              </div>
+              <RailLink href={`/directory/batch/${batchYear}`}>See your batch</RailLink>
+            </div>
+          ) : null}
+
+          <div className={cn('min-w-0 space-y-2 p-4', !(batch && batchYear) && 'md:col-span-2')}>
+            <h3 className="text-sm font-semibold text-primary">
+              {batchYear ? 'Invite your batch on WhatsApp' : 'Invite graduates on WhatsApp'}
+            </h3>
+            <ShareActions
+              url={shareUrl}
+              whatsappHref={whatsappShareUrl(shareText, shareUrl)}
+              title={batchYear ? `Batch of ${batchYear} on ${copy.portalName}` : copy.portalName}
+              size="sm"
+            />
+          </div>
+        </Card>
+
+        {activeNow.length ? (
+          <div className="space-y-3">
+            <BlockHead
+              title={deptCode ? `Active in ${deptCode}` : 'Recently active'}
+              href={deptCode ? `/directory?department=${deptCode}` : '/directory'}
+              linkLabel="Search the directory"
+            />
+            {/* Compact rows: one per swipe on a phone, stacked from sm. */}
+            <ul className={cn(SNAP_ROW, 'sm:grid-cols-1 sm:gap-3 xl:grid-cols-1')}>
+              {activeNow.map((m) => (
+                <li key={m.id} className={SNAP_ITEM}>
+                  <MemberCard member={m} variant="row" className="h-full" />
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </section>
+    ) : null;
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
-          {/* ---- Requests waiting on them ------------------------------ */}
+  if (moderator && toReview.length) {
+    rail.push(
+      <Card key="review" as="section" aria-labelledby="review-title">
+        <CardHeader variant="stack">
+          <CardTitle as="h2" id="review-title" className="text-md">
+            Postings to review
+          </CardTitle>
+        </CardHeader>
+        <CardBody className="pt-1">
+          <ul className="divide-y divide-line">
+            {toReview.map((j) => (
+              <li key={j.id}>
+                <JobSummary job={j} href={`/admin/jobs/${j.id}`} locale={locale} variant="row" />
+              </li>
+            ))}
+          </ul>
+          {canPost ? (
+            <div className="border-t border-line pt-3">
+              <RailLink href="/jobs/new">Post a job</RailLink>
+            </div>
+          ) : null}
+        </CardBody>
+      </Card>,
+    );
+  }
 
-          {canReceive ? (
-            <Card>
-              <CardHeader>
-                <div className="space-y-1">
-                  <CardTitle as="h2">Waiting on you</CardTitle>
-                  <CardDescription>
-                    Every request expires by itself. Declining is silent — the student is told the
-                    request closed, not that you refused.
-                  </CardDescription>
-                </div>
-              </CardHeader>
-
-              <CardBody className="space-y-0">
-                {waiting.length ? (
-                  <ul className="divide-y divide-line">
-                    {waiting.map((c) => (
-                      <li key={c.id} className="space-y-3 py-4 first:pt-0 last:pb-0">
-                        <div className="flex items-start gap-3">
-                          <Avatar name={c.from.fullName} src={c.from.photoUrl} size="md" />
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-semibold">
-                              <Link href={`/directory/${c.from.slug}`} className="link-quiet">
-                                {c.from.fullName}
-                              </Link>
-                            </p>
-                            <p className="truncate text-xs text-muted">
-                              {memberLine([
-                                c.from.departmentCode,
-                                c.from.batchYear,
-                                c.from.isStudent ? 'Final year' : c.from.currentCompany,
-                              ])}
-                            </p>
-                          </div>
-                          <div className="flex shrink-0 flex-col items-end gap-1">
-                            <Badge tone="brand">{KIND_LABEL[c.kind] ?? c.kind}</Badge>
-                            <span className="text-xs text-muted">
-                              {formatRelative(c.createdAt)}
-                            </span>
-                          </div>
-                        </div>
-
-                        {c.message ? (
-                          <blockquote className="rounded border-l-2 border-line-strong bg-surface-sunken px-3 py-2 text-sm text-secondary">
-                            {c.message}
-                          </blockquote>
-                        ) : (
-                          <p className="text-sm text-muted">
-                            No message. You can still accept, or leave it to expire.
-                          </p>
-                        )}
-
-                        <div className="flex flex-wrap items-center gap-2">
-                          <ButtonLink
-                            href={`/connections?request=${c.id}&respond=accept`}
-                            size="sm"
-                          >
-                            <Check className="size-4" aria-hidden="true" />
-                            Accept
-                          </ButtonLink>
-                          <ButtonLink
-                            href={`/connections?request=${c.id}&respond=decline`}
-                            variant="secondary"
-                            size="sm"
-                          >
-                            <X className="size-4" aria-hidden="true" />
-                            Decline
-                          </ButtonLink>
-                          {c.expiresAt ? (
-                            <span className="text-xs text-muted">
-                              Expires {formatRelative(c.expiresAt)}
-                            </span>
-                          ) : null}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="rounded-lg border border-dashed border-line px-4 py-10 text-center text-sm text-secondary">
-                    {available
-                      ? 'Nothing waiting. You are listed as available, so a request can arrive any day — an email goes to you the moment one does.'
-                      : 'No open requests, and none can arrive: all three availability switches are off, so students are told not to ask. Turn one on beside this card.'}
-                  </p>
-                )}
-              </CardBody>
-
-              <CardFooter>
-                <ButtonLink href="/connections" variant="ghost" size="sm">
-                  All connections
-                  <ArrowRight className="size-4" aria-hidden="true" />
-                </ButtonLink>
-              </CardFooter>
-            </Card>
+  if (facultyShaped && deptCode && (deptEvents.length || speakers)) {
+    rail.push(
+      <Card key="department" as="section" aria-labelledby="department-title">
+        <CardHeader variant="stack">
+          <CardTitle as="h2" id="department-title" className="text-md">
+            Your department
+          </CardTitle>
+          {deptName ? <CardDescription>{deptName}</CardDescription> : null}
+        </CardHeader>
+        <CardBody className="space-y-5">
+          {deptEvents.length ? (
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold text-secondary">Coming up in {deptCode}</h3>
+              <ul className="space-y-2">
+                {deptEvents.map((e) => (
+                  <li key={e.id}>
+                    <EventSummary event={e} href={`/events/${e.slug}`} locale={locale} variant="compact" />
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : null}
 
-          {/* ---- Their postings ---------------------------------------- */}
-
-          {pack.features.jobs && can(session, 'job.post') ? (
-            <Card>
-              <CardHeader>
-                <div className="space-y-1">
-                  <CardTitle as="h2">Jobs you have posted</CardTitle>
-                  <CardDescription>
-                    Postings are reviewed by the placement cell before students see them.
-                  </CardDescription>
-                </div>
-                <ButtonLink href="/jobs/new" size="sm">
-                  Post a job
-                </ButtonLink>
-              </CardHeader>
-
-              <CardBody>
-                {myJobs.length ? (
-                  <ul className="divide-y divide-line">
-                    {myJobs.slice(0, 5).map((j) => (
-                      <li key={j.id} className="flex flex-wrap items-center gap-3 py-3 first:pt-0">
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium">
-                            <Link href={`/jobs/${j.id}`} className="link-quiet">
-                              {j.title}
-                            </Link>
-                          </p>
-                          <p className="truncate text-xs text-muted">
-                            {memberLine([
-                              j.company,
-                              j.location,
-                              j.isInternship ? 'Internship' : null,
-                            ])}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs tabular text-muted">
-                            {j.applicationCount} applied
-                          </span>
-                          <Badge tone={JOB_TONE[j.state]}>{JOB_LABEL[j.state]}</Badge>
-                        </div>
-                        {j.state === 'rejected' && j.moderationNote ? (
-                          <p className="w-full text-xs text-danger-fg">{j.moderationNote}</p>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="rounded-lg border border-dashed border-line px-4 py-10 text-center text-sm text-secondary">
-                    You have not posted anything. One opening from your own team reaches 96
-                    final-years who are looking right now — and you get to see who applied.
-                  </p>
-                )}
-              </CardBody>
-            </Card>
+          {speakers ? (
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold text-secondary">
+                {speakers.total
+                  ? `${speakers.total.toLocaleString('en-IN')} ${deptCode} ${speakers.total === 1 ? 'graduate is' : 'graduates are'} open to speaking`
+                  : `No ${deptCode} graduate has offered to speak yet`}
+              </h3>
+              {speakers.items.length ? (
+                <ul className={cn(SNAP_ROW, 'lg:flex lg:flex-col')}>
+                  {speakers.items.map((m) => (
+                    <li key={m.id} className={SNAP_ITEM}>
+                      <MemberCard member={m} variant="row" className="h-full" />
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <ButtonLink
+                href={`/directory?department=${deptCode}&speaking=1`}
+                variant="secondary"
+                size="sm"
+                className="min-h-11"
+              >
+                <Mic className="size-4" aria-hidden="true" />
+                Invite an alumnus to speak
+              </ButtonLink>
+            </div>
           ) : null}
-        </div>
+        </CardBody>
+      </Card>,
+    );
+  }
 
-        {/* ---- Right rail ---------------------------------------------- */}
-
-        <div className="space-y-6">
+  if (showGiveBack) {
+    rail.push(
+      <Card key="give" as="section" aria-labelledby="give-title">
+        <CardHeader variant="stack">
+          <CardTitle as="h2" id="give-title" className="text-md">
+            Give back to {copy.shortName}
+          </CardTitle>
+        </CardHeader>
+        <CardBody className="space-y-5">
           {can(session, 'profile.write.own') && profile ? (
             <AvailabilityCard
               company={profile.currentCompany}
+              entries={entries}
+              officeName={copy.officeName}
               initial={{
                 openToMentoring: profile.openToMentoring,
                 openToReferrals: profile.openToReferrals,
@@ -364,277 +465,229 @@ export function MemberHome({ session, pack }: { session: Session; pack: BrandPac
             />
           ) : null}
 
-          {nextGap ? (
-            <Card>
-              <CardBody className="space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <CardTitle as="h2" className="text-md">
-                    Your profile
-                  </CardTitle>
-                  <span className="text-sm font-semibold tabular">{score}%</span>
-                </div>
-                <Progress value={score} label={`Profile ${score}% complete`} />
-                <p className="text-sm text-secondary">
-                  <span className="font-medium text-primary">{nextGap.label}.</span> {nextGap.why}
+          {canPost ? (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line pt-4">
+              {stats.students > 0 ? (
+                <p className="min-w-0 flex-1 basis-52 text-sm text-secondary">
+                  One opening from your team reaches {stats.students.toLocaleString('en-IN')} final-year students.
                 </p>
-                <ButtonLink href={nextGap.href} variant="secondary" size="sm">
-                  Fix this one
-                </ButtonLink>
-              </CardBody>
-            </Card>
+              ) : null}
+              <ButtonLink href="/jobs/new" variant="secondary" size="sm" className="min-h-11">
+                <Briefcase className="size-4" aria-hidden="true" />
+                Post a job
+              </ButtonLink>
+            </div>
           ) : null}
 
-          {batch ? (
-            <Card>
-              <CardHeader>
-                <div className="space-y-1">
-                  <CardTitle as="h2" className="text-md">
-                    Batch of {session.batchYear}
-                  </CardTitle>
-                  <CardDescription>
-                    {batch.total} of your batchmates have claimed an account.
-                  </CardDescription>
-                </div>
-              </CardHeader>
-              <CardBody className="space-y-3">
-                <ul className="flex flex-wrap gap-1.5">
-                  {batch.items.slice(0, 6).map((m) => (
-                    <li key={m.id}>
-                      <Link href={`/directory/${m.slug}`} title={m.fullName} className="block">
-                        <Avatar name={m.fullName} src={m.photoUrl} size="sm" />
-                        <span className="sr-only">{m.fullName}</span>
+          {showGiving ? (
+            <div className="space-y-2 border-t border-line pt-4">
+              <p className="flex items-center gap-2 text-sm font-semibold text-primary">
+                <HeartHandshake className="size-4 text-muted" aria-hidden="true" />
+                Giving
+              </p>
+              {campaigns.length ? (
+                <ul className="space-y-1">
+                  {campaigns.map((c) => (
+                    <li key={c.id}>
+                      <Link href={`/giving/${c.slug}`} className="inline-flex min-h-11 items-center text-sm font-medium link-quiet">
+                        {c.title}
                       </Link>
                     </li>
                   ))}
                 </ul>
-
-                <div className="space-y-1">
-                  <p className="text-xs text-secondary">New members across all batches, 12 months</p>
-                  <Sparkline data={stats.signupTrend} label="New members per month" height={36} />
-                </div>
-
-                <ButtonLink
-                  href={`/directory?batchFrom=${session.batchYear}&batchTo=${session.batchYear}`}
-                  variant="secondary"
-                  size="sm"
-                >
-                  See the whole batch
-                </ButtonLink>
-              </CardBody>
-            </Card>
+              ) : null}
+              <RailLink href="/giving">See every campaign</RailLink>
+            </div>
           ) : null}
+        </CardBody>
+      </Card>,
+    );
+  }
 
-          {pack.features.events && can(session, 'event.register') ? (
-            <Card>
-              <CardHeader>
-                <div className="space-y-1">
-                  <CardTitle as="h2" className="text-md">
-                    Coming up
-                  </CardTitle>
-                  <CardDescription>On campus and online.</CardDescription>
-                </div>
-              </CardHeader>
-              <CardBody className="space-y-3">
-                {events.length ? (
-                  events.map((e) => (
-                    <article
-                      key={e.id}
-                      className="space-y-1 border-b border-line pb-3 last:border-0 last:pb-0"
-                    >
-                      <p className="text-sm font-medium">
-                        <Link href={`/events/${e.slug}`} className="link-quiet">
-                          {e.title}
-                        </Link>
-                      </p>
-                      <p className="flex items-center gap-1.5 text-xs text-secondary">
-                        <CalendarDays className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
-                        {formatDateRange(e.startsAt, e.endsAt)}
-                      </p>
-                      {e.venue ? (
-                        <p className="flex items-center gap-1.5 text-xs text-muted">
-                          <MapPin className="size-3.5 shrink-0" aria-hidden="true" />
-                          {e.venue}
-                        </p>
-                      ) : null}
-                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                        {e.alumniOnly ? <Badge tone="brand">Alumni only</Badge> : null}
-                        {e.ticketPrice > 0 ? (
-                          <Badge tone="neutral">{formatCompactINR(e.ticketPrice)}</Badge>
-                        ) : null}
-                        {e.viewerRegistration ? (
-                          <Badge tone="success" dot>
-                            Registered
-                          </Badge>
-                        ) : null}
-                      </div>
-                    </article>
-                  ))
-                ) : (
-                  <p className="text-sm text-secondary">
-                    Nothing scheduled. Reunions are usually announced eight weeks ahead.
-                  </p>
-                )}
-              </CardBody>
-              <CardFooter>
-                <ButtonLink href="/events" variant="ghost" size="sm">
-                  All events
-                  <ArrowRight className="size-4" aria-hidden="true" />
-                </ButtonLink>
-              </CardFooter>
-            </Card>
-          ) : null}
-
-          <Card>
-            <CardHeader>
-              <div className="space-y-1">
-                <CardTitle as="h2" className="text-md">
-                  Recent activity
-                </CardTitle>
-              </div>
-            </CardHeader>
-            <CardBody>
-              <ul className="space-y-3">
-                {notifications.map((n) => (
-                  <li key={n.id} className="flex gap-2.5">
-                    <span
-                      className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-surface-sunken text-muted"
-                      aria-hidden="true"
-                    >
-                      <Bell className="size-3.5" />
-                    </span>
-                    <div className="min-w-0 space-y-0.5">
-                      <p className="text-sm font-medium">
-                        {n.href ? (
-                          <Link href={n.href} className="link-quiet">
-                            {n.title}
-                          </Link>
-                        ) : (
-                          n.title
-                        )}
-                        {!n.readAt ? (
-                          <span className="ml-1.5 align-middle text-xs font-semibold text-brand-fg">
-                            new
-                          </span>
-                        ) : null}
-                      </p>
-                      {n.body ? <p className="text-xs text-secondary">{n.body}</p> : null}
-                      <p className="text-xs text-muted">{formatRelative(n.createdAt)}</p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </CardBody>
-          </Card>
-        </div>
-      </div>
-
-      {/* ---- Somebody to talk to --------------------------------------- */}
-
-      {active && active.items.length ? (
-        <Section
-          title={`Active in ${deptCode ?? 'the directory'}`}
-          description="Alumni from your branch who have signed in recently. A note from someone who sat in the same lab gets answered; a cold one usually does not."
-          actions={
-            <ButtonLink
-              href={deptCode ? `/directory?department=${deptCode}` : '/directory'}
-              variant="secondary"
-              size="sm"
-            >
-              Search the directory
-            </ButtonLink>
-          }
-        >
-          <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {active.items
-              .filter((m) => m.id !== session.memberId)
-              .slice(0, 3)
-              .map((m) => (
-                <li key={m.id} className="relative">
-                  <MemberCard member={m} className="h-full" />
-                </li>
-              ))}
-          </ul>
-        </Section>
-      ) : null}
-
-      {/* ---- Giving — only when the college has cleared it ------------- */}
-
-      {showGiving && campaigns.length ? (
-        <Section
-          title="Giving"
-          description="Every contribution is receipted, and foreign contributions are recorded separately from the first rupee."
-          actions={
-            <ButtonLink href="/giving" variant="secondary" size="sm">
-              All campaigns
-            </ButtonLink>
-          }
-        >
-          <div className="grid gap-4 sm:grid-cols-2">
-            {campaigns.map((c) => (
-              <Card key={c.id} className="p-card">
-                <div className="flex items-start justify-between gap-3">
-                  <h3 className="font-display text-md font-semibold">
-                    <Link href={`/giving/${c.slug}`} className="link-quiet">
-                      {c.title}
-                    </Link>
-                  </h3>
-                  <Heart className="size-4 shrink-0 text-muted" aria-hidden="true" />
-                </div>
-                {c.description ? (
-                  <p className="mt-1.5 line-clamp-2 text-sm text-secondary">{c.description}</p>
-                ) : null}
-                <div className="mt-3 space-y-1.5">
-                  <Progress
-                    value={c.raised}
-                    max={c.target ?? c.raised}
-                    label={`${c.title} funding progress`}
+  if (memberShaped && notifications.length) {
+    rail.push(
+      <Card key="activity" as="section" aria-labelledby="activity-title">
+        <CardHeader className="items-center">
+          <CardTitle as="h2" id="activity-title" className="text-md">
+            Recent activity
+          </CardTitle>
+          <Link
+            href="/notifications"
+            className="-my-2 inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-brand-fg hover:underline"
+          >
+            See all
+            <span className="sr-only"> notifications</span>
+            <ArrowRight className="size-4" aria-hidden="true" />
+          </Link>
+        </CardHeader>
+        <CardBody className="pt-1">
+          <ul className="divide-y divide-line">
+            {notifications.map((n) => {
+              const verb = notificationAction(n);
+              return (
+                <li key={n.id} className="flex items-center gap-3 py-1.5">
+                  <span
+                    className={
+                      n.readAt
+                        ? 'size-2 shrink-0 rounded-full bg-line-strong'
+                        : 'size-2 shrink-0 rounded-full bg-[var(--button-primary-bg)]'
+                    }
+                    aria-hidden="true"
                   />
-                  <p className="text-xs text-secondary">
-                    <span className="font-semibold tabular text-primary">
-                      {formatCompactINR(c.raised)}
-                    </span>{' '}
-                    of {c.target ? formatCompactINR(c.target) : 'no fixed target'} · {c.donorCount}{' '}
-                    donors
-                    {c.endsOn ? ` · closes ${formatDate(c.endsOn)}` : ''}
-                  </p>
-                </div>
-              </Card>
-            ))}
-          </div>
-        </Section>
-      ) : null}
+                  <div className="min-w-0 flex-1">
+                    <p className="line-clamp-1 text-sm font-medium text-primary lg:line-clamp-2">
+                      {n.title}
+                      {!n.readAt ? <span className="sr-only"> (new)</span> : null}
+                    </p>
+                    <p className="text-xs text-secondary">{formatRelative(n.createdAt, fmt)}</p>
+                  </div>
+                  {verb && n.href ? (
+                    <Link
+                      href={n.href}
+                      className="inline-flex min-h-11 shrink-0 items-center text-sm font-semibold text-brand-fg hover:underline"
+                    >
+                      {verb}
+                      <span className="sr-only">: {n.title}</span>
+                    </Link>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </CardBody>
+      </Card>,
+    );
+  }
 
-    </>
+  return (
+    <div className="space-y-6 lg:space-y-8">
+      <HomeBand
+        pack={pack}
+        eyebrow={eyebrow}
+        title={first ? `${greetingFor(copy)}, ${first}` : greetingFor(copy)}
+        lead={lead}
+        actions={actions}
+      />
+
+      <div className={rail.length ? 'grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-8' : 'space-y-6'}>
+        <div className="min-w-0 space-y-6 lg:space-y-8">
+          {/* The band already carries the lead task. What is left is a
+              list, a single slim row, or, when the band took the only task,
+              nothing: "all caught up" under "3 people are waiting" would
+              contradict it. */}
+          {needs.length > 1 || (needs.length === 0 && !bandTask) ? (
+            <NeedsYou items={needs} />
+          ) : needs.length === 1 ? (
+            <TaskRow task={needs[0]!} />
+          ) : null}
+
+          {consoleCard ? <div className="lg:hidden">{consoleCard}</div> : null}
+
+          {showNudge ? (
+            <section
+              aria-label="Finish setting up"
+              className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-lg border border-line bg-surface-raised p-4 shadow-sm"
+            >
+              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-brand-soft text-brand-soft-fg" aria-hidden="true">
+                <UserRoundPen className="size-5" />
+              </span>
+              <p className="min-w-0 flex-1 text-sm font-medium text-primary">
+                Finish setting up — {stepsLeft} short {stepsLeft === 1 ? 'step' : 'steps'}
+              </p>
+              <ButtonLink href="/welcome" variant="secondary" size="sm" className="min-h-11">
+                Continue
+              </ButtonLink>
+            </section>
+          ) : null}
+
+          <HappeningAt pack={pack} events={canRegister ? events : null} showPhotos={isActive(session)} />
+
+          {people}
+        </div>
+
+        {rail.length ? (
+          <aside aria-label="What you can do" className="min-w-0 space-y-6">
+            {rail}
+          </aside>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
-/** Static class strings — Tailwind cannot see a computed column count. */
-const TILE_GRID: Record<number, string> = {
-  1: 'grid gap-4 sm:max-w-xs',
-  2: 'grid gap-4 sm:grid-cols-2',
-  3: 'grid gap-4 sm:grid-cols-2 xl:grid-cols-3',
-  4: 'grid gap-4 sm:grid-cols-2 xl:grid-cols-4',
+/** One task on its own: a full-width slim row rather than a lone grid tile. */
+function TaskRow({ task }: { task: TaskItem }) {
+  const attention = task.tone === 'attention';
+  return (
+    <section aria-label="Needs you">
+      <Link
+        href={task.href}
+        className={cn(
+          'group flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-surface-raised px-4 py-3 shadow-sm',
+          'transition-colors duration-fast ease-brand hover:border-line-strong',
+          attention && 'border-l-4 border-l-warning',
+        )}
+      >
+        {task.icon ? (
+          <span className="text-muted [&>svg]:size-5" aria-hidden="true">
+            {task.icon}
+          </span>
+        ) : null}
+        <span className="min-w-0 flex-1 text-sm">
+          <span className="font-semibold tabular text-primary">{task.count.toLocaleString('en-IN')}</span>{' '}
+          <span className="font-medium text-primary">{task.label}</span>
+          {task.detail ? (
+            <span className={attention ? 'text-warning-fg' : 'text-secondary'}> · {task.detail}</span>
+          ) : null}
+        </span>
+        <span className="inline-flex items-center gap-1 text-sm font-semibold text-brand-fg">
+          {task.action}
+          <ArrowRight
+            className="size-4 transition-transform duration-fast ease-brand group-hover:translate-x-0.5"
+            aria-hidden="true"
+          />
+        </span>
+      </Link>
+    </section>
+  );
+}
+
+function RailLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <Link
+      href={href}
+      className="inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-brand-fg hover:underline"
+    >
+      {children}
+      <ArrowRight className="size-4" aria-hidden="true" />
+    </Link>
+  );
+}
+
+/** "Fri 21 Aug", in the college's time zone. */
+function bandDate(iso: string, pack: BrandPack): string {
+  const parts = new Intl.DateTimeFormat(pack.locale.locale, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    timeZone: pack.locale.timeZone,
+  }).formatToParts(new Date(iso));
+  const get = (t: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === t)?.value ?? '';
+  return [get('weekday'), get('day'), get('month')].filter(Boolean).join(' ');
+}
+
+function venueWords(e: Pick<EventItem, 'venue'>): string | null {
+  if (isOnlineVenue(e.venue)) return 'Online';
+  return e.venue;
+}
+
+/** What a request is about, as the band says it: "asked you about a referral". */
+const KIND_WORDS: Record<string, string> = {
+  mentorship: 'mentoring',
+  referral: 'a referral',
+  introduction: 'an introduction',
+  speaking: 'speaking',
 };
 
-const KIND_LABEL: Record<string, string> = {
-  mentorship: 'Mentorship',
-  referral: 'Referral',
-  introduction: 'Introduction',
-  speaking: 'Speaking',
-};
-
-const JOB_LABEL: Record<JobState, string> = {
-  draft: 'Draft',
-  pending_moderation: 'Awaiting review',
-  live: 'Live',
-  rejected: 'Not approved',
-  closed: 'Closed',
-};
-
-const JOB_TONE: Record<JobState, 'neutral' | 'warning' | 'success' | 'danger'> = {
-  draft: 'neutral',
-  pending_moderation: 'warning',
-  live: 'success',
-  rejected: 'danger',
-  closed: 'neutral',
-};
+/** The welcome wizard's first three screens, as the completeness checks they fill. */
+const WIZARD_STEPS: ReadonlyArray<readonly string[]> = [['work', 'photo'], ['city'], ['skills', 'availability']];

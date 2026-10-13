@@ -5,7 +5,7 @@ import { findMemberById, findMemberByEmail } from '@/lib/data/repo';
 import { getTenant } from '@/lib/tenant';
 import type { Session } from '@/lib/auth/guard';
 import type { Role } from '@/lib/auth/permissions';
-import { clientIp, fail, HttpError, json, limit, readJson } from '../../_lib/http';
+import { clientIp, fail, HttpError, json, limit } from '../../_lib/http';
 import { noteFailedAttempt, resetAttempts } from '../../_lib/otp-attempts';
 import { sessionView } from '../../_lib/session-view';
 
@@ -33,11 +33,13 @@ const Body = z.object({
     .regex(/^\d{6}$/, 'Enter all six digits from the email.'),
 });
 
+const CLOSED_STATUSES: ReadonlySet<string> = new Set(['rejected', 'lapsed', 'deceased']);
+
 const MESSAGES: Record<string, string> = {
   expired: 'That code has expired. Send yourself a new one and it will work.',
   invalid: 'That code is not right. Check the six digits in the most recent email.',
   too_many_attempts: 'Too many wrong codes, so this one has been cancelled. Ask for a new code.',
-  unknown_email: 'There is no account on that address yet. Claim your profile with your roll number instead.',
+  unknown_email: 'There is no account on that address yet. Register with your roll number instead.',
 };
 
 export async function POST(request: Request) {
@@ -97,6 +99,20 @@ export async function POST(request: Request) {
     const member = findMemberById(result.memberId) ?? findMemberByEmail(email);
     if (!member) {
       throw new HttpError(404, 'unknown_email', MESSAGES.unknown_email);
+    }
+
+    // Closed accounts do not get a session. The staff console tells an
+    // administrator that marking someone rejected, lapsed or deceased means
+    // "the account can no longer sign in"; without this the cookie was minted
+    // anyway, and every page that asks only for "a signed-in member" served
+    // them. `pending` is deliberately not here: they sign in to reach their
+    // own waiting room.
+    if (CLOSED_STATUSES.has(member.status)) {
+      throw new HttpError(
+        403,
+        'account_closed',
+        `This account can no longer sign in. If you think that is a mistake, write to the ${tenant.shortName} alumni office.`,
+      );
     }
 
     await createSession(member.id, tenant.id);

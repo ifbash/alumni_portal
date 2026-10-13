@@ -1,35 +1,20 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import {
-  ArrowRight,
-  CircleCheck,
-  Download,
-  FileClock,
-  Hourglass,
-  Landmark,
-  PencilLine,
-  Trash2,
-  TriangleAlert,
-} from 'lucide-react';
+import { BookOpen, CircleCheck, Download, PencilLine, Trash2, TriangleAlert } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap } from '@/lib/auth/guard';
 import { getDataRequests } from '@/lib/data/repo';
+import { getTenantBrand } from '@/lib/tenant';
 import { formatDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import {
   Alert,
   Badge,
   ButtonLink,
-  Card,
-  CardBody,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  DefinitionCard,
+  Disclosure,
   EmptyState,
   PageHeader,
-  Section,
-  Stat,
   Table,
   TableWrap,
   Tabs,
@@ -40,15 +25,9 @@ import {
   TR,
 } from '@/components/ui';
 
-import {
-  KIND_LABEL,
-  RESPONSE_WINDOW_DAYS,
-  STATE_LABEL,
-  STATE_TONE,
-  dueStatus,
-} from './dpdp';
+import { KIND_LABEL, RESPONSE_WINDOW_DAYS, STATE_LABEL, STATE_TONE, dueStatus, type DueStatus } from './dpdp';
 
-export const metadata = { title: 'Data requests' };
+export const metadata = { title: 'Data requests · Staff console' };
 
 type View = 'open' | 'overdue' | 'closed' | 'all';
 
@@ -67,6 +46,25 @@ const KIND_ICON = {
   deletion: Trash2,
 } as const;
 
+const viewHref = (v: View) => (v === 'open' ? '/admin/data-requests' : `/admin/data-requests?view=${v}`);
+
+function Countdown({ due, className }: { due: DueStatus; className?: string }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 font-semibold',
+        due.tone === 'danger' && 'text-danger-fg',
+        due.tone === 'warning' && 'text-warning-fg',
+        due.tone === 'neutral' && 'text-secondary',
+        className,
+      )}
+    >
+      {due.overdue ? <TriangleAlert className="size-3.5 shrink-0" aria-hidden="true" /> : null}
+      {due.label}
+    </span>
+  );
+}
+
 export default async function DataRequestsPage({
   searchParams,
 }: {
@@ -82,6 +80,9 @@ export default async function DataRequestsPage({
 
   const all = getDataRequests();
   const withDue = all.map((request) => ({ request, due: dueStatus(request) }));
+
+  const pack = (await getTenantBrand())?.brand.pack;
+  const fmt = { locale: pack?.locale.locale, timeZone: pack?.locale.timeZone };
 
   const counts: Record<View, number> = {
     open: withDue.filter((r) => r.due.open).length,
@@ -99,71 +100,67 @@ export default async function DataRequestsPage({
 
   const overdue = withDue.filter((r) => r.due.overdue);
   const dueThisWeek = withDue.filter((r) => r.due.open && !r.due.overdue && r.due.days <= 7);
-  const deletions = withDue.filter((r) => r.request.kind === 'deletion' && r.due.open);
+  const upcoming = withDue.filter((r) => r.due.open && !r.due.overdue);
+  // The queue is sorted by deadline, so the first open request still inside
+  // its window is the next deadline.
+  const next = upcoming[0];
 
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Governance"
         title="Data requests"
-        description={`Access, correction and erasure requests raised by members under the DPDP Act. Every one carries a ${RESPONSE_WINDOW_DAYS}-day statutory window measured from the day it was received — not from the day somebody picked it up.`}
-        actions={
-          <Badge tone={overdue.length ? 'danger' : 'success'} dot>
-            {overdue.length
-              ? `${overdue.length} past the deadline`
-              : 'Nothing past the deadline'}
-          </Badge>
-        }
+        description={`Members' access, correction and erasure requests, each answered within ${RESPONSE_WINDOW_DAYS} days of receipt.`}
       />
+
+      {/* ---- Summary: what is open, what is late, what is next ------ */}
+      <p className="text-sm text-secondary">
+        {counts.open ? (
+          <Link href={viewHref('open')} className="underline-offset-4 hover:text-brand-fg hover:underline">
+            <span className="font-semibold tabular text-primary">{counts.open}</span> open
+          </Link>
+        ) : (
+          <span>Nothing open</span>
+        )}
+        {counts.overdue ? (
+          <>
+            <span aria-hidden="true"> · </span>
+            <Link href={viewHref('overdue')} className="underline-offset-4 hover:text-brand-fg hover:underline">
+              <span className="font-semibold tabular text-danger-fg">{counts.overdue}</span> overdue
+            </Link>
+          </>
+        ) : null}
+        <span aria-hidden="true"> · </span>
+        {dueThisWeek.length === 0 && counts.overdue === 0 ? (
+          <span className="font-medium text-success-fg">Nothing due this week</span>
+        ) : next ? (
+          <span>
+            next deadline{' '}
+            <span className="font-semibold tabular text-primary">{formatDate(next.request.dueAt, fmt)}</span>
+          </span>
+        ) : (
+          <span>no other deadline pending</span>
+        )}
+      </p>
 
       {overdue.length ? (
         <Alert
           tone="danger"
-          title={`${overdue.length} request${overdue.length === 1 ? ' is' : 's are'} past the statutory deadline`}
+          title={`${overdue.length} ${overdue.length === 1 ? 'request is' : 'requests are'} past the deadline`}
           icon={<TriangleAlert className="size-4" />}
         >
           <p>
-            {overdue
-              .map(({ request, due }) => `${request.memberName} (${due.label.toLowerCase()})`)
-              .join(', ')}
-            . A missed window is reportable to the Data Protection Board whether or not the member
-            complains. Answer these before anything else in the queue, and record why each slipped.
+            {overdue.map(({ request, due }) => `${request.memberName} (${due.label.toLowerCase()})`).join(', ')}. Answer
+            these first and record why each slipped.
           </p>
         </Alert>
       ) : null}
-
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat
-          label="Open now"
-          value={counts.open}
-          icon={<FileClock className="size-4" />}
-          hint="received or in progress"
-        />
-        <Stat
-          label="Overdue"
-          value={counts.overdue}
-          icon={<TriangleAlert className="size-4" />}
-          hint={counts.overdue ? 'already reportable' : 'inside the window'}
-        />
-        <Stat
-          label="Due within a week"
-          value={dueThisWeek.length}
-          icon={<Hourglass className="size-4" />}
-          hint="start anything needing finance or exams now"
-        />
-        <Stat
-          label="Erasures open"
-          value={deletions.length}
-          icon={<Trash2 className="size-4" />}
-          hint="irreversible — read the retention exceptions"
-        />
-      </div>
 
       <Tabs
         ariaLabel="Request queue"
         items={VIEWS.map((v) => ({
           label: VIEW_LABEL[v],
-          href: v === 'open' ? '/admin/data-requests' : `/admin/data-requests?view=${v}`,
+          href: viewHref(v),
           count: counts[v],
           active: v === view,
         }))}
@@ -181,14 +178,14 @@ export default async function DataRequestsPage({
           }
           description={
             view === 'overdue'
-              ? `All ${counts.open} open request${counts.open === 1 ? '' : 's'} are still inside the ${RESPONSE_WINDOW_DAYS}-day window. This is the state to keep it in — the clock does not pause for term breaks.`
+              ? `Every open request is still inside its ${RESPONSE_WINDOW_DAYS}-day window.`
               : view === 'open'
-                ? `Every request raised has been answered. ${counts.closed} closed request${counts.closed === 1 ? '' : 's'} remain in the record; DPDP responses are auditable long after they are sent.`
-                : 'Members raise these from Settings → Privacy in the member portal. None has arrived in this category yet.'
+                ? 'Every request raised has been answered; the answered ones stay on the record.'
+                : 'Members raise these from their privacy settings. None of this kind has arrived yet.'
           }
           action={
             view !== 'all' ? (
-              <ButtonLink variant="secondary" href="/admin/data-requests?view=all">
+              <ButtonLink variant="secondary" href={viewHref('all')}>
                 See every request
               </ButtonLink>
             ) : undefined
@@ -197,92 +194,55 @@ export default async function DataRequestsPage({
       ) : (
         <>
           <TableWrap className="hidden sm:block" caption="Data requests, soonest deadline first">
-            <Table className="min-w-[54rem]">
+            <Table>
               <THead>
                 <TR>
+                  <TH>Deadline</TH>
                   <TH>Member</TH>
                   <TH>Request</TH>
                   <TH>Received</TH>
-                  <TH>Deadline</TH>
                   <TH>State</TH>
-                  <TH>
-                    <span className="sr-only">Open request</span>
-                  </TH>
                 </TR>
               </THead>
               <TBody>
                 {rows.map(({ request, due }) => {
                   const Icon = KIND_ICON[request.kind];
                   return (
-                    <TR
-                      key={request.id}
-                      className={cn(
-                        due.overdue
-                          ? 'bg-danger-soft'
-                          : 'transition-colors duration-fast ease-brand hover:bg-surface-sunken',
-                      )}
-                    >
-                      <TD className="align-top">
-                        <p className="font-medium">{request.memberName}</p>
-                        <p className="font-mono text-xs text-muted">{request.id}</p>
+                    <TR key={request.id} interactive>
+                      <TD className={cn('whitespace-nowrap', due.overdue && 'border-l-4 border-l-danger')}>
+                        <Countdown due={due} />
+                        <span className="block text-xs tabular text-secondary">{formatDate(request.dueAt, fmt)}</span>
                       </TD>
-
-                      <TD className="align-top">
-                        <p className="flex items-center gap-1.5 font-medium">
+                      <TD>
+                        <Link
+                          href={`/admin/data-requests/${request.id}`}
+                          className="font-medium hover:text-brand-fg hover:underline"
+                        >
+                          {request.memberName}
+                        </Link>
+                      </TD>
+                      <TD className="whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1.5">
                           <Icon
                             className={cn(
-                              'size-3.5 shrink-0',
-                              request.kind === 'deletion' ? 'text-danger-fg' : 'text-muted',
+                              'size-4 shrink-0',
+                              request.kind === 'deletion' ? 'text-danger-fg' : 'text-secondary',
                             )}
                             aria-hidden="true"
                           />
                           {KIND_LABEL[request.kind]}
-                        </p>
-                        <p className="font-mono text-xs text-muted">{request.kind}</p>
+                        </span>
                       </TD>
-
-                      <TD className="whitespace-nowrap align-top tabular">
-                        {formatDate(request.createdAt)}
+                      <TD className="whitespace-nowrap tabular text-secondary">
+                        {formatDate(request.createdAt, fmt)}
                       </TD>
-
-                      <TD className="align-top">
-                        <p className="tabular">{formatDate(request.dueAt)}</p>
-                        <p
-                          className={cn(
-                            'mt-1 inline-flex items-center gap-1 text-xs font-semibold',
-                            due.tone === 'danger' && 'text-danger-fg',
-                            due.tone === 'warning' && 'text-warning-fg',
-                            due.tone === 'neutral' && 'text-muted',
-                          )}
-                        >
-                          {due.overdue ? (
-                            <TriangleAlert className="size-3 shrink-0" aria-hidden="true" />
-                          ) : null}
-                          {due.label}
-                        </p>
-                      </TD>
-
-                      <TD className="align-top">
+                      <TD className="whitespace-nowrap">
                         <Badge tone={STATE_TONE[request.state]} dot>
                           {STATE_LABEL[request.state]}
                         </Badge>
                         {request.state === 'fulfilled' && request.fulfilledAt ? (
-                          <p className="mt-1 text-xs text-muted">
-                            {formatDate(request.fulfilledAt)}
-                          </p>
+                          <span className="ml-2 text-xs text-secondary">{formatDate(request.fulfilledAt, fmt)}</span>
                         ) : null}
-                      </TD>
-
-                      <TD className="align-top">
-                        <ButtonLink
-                          variant="ghost"
-                          size="sm"
-                          href={`/admin/data-requests/${request.id}`}
-                          aria-label={`Open the ${KIND_LABEL[request.kind].toLowerCase()} request from ${request.memberName}`}
-                        >
-                          Open
-                          <ArrowRight className="size-3.5" aria-hidden="true" />
-                        </ButtonLink>
                       </TD>
                     </TR>
                   );
@@ -292,136 +252,79 @@ export default async function DataRequestsPage({
           </TableWrap>
 
           <ul className="space-y-3 sm:hidden">
-            {rows.map(({ request, due }) => (
-              <li key={request.id}>
-                <DefinitionCard
-                  className={due.overdue ? 'bg-danger-soft' : undefined}
-                  title={request.memberName}
-                  subtitle={
-                    <span>
-                      {KIND_LABEL[request.kind]} · <span className="font-mono">{request.id}</span>
+            {rows.map(({ request, due }) => {
+              const Icon = KIND_ICON[request.kind];
+              return (
+                <li key={request.id}>
+                  <Link
+                    href={`/admin/data-requests/${request.id}`}
+                    className={cn(
+                      'block space-y-1.5 rounded-lg border border-line bg-surface-raised p-4 transition-colors duration-fast ease-brand hover:border-line-strong',
+                      due.overdue && 'border-l-4 border-l-danger',
+                    )}
+                  >
+                    <span className="flex items-center justify-between gap-3 text-sm">
+                      <Countdown due={due} />
+                      <Badge tone={STATE_TONE[request.state]} dot className="shrink-0">
+                        {STATE_LABEL[request.state]}
+                      </Badge>
                     </span>
-                  }
-                  rows={[
-                    { label: 'Received', value: formatDate(request.createdAt) },
-                    {
-                      label: 'Deadline',
-                      value: (
-                        <span
-                          className={cn(
-                            'font-semibold',
-                            due.tone === 'danger' && 'text-danger-fg',
-                            due.tone === 'warning' && 'text-warning-fg',
-                          )}
-                        >
-                          {due.label}
-                        </span>
-                      ),
-                    },
-                    {
-                      label: 'State',
-                      value: (
-                        <Badge tone={STATE_TONE[request.state]} dot>
-                          {STATE_LABEL[request.state]}
-                        </Badge>
-                      ),
-                    },
-                  ]}
-                  actions={
-                    <ButtonLink
-                      variant="secondary"
-                      size="sm"
-                      href={`/admin/data-requests/${request.id}`}
-                    >
-                      Open request
-                      <ArrowRight className="size-3.5" aria-hidden="true" />
-                    </ButtonLink>
-                  }
-                />
-              </li>
-            ))}
+                    <span className="block font-semibold">{request.memberName}</span>
+                    <span className="flex items-center gap-1.5 text-sm text-secondary">
+                      <Icon className="size-4 shrink-0" aria-hidden="true" />
+                      {KIND_LABEL[request.kind]} · received {formatDate(request.createdAt, fmt)}
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         </>
       )}
 
-      <Section
-        title="What each kind obliges the college to do"
-        description="The rules, on the screen where the work happens. A policy document nobody opens is not a control."
+      <Disclosure
+        id="playbook"
+        summary={
+          <span className="flex items-center gap-2">
+            <BookOpen className="size-4 shrink-0 text-brand-fg" aria-hidden="true" />
+            Playbook: what each kind of request needs
+          </span>
+        }
       >
-        <div className="grid gap-4 lg:grid-cols-3">
-          <Card>
-            <CardHeader>
-              <div className="min-w-0 space-y-1">
-                <CardTitle as="h3" className="flex items-center gap-2">
-                  <Download className="size-4 text-brand-fg" aria-hidden="true" />
-                  Access copy
-                </CardTitle>
-                <CardDescription>Everything held, in a form they can take elsewhere.</CardDescription>
-              </div>
-            </CardHeader>
-            <CardBody className="space-y-3 text-sm text-secondary">
-              <p>
-                Profile, contact details, consent history with the notice version they agreed to,
-                connection requests, event registrations, job applications and donation receipts.
-              </p>
-              <p>
-                The package is built by a background job and delivered to the member’s verified
-                email. It is never rendered in this console: an export that an operator can read on
-                screen is a bulk contact export with extra steps.
-              </p>
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <div className="min-w-0 space-y-1">
-                <CardTitle as="h3" className="flex items-center gap-2">
-                  <PencilLine className="size-4 text-brand-fg" aria-hidden="true" />
-                  Correction
-                </CardTitle>
-                <CardDescription>Fix the field, keep the history.</CardDescription>
-              </div>
-            </CardHeader>
-            <CardBody className="space-y-3 text-sm text-secondary">
-              <p>
-                Name spelling, contact details, employment, city and visibility settings are
-                corrected in place, with the previous value kept in the audit log.
-              </p>
-              <p>
-                Roll number, branch and year of passing are not corrected here. They come from the
-                degree register, and a portal that lets those be edited on request is a portal whose
-                verification means nothing. Route those to the examinations branch.
-              </p>
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <div className="min-w-0 space-y-1">
-                <CardTitle as="h3" className="flex items-center gap-2">
-                  <Trash2 className="size-4 text-danger-fg" aria-hidden="true" />
-                  Erasure
-                </CardTitle>
-                <CardDescription>Irreversible, and not unconditional.</CardDescription>
-              </div>
-            </CardHeader>
-            <CardBody className="space-y-3 text-sm text-secondary">
-              <p>
-                A hard delete of the personal record — not a hidden flag. Personal fields, contact
-                rows, photo and message history go, and they do not come back.
-              </p>
-              <p className="flex gap-2 rounded border border-[color-mix(in_srgb,var(--danger)_40%,var(--border))] bg-danger-soft p-3 text-danger-fg">
-                <Landmark className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-                <span>
-                  Financial records are the exception and cannot be erased. Donations, 80G receipts
-                  and anything reportable under FCRA are kept for the statutory retention period.
-                  The exception is stated in full on the request itself, above the button.
-                </span>
-              </p>
-            </CardBody>
-          </Card>
-        </div>
-      </Section>
+        <dl className="grid gap-5 md:grid-cols-3">
+          <div className="space-y-1.5">
+            <dt className="flex items-center gap-2 font-semibold text-primary">
+              <Download className="size-4 text-brand-fg" aria-hidden="true" />
+              Access copy
+            </dt>
+            <dd>
+              Everything held about the member — profile, contact details, consent history, requests, registrations,
+              applications and donation records — packaged for the member, never shown on screen here.
+            </dd>
+          </div>
+          <div className="space-y-1.5">
+            <dt className="flex items-center gap-2 font-semibold text-primary">
+              <PencilLine className="size-4 text-brand-fg" aria-hidden="true" />
+              Correction
+            </dt>
+            <dd>
+              Names, contact details, work and city are corrected in place, with the old value kept in the audit log.
+              Roll number, branch and year of passing come from the degree register: send those to the examinations
+              branch.
+            </dd>
+          </div>
+          <div className="space-y-1.5">
+            <dt className="flex items-center gap-2 font-semibold text-primary">
+              <Trash2 className="size-4 text-danger-fg" aria-hidden="true" />
+              Erasure
+            </dt>
+            <dd>
+              The personal record is deleted for good. Donation records and tax receipts are kept for their statutory
+              period; the request itself says so above the button.
+            </dd>
+          </div>
+        </dl>
+      </Disclosure>
     </div>
   );
 }

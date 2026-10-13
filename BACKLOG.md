@@ -34,25 +34,25 @@ Three facts that shape the whole list:
 Nothing else can be trusted until this sprint is done, because none of it has
 ever run.
 
-- [ ] **Fix the initial migration so it applies.** Two statements fail on
+- [x] **Fix the initial migration so it applies.** (Done: citext added, the donations CHECK is a trigger; applied end to end by tests/rls.test.ts.) Two statements fail on
       Postgres 15: `citext` columns with no `CREATE EXTENSION citext`, and
       `chk_reconciler_not_creator` on `donations`, which is a `CHECK`
       containing a subquery — not permitted, `NOT VALID` included. Move the
       separation-of-duties rule to a trigger. Then actually run the file
       against a live database and confirm all 19 tables, the trigram indexes,
       the generated column and `rollover_batch()` exist.
-- [ ] **Create a non-owner application role and force RLS.** Postgres exempts a
+- [x] **Create a non-owner application role and force RLS.** (Done: alumni_app, FORCE on all 18 tables, append-only audit_log/consent_records.) Postgres exempts a
       table's owner from row-level security, and Prisma connects as the owner
       by default — which means every policy in the migration is currently
       inert. Create a dedicated role, `GRANT` it what it needs, revoke `DELETE`
       and `UPDATE` on `audit_log`, and `ALTER TABLE … FORCE ROW LEVEL SECURITY`
       on all 18 policied tables. Point `DATABASE_URL` at the new role.
-- [ ] **Switch the policies to `current_setting('app.tenant_id', true)`.** The
+- [x] **Policies fail closed.** (Done, and the plain `current_setting(..., true)` form in this item was not enough: on a pooled connection it returns '' and ''::uuid errors. Policies use app_tenant_id() = NULLIF(..., '').) The
       one-argument form raises `unrecognized configuration parameter` when the
       setting is absent rather than returning NULL, so the documented failure
       mode — policies evaluate false, queries return nothing — is not what
       happens today.
-- [ ] **RLS integration test.** Two tenants, same table. Assert `withTenant(A)`
+- [x] **RLS integration test.** (Done: tests/rls.test.ts, in-memory Postgres, no container.) Two tenants, same table. Assert `withTenant(A)`
       cannot read B's rows, that a missing `app.tenant_id` yields zero rows
       rather than everything, and that the context does not survive the
       transaction into the next borrower of the pooled connection. **This is
@@ -101,7 +101,7 @@ The primitives in `src/lib/auth/session.ts` are written and have **no callers**.
       login code in the response under two conditions that are both common
       deployment mistakes. Make it an explicit `ALLOW_INSECURE_FIXTURE_MODE`
       that logs a warning on every boot.
-- [ ] **Origin check on every mutating route.** `SameSite=Lax` is a browser
+- [x] **Origin check on every mutating route.** (Done in middleware: src/lib/auth/origin.ts.) `SameSite=Lax` is a browser
       default, not a control the application owns.
 - [ ] **Gate the `.vercel.app` host fallback on `NODE_ENV`.** Today any
       `*.vercel.app` host resolves to `DEFAULT_TENANT` regardless of subdomain,

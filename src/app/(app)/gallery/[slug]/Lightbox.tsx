@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ChevronLeft, ChevronRight, ImageOff, Maximize2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Maximize2, X } from 'lucide-react';
 
 import { Avatar, Badge, Button, Kbd } from '@/components/ui';
 import { cn } from '@/lib/cn';
@@ -14,18 +14,16 @@ import { cn } from '@/lib/cn';
  * overlay.tsx` builds `Dialog` and `Sheet`, and for the same reason: focus
  * trapping, Escape-to-close, `inert` on the background and correct
  * screen-reader semantics all come free and all get subtly wrong when
- * hand-rolled. Arrow keys and focus return are the two things the platform
- * does not give us, so they are the only two things implemented here.
+ * hand-rolled. Arrow keys, swiping and focus return are the things the
+ * platform does not give us, so they are the only things implemented here.
  *
  * Focus returns to the thumbnail that *opened* the viewer, not to whichever
  * photograph you arrowed onto. Someone who opens photo 3, browses to photo
  * 30 and presses Escape expects to be back where they were reading, not
  * scrolled two screens down the wall.
  *
- * Every photograph in this build has `url: null`, which is also what a
- * college's first week looks like. A tile with no file is drawn at the real
- * aspect ratio of the photograph it is waiting for, so the wall is the
- * shape it will always be and nothing reflows when the uploads land.
+ * The page hands this only photographs that have a file. A record whose
+ * file has not arrived is counted ("+12 more coming"), never drawn.
  */
 
 export interface PhotoTag {
@@ -46,12 +44,22 @@ export interface WallPhoto {
   tags: PhotoTag[];
 }
 
-export function PhotoWall({ photos, albumTitle }: { photos: WallPhoto[]; albumTitle: string }) {
+export function PhotoWall({
+  photos,
+  albumTitle,
+  credit,
+}: {
+  photos: WallPhoto[];
+  albumTitle: string;
+  /** For an album a graduate sent in: "Sent in by Sandeep Kolli · CSE ’15". */
+  credit?: string | null;
+}) {
   const [index, setIndex] = React.useState<number | null>(null);
 
   const dialogRef = React.useRef<HTMLDialogElement>(null);
   const triggers = React.useRef<Array<HTMLButtonElement | null>>([]);
   const openedFrom = React.useRef<number | null>(null);
+  const touchX = React.useRef<number | null>(null);
 
   const headingId = React.useId();
 
@@ -105,19 +113,31 @@ export function PhotoWall({ photos, albumTitle }: { photos: WallPhoto[]; albumTi
     }
   };
 
+  // A horizontal swipe of 48px or more moves one photograph.
+  const onTouchStart = (e: React.TouchEvent) => {
+    touchX.current = e.touches[0]?.clientX ?? null;
+  };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const start = touchX.current;
+    touchX.current = null;
+    const end = e.changedTouches[0]?.clientX;
+    if (start === null || end === undefined) return;
+    const dx = end - start;
+    if (Math.abs(dx) >= 48) step(dx < 0 ? 1 : -1);
+  };
+
   const current = index === null ? null : photos[index] ?? null;
+  const first = index === 0;
+  const last = index === photos.length - 1;
 
   return (
     <>
-      {/* Multi-column rather than a fixed grid: the fixture widths and
-          heights vary on purpose, and a row-based grid either crops mixed
-          orientations or leaves a ragged gap under every portrait. */}
-      <div className="columns-2 gap-4 sm:columns-3 xl:columns-4">
+      {/* Multi-column rather than a fixed grid: photographs come in mixed
+          orientations, and a row-based grid either crops them or leaves a
+          ragged gap under every portrait. */}
+      <div className="columns-2 gap-3 sm:columns-3 sm:gap-4 xl:columns-4">
         {photos.map((photo, i) => (
-          <figure
-            key={photo.id}
-            className="mb-4 break-inside-avoid overflow-hidden rounded-lg border border-line bg-surface-raised"
-          >
+          <figure key={photo.id} className="mb-3 break-inside-avoid sm:mb-4">
             <button
               type="button"
               ref={(el) => {
@@ -129,19 +149,16 @@ export function PhotoWall({ photos, albumTitle }: { photos: WallPhoto[]; albumTi
               } in the viewer`}
               style={{ aspectRatio: `${photo.width} / ${photo.height}` }}
               className={cn(
-                'group relative block w-full bg-surface-sunken',
-                'transition-colors duration-fast ease-brand hover:bg-surface',
+                'group relative block w-full overflow-hidden rounded-lg border border-line bg-surface-sunken',
                 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]',
               )}
             >
               <PhotoBody photo={photo} />
-
               <span
                 aria-hidden="true"
                 className={cn(
-                  'absolute bottom-2 right-2 grid size-7 place-items-center rounded border border-line',
-                  'bg-surface-raised text-muted opacity-0 shadow-sm transition-opacity duration-fast ease-brand',
-                  'group-hover:opacity-100 group-focus-visible:opacity-100',
+                  'absolute bottom-2 right-2 grid size-7 place-items-center rounded bg-scrim text-band-fg',
+                  'opacity-0 transition-opacity duration-fast ease-brand group-hover:opacity-100 group-focus-visible:opacity-100',
                 )}
               >
                 <Maximize2 className="size-3.5" />
@@ -149,7 +166,7 @@ export function PhotoWall({ photos, albumTitle }: { photos: WallPhoto[]; albumTi
             </button>
 
             {photo.caption || photo.tags.length > 0 ? (
-              <figcaption className="space-y-2 border-t border-line p-3">
+              <figcaption className="space-y-1.5 pt-2">
                 {photo.caption ? <p className="text-xs text-secondary">{photo.caption}</p> : null}
                 {photo.tags.length > 0 ? <TagRow tags={photo.tags} /> : null}
               </figcaption>
@@ -173,83 +190,92 @@ export function PhotoWall({ photos, albumTitle }: { photos: WallPhoto[]; albumTi
         onKeyDown={onKeyDown}
         aria-labelledby={headingId}
         className={cn(
-          'w-[calc(100vw-2rem)] max-w-4xl rounded-lg border border-line bg-surface-raised p-0 text-primary shadow-lg',
-          'backdrop:bg-[var(--overlay)] open:animate-scale-in',
+          'm-0 h-dvh max-h-none w-screen max-w-none overflow-hidden border-0 bg-[var(--overlay)] p-0 text-band-fg',
+          'backdrop:bg-[var(--overlay)] open:animate-fade-in',
         )}
       >
         {current && index !== null ? (
-          <div className="flex max-h-[90dvh] flex-col">
-            <div className="flex items-start justify-between gap-4 border-b border-line p-4">
-              <div className="min-w-0 space-y-0.5">
-                <h2 id={headingId} className="truncate font-display text-md font-semibold">
-                  {albumTitle}
-                </h2>
-                <p aria-live="polite" className="text-xs tabular text-secondary">
+          <div className="flex h-full flex-col" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+            <h2 id={headingId} className="sr-only">
+              {albumTitle}
+            </h2>
+
+            {/* The photograph, as large as the screen allows. A tap on the
+                space around it closes the viewer, as a tap on the backdrop
+                would. */}
+            <div
+              className="relative flex min-h-0 flex-1 items-center justify-center px-3 pb-3 pt-16 sm:px-16"
+              onClick={(e) => {
+                if (e.target === e.currentTarget) close();
+              }}
+            >
+              <div className="absolute inset-x-0 top-0 flex items-center justify-between gap-3 p-3">
+                <p aria-live="polite" className="rounded-full bg-scrim px-3 py-1.5 text-sm font-medium tabular text-band-fg">
                   {index + 1} of {photos.length}
                 </p>
+                <button
+                  type="button"
+                  onClick={close}
+                  aria-label="Close the viewer"
+                  className="grid size-11 place-items-center rounded-full bg-scrim text-band-fg"
+                >
+                  <X className="size-5" aria-hidden="true" />
+                </button>
               </div>
+
+              {current.url ? (
+                // College- and member-supplied storage URLs; see next.config.ts on why
+                // archive imagery bypasses the image optimiser.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={current.url}
+                  alt={current.caption ?? ''}
+                  className="max-h-full max-w-full rounded object-contain"
+                />
+              ) : null}
 
               <button
                 type="button"
-                onClick={close}
-                aria-label="Close the viewer"
-                className="-m-1 grid size-8 shrink-0 place-items-center rounded text-muted hover:bg-surface-sunken hover:text-primary"
+                onClick={() => step(-1)}
+                disabled={first}
+                aria-label="Previous photograph"
+                className="absolute left-3 top-1/2 hidden size-11 -translate-y-1/2 place-items-center rounded-full bg-scrim text-band-fg disabled:opacity-40 sm:grid"
               >
-                <svg viewBox="0 0 20 20" className="size-4" fill="none" aria-hidden="true">
-                  <path d="m5 5 10 10M15 5 5 15" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                </svg>
+                <ChevronLeft className="size-5" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                onClick={() => step(1)}
+                disabled={last}
+                aria-label="Next photograph"
+                className="absolute right-3 top-1/2 hidden size-11 -translate-y-1/2 place-items-center rounded-full bg-scrim text-band-fg disabled:opacity-40 sm:grid"
+              >
+                <ChevronRight className="size-5" aria-hidden="true" />
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <div className="flex justify-center bg-surface-sunken p-4">
-                <div
-                  style={{ aspectRatio: `${current.width} / ${current.height}` }}
-                  className="h-[min(56dvh,32rem)] max-h-full w-auto max-w-full overflow-hidden rounded border border-line bg-surface-raised"
-                >
-                  <PhotoBody photo={current} large />
-                </div>
-              </div>
+            {/* The bottom sheet: caption, tags, credit. */}
+            <div className="max-h-[40dvh] shrink-0 space-y-3 overflow-y-auto rounded-t-xl bg-surface-raised px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 text-primary shadow-lg">
+              {current.caption ? <p className="text-sm">{current.caption}</p> : null}
+              {current.tags.length > 0 ? <TagRow tags={current.tags} /> : null}
+              {credit ? <p className="text-xs text-secondary">{credit} — thank you</p> : null}
 
-              <div className="space-y-3 p-4">
-                <p className="text-sm">
-                  {current.caption ?? (
-                    <span className="text-muted">
-                      No caption was written for this photograph.
-                    </span>
-                  )}
+              <div className="flex items-center justify-between gap-3">
+                <p className="hidden items-center gap-1.5 text-xs text-secondary sm:flex">
+                  <Kbd>←</Kbd>
+                  <Kbd>→</Kbd>
+                  to move · <Kbd>Esc</Kbd> to close
                 </p>
-
-                {current.tags.length > 0 ? (
-                  <div className="space-y-1.5">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">Tagged</p>
-                    <TagRow tags={current.tags} />
-                  </div>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-surface px-4 py-3">
-              <p className="hidden items-center gap-1.5 text-xs text-muted sm:flex">
-                <Kbd>←</Kbd>
-                <Kbd>→</Kbd>
-                to move · <Kbd>Esc</Kbd> to close
-              </p>
-
-              <div className="flex items-center gap-2">
-                <Button variant="secondary" size="sm" onClick={() => step(-1)} disabled={index === 0}>
-                  <ChevronLeft className="size-4" aria-hidden="true" />
-                  Previous
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => step(1)}
-                  disabled={index === photos.length - 1}
-                >
-                  Next
-                  <ChevronRight className="size-4" aria-hidden="true" />
-                </Button>
+                <div className="flex flex-1 items-center gap-2 sm:hidden">
+                  <Button variant="secondary" onClick={() => step(-1)} disabled={first} className="min-h-11 flex-1">
+                    <ChevronLeft className="size-4" aria-hidden="true" />
+                    Previous
+                  </Button>
+                  <Button variant="secondary" onClick={() => step(1)} disabled={last} className="min-h-11 flex-1">
+                    Next
+                    <ChevronRight className="size-4" aria-hidden="true" />
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
@@ -261,34 +287,13 @@ export function PhotoWall({ photos, albumTitle }: { photos: WallPhoto[]; albumTi
 
 // ---------------------------------------------------------------
 
-/**
- * The photograph, or an honest stand-in for it.
- *
- * Never an `<img>` with an empty `src` — that renders the browser's broken
- * icon at whatever size it feels like and collapses the tile it was meant
- * to fill. The stand-in states plainly that the file has not been uploaded
- * and carries the pixel dimensions the record holds, so an operator
- * chasing missing files can see which ones they are.
- */
-function PhotoBody({ photo, large = false }: { photo: WallPhoto; large?: boolean }) {
-  if (photo.url) {
-    // College- and member-supplied storage URLs; see next.config.ts on why
-    // archive imagery bypasses the image optimiser.
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={photo.url} alt={photo.caption ?? ''} className="size-full object-cover" loading="lazy" />;
-  }
-
-  return (
-    <span className="flex size-full flex-col items-center justify-center gap-1 p-2 text-center">
-      <ImageOff className={cn('text-muted', large ? 'size-7' : 'size-5')} aria-hidden="true" />
-      <span className={cn('font-medium text-secondary', large ? 'text-sm' : 'text-xs')}>
-        Photograph not uploaded
-      </span>
-      <span className="font-mono text-xs tabular text-muted">
-        {photo.width} × {photo.height}
-      </span>
-    </span>
-  );
+/** The photograph itself. Only photographs with a file reach the wall. */
+function PhotoBody({ photo }: { photo: WallPhoto }) {
+  if (!photo.url) return null;
+  // College- and member-supplied storage URLs; see next.config.ts on why
+  // archive imagery bypasses the image optimiser.
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={photo.url} alt={photo.caption ?? ''} className="size-full object-cover" loading="lazy" />;
 }
 
 function TagRow({ tags }: { tags: PhotoTag[] }) {
@@ -302,7 +307,7 @@ function TagRow({ tags }: { tags: PhotoTag[] }) {
               title={tag.line ? `${tag.name} · ${tag.line}` : tag.name}
               className={cn(
                 'inline-flex max-w-52 items-center gap-1.5 rounded-full border border-line bg-surface py-0.5 pl-0.5 pr-2.5',
-                'text-xs font-medium transition-colors duration-fast ease-brand',
+                'text-xs font-medium text-primary transition-colors duration-fast ease-brand',
                 'hover:border-line-strong hover:text-brand-fg',
               )}
             >

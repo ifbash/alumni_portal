@@ -1,15 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { contrastRatio } from '@/lib/branding/color';
+import { inSentence, joinList } from '@/lib/branding/copy';
 import {
+  AssetSpec,
   BrandPack,
+  CampusPhoto,
+  CopySpec,
   DEFAULT_PACK,
   OVERRIDABLE_TOKENS,
   mergePack,
   type BrandPackInput,
   type DeepPartial,
 } from '@/lib/branding/pack';
+import { deskFor, greetingFor, jobReviewLine, receiptLabel, vendorLabel } from '@/lib/branding/copy';
 import { PACKS, resolvePack } from '@/lib/branding/registry';
-import { buildTokens, contrastReport, tokensToCss } from '@/lib/branding/tokens';
+import { scopedTokensCss } from '@/lib/branding/scope';
+import { buildTokens, contrastReport, densityCss, tokensToCss } from '@/lib/branding/tokens';
+import { getPublicEvents, isOnlineVenue, pickLeadEvent } from '@/lib/data/public-events';
 
 /**
  * The token engine.
@@ -96,9 +103,44 @@ describe('derivation is legible for any seed', () => {
         // WCAG 1.4.11: non-text UI that carries meaning. A focus ring
         // nobody can see makes keyboard navigation unusable.
         expect(ratio('--focus-ring', surface), 'focus ring').toBeGreaterThanOrEqual(3);
+        // …and on the raised surface, where most focusable things sit: the
+        // header bar, cards, chips and inputs. Measured against the page
+        // alone, the dark ring shipped at 2.83:1 on every one of them.
+        expect(ratio('--focus-ring', t['--surface-raised']!), 'focus ring on a raised surface').toBeGreaterThanOrEqual(3);
+        // Hovering must not take the button label below AA either.
+        expect(
+          ratio('--button-primary-fg', t['--button-primary-hover']!),
+          'button label on its hover fill',
+        ).toBeGreaterThanOrEqual(4.5);
       });
     }
   }
+});
+
+describe('the primary button and the raised surface', () => {
+  it('fill the primary button with the seed itself when a light label reads on it', () => {
+    for (const id of ['diet', 'srivarsity', 'northgate'] as const) {
+      const p = PACKS[id]!;
+      const light = buildTokens(p).light;
+      expect(light['--button-primary-bg']!.toLowerCase(), id).toBe(p.color.primary.toLowerCase());
+      expect(contrastRatio(light['--button-primary-fg']!, light['--button-primary-bg']!)).toBeGreaterThanOrEqual(7);
+    }
+  });
+
+  it('keep a dark-mode button a mid-tone with a light label, not a pastel with a dark one', () => {
+    for (const id of ['diet', 'srivarsity', 'northgate'] as const) {
+      const dark = buildTokens(PACKS[id]!).dark;
+      expect(dark['--button-primary-fg']!.toLowerCase(), id).toBe('#ffffff');
+    }
+  });
+
+  it('raise a near-white page toward white, never into the neutral ramp hue', () => {
+    // DIET's surface is near-achromatic, so neutral-50 carries an arbitrary
+    // warm anchor and came out pink (#FFF8F6) under every card and input.
+    const light = buildTokens(PACKS.diet!).light;
+    expect(light['--surface-raised']!.toLowerCase()).not.toBe(light['--neutral-50']!.toLowerCase());
+    expect(contrastRatio(light['--surface-raised']!, '#ffffff')).toBeLessThan(1.03);
+  });
 });
 
 describe('mergePack', () => {
@@ -300,5 +342,230 @@ describe('tokensToCss', () => {
     const attr = css.match(/\[data-theme="dark"\]\{([^}]*)\}/);
     expect(media?.[1]).toBeTruthy();
     expect(attr?.[1]).toBe(media?.[1]);
+  });
+});
+
+describe('the public-pages schema additions', () => {
+  it('parse all four packs, and default what a pack leaves out', () => {
+    expect(Object.keys(PACKS).sort()).toEqual(['diet', 'ifbash', 'northgate', 'srivarsity']);
+    for (const [id, p] of Object.entries(PACKS)) {
+      expect(BrandPack.safeParse(p).success, id).toBe(true);
+    }
+    expect(DEFAULT_PACK.copy.officeName).toBe('alumni cell');
+    expect(DEFAULT_PACK.copy.rollNumberLabel).toBe('Roll number');
+    expect(DEFAULT_PACK.assets.campusPhotos).toEqual([]);
+  });
+});
+
+describe('the college band', () => {
+  it('raises no band or scrim issue for any pack, in either mode', () => {
+    for (const [id, p] of Object.entries(PACKS)) {
+      const t = buildTokens(p);
+      const bandIssues = t.issues.filter((i) => i.token.startsWith('--band') || i.token.startsWith('--scrim'));
+      expect(bandIssues, id).toEqual([]);
+      for (const mode of MODES) {
+        expect(t[mode]['--band'], `${id} ${mode}`).toBeTruthy();
+        expect(t[mode]['--scrim'], `${id} ${mode}`).toBeTruthy();
+        expect(t[mode]['--focus-ring-surface'], `${id} ${mode}`).toBe(t[mode]['--focus-ring']);
+      }
+    }
+  });
+
+  it('holds band text to 7:1 on every pack', () => {
+    for (const [id, p] of Object.entries(PACKS)) {
+      const t = buildTokens(p);
+      for (const mode of MODES) {
+        expect(contrastRatio(t[mode]['--band-fg']!, t[mode]['--band']!), `${id} ${mode}`).toBeGreaterThanOrEqual(7);
+      }
+    }
+  });
+
+  it('is the seed in both modes, stepping lighter in dark only when the seed matches the dark page', () => {
+    const diet = buildTokens(PACKS.diet!);
+    expect(diet.light['--band']).toBe('#1F3864');
+    expect(diet.dark['--band']).toBe('#1F3864');
+
+    // ifBash's seed aubergine is within 1.3:1 of its own dark page.
+    const ifbash = buildTokens(PACKS.ifbash!);
+    expect(ifbash.light['--band']).toBe('#2A1830');
+    expect(ifbash.dark['--band']).not.toBe('#2A1830');
+  });
+
+  it('takes a hex --band override and ignores anything else with a warning', () => {
+    const pinned = buildTokens(pack({ primary: '#1F3864', overrides: { '--band': '#0A2342' } }));
+    expect(pinned.light['--band']).toBe('#0A2342');
+
+    const bad = buildTokens(pack({ primary: '#1F3864', overrides: { '--band': 'navy' } }));
+    expect(bad.light['--band']).toBe('#1F3864');
+    expect(bad.issues.some((i) => i.token === '--band' && i.severity === 'warning')).toBe(true);
+    expect(bad.blocking).toBe(false);
+  });
+});
+
+describe('media slots', () => {
+  it('accept only a direct .mp4 or .webm hero video', () => {
+    const withVideo = (heroVideo: string) =>
+      AssetSpec.safeParse({ heroImage: '/brand/x/hero.webp', heroVideo }).success;
+
+    expect(withVideo('https://www.youtube.com/watch?v=x')).toBe(false);
+    expect(withVideo('/media/a.mov')).toBe(false);
+    expect(withVideo('/brand/x/hero.mp4')).toBe(true);
+    expect(withVideo('https://b.s3.ap-south-1.amazonaws.com/x/h.webm?v=2')).toBe(true);
+  });
+
+  it('refuse a hero video without a hero image to be its poster', () => {
+    const r = AssetSpec.safeParse({ heroVideo: '/brand/x/hero.mp4' });
+    expect(r.success).toBe(false);
+    expect(r.error?.issues[0]?.path).toEqual(['heroVideo']);
+  });
+
+  it('require alt text on every campus photo, and at most eight of them', () => {
+    expect(CampusPhoto.safeParse({ src: '/brand/x/a.jpg', alt: '' }).success).toBe(false);
+    expect(CampusPhoto.safeParse({ src: '/brand/x/a.jpg', alt: 'The main block' }).success).toBe(true);
+
+    const photo = { src: '/brand/x/a.jpg', alt: 'The main block' };
+    expect(AssetSpec.safeParse({ campusPhotos: Array(8).fill(photo) }).success).toBe(true);
+    expect(AssetSpec.safeParse({ campusPhotos: Array(9).fill(photo) }).success).toBe(false);
+  });
+});
+
+describe('copy helpers', () => {
+  it('put a label mid-sentence without breaking an acronym', () => {
+    expect(inSentence('Roll number')).toBe('roll number');
+    expect(inSentence('USN')).toBe('USN');
+    expect(inSentence('B.Tech memo')).toBe('B.Tech memo');
+  });
+
+  it('join a list the way a sentence does', () => {
+    expect(joinList([])).toBe('');
+    expect(joinList(['a'])).toBe('a');
+    expect(joinList(['a', 'b'])).toBe('a and b');
+    expect(joinList(['a', 'b', 'c'])).toBe('a, b and c');
+  });
+});
+
+describe('public events', () => {
+  it('match online venues on whole words only', () => {
+    expect(isOnlineVenue('Alumni Meet Hall')).toBe(false);
+    expect(isOnlineVenue('Online — link sent on registration')).toBe(true);
+    expect(isOnlineVenue(null)).toBe(false);
+  });
+
+  it('lead with the first college-wide, in-person event', () => {
+    // The fixture's first upcoming event is an online panel; the reunion
+    // after it is the one the landing page should put in front.
+    const lead = pickLeadEvent(getPublicEvents('upcoming'));
+    expect(lead?.event.title).toBe('Annual Alumni Meet 2026');
+    expect(lead?.onCampus).toBe(true);
+    expect(lead?.event.departmentCode).toBeNull();
+    expect(isOnlineVenue(lead?.event.venue ?? null)).toBe(false);
+  });
+});
+
+describe('chart tokens', () => {
+  it.each(Object.keys(PACKS))('draw %s bars at 3:1 or better on a card, in both modes', (id) => {
+    const t = buildTokens(PACKS[id]!);
+    for (const mode of MODES) {
+      const s = t[mode];
+      const card = s['--surface-raised']!;
+      expect(contrastRatio(s['--chart-bar']!, card), `${mode} bar`).toBeGreaterThanOrEqual(3);
+      expect(contrastRatio(s['--chart-bar-highlight']!, card), `${mode} highlight`).toBeGreaterThanOrEqual(3);
+      // A highlight the same colour as the bars highlights nothing.
+      expect(s['--chart-bar-highlight']!.toLowerCase(), `${mode} highlight differs`).not.toBe(
+        s['--chart-bar']!.toLowerCase(),
+      );
+      expect(s['--chart-track'], `${mode} track`).toBe(s['--border-strong']);
+    }
+  });
+
+  it.each(SEEDS)('stay at 3:1 for $label', ({ primary, surface }) => {
+    const t = buildTokens(pack({ primary, surface }));
+    for (const mode of MODES) {
+      const s = t[mode];
+      expect(contrastRatio(s['--chart-bar']!, s['--surface-raised']!), mode).toBeGreaterThanOrEqual(3);
+    }
+  });
+});
+
+describe('density and scoping', () => {
+  it('emit the compact density for one element, from a width up', () => {
+    const css = densityCss('compact', '.console-density', 1024);
+    expect(css.startsWith('@media (min-width:1024px){.console-density{')).toBe(true);
+    expect(css).toContain('--control-h:34px');
+    expect(densityCss('comfortable', '.x')).toBe(
+      '.x{--control-h-sm:32px;--control-h:40px;--control-h-lg:48px;--gutter:24px;--section-y:72px;--card-p:20px;--row-h:52px}',
+    );
+  });
+
+  it('scope a college’s tokens to a wrapper, following the document or forced', () => {
+    const t = buildTokens(PACKS.srivarsity!);
+    const auto = scopedTokensCss(t, '.preview');
+    expect(auto).not.toContain(':root{');
+    expect(auto).toContain(`.preview{`);
+    expect(auto).toContain(`:root:not([data-theme="light"]) .preview{`);
+    expect(auto).toContain(`[data-theme="dark"] .preview{`);
+    expect(auto).toContain(`--band:${t.light['--band']}`);
+
+    const dark = scopedTokensCss(t, '.p', 'dark');
+    expect(dark).not.toContain('@media');
+    // Light first, then dark: the later declaration wins inside one block.
+    expect(dark.lastIndexOf(`--surface:${t.dark['--surface']}`)).toBeGreaterThan(dark.indexOf(`--surface:${t.light['--surface']}`));
+    expect(scopedTokensCss(t, '.p', 'light')).not.toContain(`--surface:${t.dark['--surface']}`);
+  });
+});
+
+describe('signed-in pack fields', () => {
+  const base = { portalName: 'Test Portal', institutionName: 'Test Institute', shortName: 'TIE' };
+
+  it('default to no promise and plain words', () => {
+    const copy = CopySpec.parse(base);
+    expect(copy.greeting).toBe('Namaste');
+    expect(copy.newsDesks).toEqual({});
+    expect(copy.jobReviewTurnaround).toBeUndefined();
+    expect(copy.donationReceiptNote).toBeUndefined();
+    expect(copy.receiptLabel).toBeUndefined();
+
+    expect(greetingFor(copy)).toBe('Namaste');
+    expect(deskFor(copy, 'college_admin')).toBe('College administration');
+    expect(deskFor(copy, 'alumni_cell_operator')).toBe('Alumni cell');
+    expect(deskFor(copy, 'placement_officer')).toBe('Placement cell');
+    expect(vendorLabel(copy)).toBe('the portal provider');
+    expect(jobReviewLine(copy)).toBeNull();
+    expect(receiptLabel(copy)).toBe('Receipt');
+  });
+
+  it('carry the college’s own words when it sets them', () => {
+    const copy = CopySpec.parse({
+      ...base,
+      greeting: 'Vanakkam',
+      newsDesks: { placement_officer: 'Training and Placement' },
+      jobReviewTurnaround: 'two working days',
+      receiptLabel: '80G receipt',
+      poweredBy: 'Acme',
+    });
+    expect(greetingFor(copy)).toBe('Vanakkam');
+    expect(deskFor(copy, 'placement_officer')).toBe('Training and Placement');
+    expect(deskFor(copy, 'college_admin')).toBe('College administration');
+    expect(jobReviewLine(copy)).toBe('usually within two working days');
+    expect(receiptLabel(copy)).toBe('80G receipt');
+    expect(vendorLabel(copy)).toBe('Acme');
+    expect(CopySpec.safeParse({ ...base, greeting: 'x' }).success).toBe(false);
+  });
+
+  it('let a campus photo be tagged with where it may appear', () => {
+    const photo = { src: '/brand/x/a.jpg', alt: 'The main block' };
+    const tagged = CampusPhoto.parse({ ...photo, use: ['home', 'giving'], batchYear: 2015, departmentCode: 'CSE' });
+    expect(tagged).toMatchObject({ use: ['home', 'giving'], batchYear: 2015, departmentCode: 'CSE' });
+
+    const plain = CampusPhoto.parse(photo);
+    expect(plain.use).toBeUndefined();
+    expect(plain.batchYear).toBeUndefined();
+
+    expect(CampusPhoto.safeParse({ ...photo, use: ['directory'] }).success).toBe(false);
+    expect(CampusPhoto.safeParse({ ...photo, batchYear: 1900 }).success).toBe(false);
+  });
+
+  it('parse every shipped pack unchanged', () => {
+    for (const p of Object.values(PACKS)) expect(p.copy.greeting).toBe('Namaste');
   });
 });

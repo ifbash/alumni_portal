@@ -1,32 +1,23 @@
 import type { Metadata } from 'next';
 import { notFound, redirect } from 'next/navigation';
-import { Download, Landmark, PencilLine, Trash2, Clock } from 'lucide-react';
-import {
-  Alert,
-  Badge,
-  Card,
-  CardBody,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Section,
-} from '@/components/ui';
+import { Clock, Download, PencilLine, Trash2 } from 'lucide-react';
+import { Badge, Card, Disclosure, EmptyState } from '@/components/ui';
 import { getSession } from '@/lib/auth/session';
 import { requireSession } from '@/lib/auth/guard';
 import { getDataRequests, getOwnProfile } from '@/lib/data/repo';
 import { getTenantBrand } from '@/lib/tenant';
-import { formatDate, formatRelative } from '@/lib/format';
+import { displayNow, formatDate, formatRelative } from '@/lib/format';
 import type { DataRequest } from '@/lib/data/types';
 import { DataRequestForm } from './DataRequestForm';
 
 /**
- * Your data — the DPDP request surface.
+ * Your data — the data-request surface.
  *
- * Three commitments a portal usually leaves implicit are written down
- * here instead: what an export actually contains, how long the college
- * has to answer, and what survives a deletion because the law requires
- * it. The last one is the one nobody states, and it is the reason a
- * member later feels lied to.
+ * Open requests come first, with their due date, because a statutory
+ * clock the member cannot see running is a clock nobody chases. Then the
+ * three things a member can ask for. What an export contains and what a
+ * deletion leaves behind are kept one click away, because the second is
+ * the one nobody states and the reason a member later feels misled.
  */
 
 export const metadata: Metadata = {
@@ -46,217 +37,161 @@ export default async function DataSettingsPage() {
   const resolved = await getTenantBrand();
   const pack = resolved?.brand.pack;
   const supportEmail = pack?.copy.supportEmail ?? null;
+  const timing = pack ? { locale: pack.locale.locale, timeZone: pack.locale.timeZone } : {};
 
   const mine = getDataRequests().filter((r) => r.memberId === session.memberId);
   const inFlight = mine.filter((r) => r.state === 'received' || r.state === 'in_progress');
   const settled = mine.filter((r) => r.state === 'fulfilled' || r.state === 'refused');
 
-  const now = Date.now();
+  // The fixture clock, as on every other screen: never the wall clock.
+  const now = displayNow().getTime();
 
   return (
     <>
-      {/* ---- Rights ------------------------------------------------------ */}
+      {/* ---- Open requests ------------------------------------------------ */}
 
-      <Section
-        title="What you can ask for"
-        description={`Under the Digital Personal Data Protection Act you can ask the college for a copy of what it holds on you, ask it to correct anything wrong, and ask it to delete your account. It has ${RESPONSE_DAYS} days to answer, counted from the day the request lands — not from the day someone gets round to it.`}
-      >
-        {inFlight.length ? (
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold">Open requests</h3>
+      {inFlight.length ? (
+        <section aria-labelledby="open-requests" className="space-y-3">
+          <h2 id="open-requests" className="font-display text-xl font-semibold">
+            Open requests
+          </h2>
+          <ul className="space-y-3">
             {inFlight.map((r) => {
               const overdue = new Date(r.dueAt).getTime() < now;
               return (
-                <Card key={r.id} className="p-card">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0 space-y-1">
-                      <p className="flex items-center gap-2 text-sm font-semibold">
-                        <KindIcon kind={r.kind} />
-                        {KIND_LABEL[r.kind]}
-                      </p>
-                      <p className="text-xs text-muted">
-                        Raised {formatDate(r.createdAt)} · reference{' '}
-                        <span className="font-mono">{r.id}</span>
-                      </p>
+                <li key={r.id}>
+                  <Card className="p-4 sm:p-card">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 space-y-1">
+                        <p className="flex items-center gap-2 text-sm font-semibold">
+                          <KindIcon kind={r.kind} />
+                          {KIND_LABEL[r.kind]}
+                        </p>
+                        <p className="text-xs text-secondary">
+                          Asked {formatDate(r.createdAt, timing)} · reference{' '}
+                          <span className="font-mono">{r.id}</span>
+                        </p>
+                      </div>
+                      {overdue ? (
+                        <Badge tone="danger" dot>
+                          Overdue
+                        </Badge>
+                      ) : (
+                        <Badge tone={r.state === 'in_progress' ? 'brand' : 'neutral'} dot>
+                          {STATE_LABEL[r.state]}
+                        </Badge>
+                      )}
                     </div>
-                    <Badge tone={r.state === 'in_progress' ? 'info' : 'warning'} dot>
-                      {STATE_LABEL[r.state]}
-                    </Badge>
-                  </div>
-
-                  <div
-                    className={
-                      overdue
-                        ? 'mt-3 flex items-center gap-2 rounded border border-line bg-danger-soft px-3 py-2 text-sm text-danger-fg'
-                        : 'mt-3 flex items-center gap-2 rounded border border-line bg-surface-sunken px-3 py-2 text-sm text-secondary'
-                    }
-                  >
-                    <Clock className="size-4 shrink-0" aria-hidden="true" />
-                    {overdue ? (
-                      <span>
-                        <strong>Past due.</strong> The statutory answer was owed{' '}
-                        {formatDate(r.dueAt)}. You can escalate — see below.
-                      </span>
-                    ) : (
-                      <span>
-                        Due {formatDate(r.dueAt)} — {formatRelative(r.dueAt)}
-                      </span>
-                    )}
-                  </div>
-                </Card>
+                    <p
+                      className={
+                        overdue
+                          ? 'mt-3 flex items-center gap-2 text-sm font-medium text-danger-fg'
+                          : 'mt-3 flex items-center gap-2 text-sm text-secondary'
+                      }
+                    >
+                      <Clock className="size-4 shrink-0" aria-hidden="true" />
+                      {overdue
+                        ? `The answer was due ${formatDate(r.dueAt, timing)}. You can take it further; see below.`
+                        : `Answer due ${formatDate(r.dueAt, timing)}, ${formatRelative(r.dueAt, timing)}.`}
+                    </p>
+                  </Card>
+                </li>
               );
             })}
-          </div>
-        ) : (
-          <Alert tone="neutral" title="You have no open requests">
-            Nothing is in flight. You can raise one below at any time, and you do not have to give a
-            reason for asking.
-          </Alert>
-        )}
+          </ul>
+        </section>
+      ) : (
+        <EmptyState variant="inline" title="You have no open requests." />
+      )}
 
-        <Card>
-          <CardHeader>
-            <div className="space-y-1">
-              <CardTitle as="h3" className="text-md">
-                Raise a request
-              </CardTitle>
-              <CardDescription>
-                Goes to the alumni cell as a tracked item with a due date on it, not as an email
-                somebody can lose.
-              </CardDescription>
-            </div>
-          </CardHeader>
-          <CardBody>
-            <DataRequestForm openKinds={inFlight.map((r) => r.kind)} />
-          </CardBody>
-        </Card>
+      {/* ---- Ask ----------------------------------------------------------- */}
 
-        {settled.length ? (
-          <div className="space-y-2">
-            <h3 className="text-sm font-semibold">Answered</h3>
-            <ul className="space-y-2">
-              {settled.map((r) => (
-                <li
-                  key={r.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line px-3.5 py-2.5"
-                >
-                  <span className="flex items-center gap-2 text-sm">
-                    <KindIcon kind={r.kind} />
-                    {KIND_LABEL[r.kind]}
-                    <span className="text-xs text-muted">raised {formatDate(r.createdAt)}</span>
-                  </span>
-                  <Badge tone={r.state === 'fulfilled' ? 'success' : 'danger'}>
-                    {STATE_LABEL[r.state]}
-                    {r.fulfilledAt ? ` ${formatDate(r.fulfilledAt)}` : ''}
-                  </Badge>
-                </li>
-              ))}
-            </ul>
-          </div>
+      <DataRequestForm openKinds={inFlight.map((r) => r.kind)} responseDays={RESPONSE_DAYS} />
+
+      {settled.length ? (
+        <section aria-labelledby="answered" className="space-y-2">
+          <h2 id="answered" className="text-sm font-semibold">
+            Answered
+          </h2>
+          <ul className="divide-y divide-line rounded-lg border border-line bg-surface-raised">
+            {settled.map((r) => (
+              <li key={r.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                <span className="flex items-center gap-2 text-sm">
+                  <KindIcon kind={r.kind} />
+                  {KIND_LABEL[r.kind]}
+                  <span className="text-xs text-secondary">asked {formatDate(r.createdAt, timing)}</span>
+                </span>
+                <Badge tone={r.state === 'fulfilled' ? 'success' : 'danger'}>
+                  {STATE_LABEL[r.state]}
+                  {r.fulfilledAt ? ` ${formatDate(r.fulfilledAt, timing)}` : ''}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {/* ---- What it covers -------------------------------------------------- */}
+
+      <div className="space-y-3">
+        <Disclosure id="export-contents" summary="What an export contains">
+          <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {EXPORT_CONTENTS.map((c) => (
+              <li key={c} className="flex items-start gap-2">
+                <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-line-strong" aria-hidden="true" />
+                <span>{c}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 border-t border-line pt-3">
+            It does not contain other people&rsquo;s data. A request you received names the person
+            who sent it, but their profile is theirs to ask for.
+          </p>
+        </Disclosure>
+
+        <Disclosure id="kept-after-deletion" summary="What deletion does not remove">
+          <ul className="space-y-3">
+            <li>
+              <p className="font-semibold text-primary">Donation records and tax receipts</p>
+              <p>
+                Kept for as long as the law requires the college to keep its accounts. Your name
+                stays on a receipt that has already been issued.
+              </p>
+            </li>
+            <li>
+              <p className="font-semibold text-primary">The record of staff actions</p>
+              <p>
+                Who verified you, who exported a list you were in, who changed a role. It is how you
+                can check that your data was handled properly.
+              </p>
+            </li>
+            <li>
+              <p className="font-semibold text-primary">The college&rsquo;s degree register</p>
+              <p>
+                The record that you hold a degree belongs to the examinations branch. Deleting your
+                account does not touch it.
+              </p>
+            </li>
+          </ul>
+        </Disclosure>
+      </div>
+
+      {/* ---- Grievance ------------------------------------------------------ */}
+
+      <p className="max-w-prose text-sm text-secondary">
+        Not satisfied with an answer? Write to the college&rsquo;s grievance contact
+        {supportEmail ? (
+          <>
+            {' '}
+            at{' '}
+            <a href={`mailto:${supportEmail}`} className="link">
+              {supportEmail}
+            </a>
+          </>
         ) : null}
-      </Section>
-
-      {/* ---- What is in an export ---------------------------------------- */}
-
-      <Section title="What an export contains">
-        <Card>
-          <CardBody className="space-y-4">
-            <p className="text-sm text-secondary">
-              One JSON file and one CSV, covering everything the portal holds that is about you as a
-              person:
-            </p>
-            <ul className="grid gap-2 text-sm sm:grid-cols-2">
-              {EXPORT_CONTENTS.map((c) => (
-                <li key={c} className="flex items-start gap-2">
-                  <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-line-strong" aria-hidden="true" />
-                  <span className="text-secondary">{c}</span>
-                </li>
-              ))}
-            </ul>
-            <p className="border-t border-line pt-3 text-xs text-muted">
-              It does not contain other people&rsquo;s data. A message you received names the person
-              who sent it, but their profile is theirs to export, not yours.
-            </p>
-          </CardBody>
-        </Card>
-      </Section>
-
-      {/* ---- Retention exception ------------------------------------------ */}
-
-      <Section title="What deletion does not remove">
-        <Card>
-          <CardHeader>
-            <div className="space-y-1">
-              <CardTitle as="h3" className="text-md">
-                Three things survive a deletion request
-              </CardTitle>
-              <CardDescription>
-                Not a loophole and not a preference — each is a record the college is required to
-                keep, and refusing to say so up front is how a member finds out afterwards.
-              </CardDescription>
-            </div>
-            <Landmark className="size-5 shrink-0 text-muted" aria-hidden="true" />
-          </CardHeader>
-
-          <CardBody>
-            <ul className="space-y-4">
-              <li className="space-y-1">
-                <p className="text-sm font-semibold">Donations, receipts and 80G certificates</p>
-                <p className="text-sm text-secondary">
-                  Financial records stay for as long as the Income-tax Act requires the college to
-                  keep its books, and where a contribution was foreign, for as long as FCRA
-                  reporting requires. Your name stays on a receipt that has already been issued
-                  against it.
-                </p>
-              </li>
-              <li className="space-y-1">
-                <p className="text-sm font-semibold">The audit trail of staff actions</p>
-                <p className="text-sm text-secondary">
-                  Who verified you, who exported a list you were in, who changed a role. Deleting
-                  the evidence of how your data was handled would destroy the only protection you
-                  have that it was handled correctly.
-                </p>
-              </li>
-              <li className="space-y-1">
-                <p className="text-sm font-semibold">The college&rsquo;s degree register</p>
-                <p className="text-sm text-secondary">
-                  The examinations branch&rsquo;s record that you hold a degree is not portal data
-                  and is outside what this portal can delete. This page controls your alumni
-                  account, not your qualification.
-                </p>
-              </li>
-            </ul>
-          </CardBody>
-        </Card>
-      </Section>
-
-      {/* ---- Escalation ---------------------------------------------------- */}
-
-      <Section title="If you are not satisfied">
-        <Card>
-          <CardBody className="space-y-3 text-sm">
-            <p className="text-secondary">
-              Raise it first with the college&rsquo;s grievance contact
-              {supportEmail ? (
-                <>
-                  {' '}
-                  at{' '}
-                  <a href={`mailto:${supportEmail}`} className="link">
-                    {supportEmail}
-                  </a>
-                </>
-              ) : null}
-              , quoting the reference number on your request. If the college does not answer within{' '}
-              {RESPONSE_DAYS} days, or answers in a way you disagree with, you can complain to the
-              Data Protection Board of India.
-            </p>
-            <p className="text-secondary">
-              {profile.fullName}, your requests are listed above with their reference numbers. Keep
-              one to hand — it is what makes a complaint traceable.
-            </p>
-          </CardBody>
-        </Card>
-      </Section>
+        , quoting the reference on your request. If the college does not answer within{' '}
+        {RESPONSE_DAYS} days, you can complain to the Data Protection Board of India.
+      </p>
     </>
   );
 }
@@ -280,12 +215,12 @@ const STATE_LABEL: Record<DataRequest['state'], string> = {
 };
 
 const EXPORT_CONTENTS = [
-  'Your profile as it stands, and every field the college has edited',
-  'Your contact record — email, mobile, links, and the visibility setting on it',
-  'Every connection request you sent or received, with the message text',
-  'Event registrations, guests and check-ins',
-  'Job postings you made and applications you sent',
-  'Your consent log, with the notice version against each entry',
-  'Verification: the register row you matched, the confidence, and who approved it',
+  'Your profile, and every change the college made to it',
+  'Your contact details and who you share them with',
+  'Requests you sent or received, with their messages',
+  'Event registrations and check-ins',
+  'Jobs you posted and applications you sent',
+  'Your consent history',
+  'How your registration was verified, and by whom',
   'Donations you made, with receipt numbers',
 ];

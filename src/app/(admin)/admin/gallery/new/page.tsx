@@ -6,6 +6,7 @@ import { getTenantBrand } from '@/lib/tenant';
 import { getDegreeRegisterStats, getDepartments, getEvents } from '@/lib/data/repo';
 import { getAlbums } from '@/lib/data/content';
 import { Breadcrumbs, PageHeader } from '@/components/ui';
+import { displayNow } from '@/lib/format';
 import { AlbumForm } from './AlbumForm';
 
 /**
@@ -18,9 +19,22 @@ import { AlbumForm } from './AlbumForm';
  * would then have to reject.
  */
 
-export const metadata = { title: 'New album' };
+export const metadata = { title: 'New album · Staff console' };
 
-export default async function NewAlbumPage() {
+const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+
+/** "YYYY-MM-DD" for an instant, in the college's time zone. */
+function dayIn(iso: string | Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone }).format(
+    new Date(iso),
+  );
+}
+
+export default async function NewAlbumPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const session = await getSession();
   if (!session) redirect('/login');
 
@@ -49,29 +63,45 @@ export default async function NewAlbumPage() {
 
   const takenSlugs = getAlbums({ includeDrafts: true }).map((a) => a.slug);
 
+  // What choosing an event fills in: its title, the day it happened, its branch.
+  const tz = pack.locale.timeZone;
+  const eventFacts = getEvents(session, { when: 'all', includeDrafts: true }).map((e) => ({
+    slug: e.slug,
+    title: e.title,
+    date: dayIn(e.startsAt, tz),
+    departmentCode: e.departmentCode,
+  }));
+
+  const requested = one((await searchParams).event);
+  const initialEvent = requested && events.some((e) => e.value === requested) ? requested : null;
+
   return (
     <div className="space-y-6">
       <PageHeader
         breadcrumbs={
           <Breadcrumbs
             items={[
-              { label: 'Admin', href: '/admin' },
+              { label: 'Staff console', href: '/admin' },
               { label: 'Gallery', href: '/admin/gallery' },
               { label: 'New album' },
             ]}
           />
         }
-        eyebrow="Engagement"
+        eyebrow="Gallery"
         title="New album"
-        description="Create the album first and upload into it. Leaving it unpublished is the normal case — an album with no photographs in it yet is not something members should be able to open."
+        description="Start from an event, or from photos a graduate sent in."
       />
 
       <AlbumForm
         departments={departments}
         events={events}
+        eventFacts={eventFacts}
         years={years}
         takenSlugs={takenSlugs}
-        portalName={pack.copy.portalName}
+        initialEvent={initialEvent}
+        today={dayIn(displayNow(), tz)}
+        officeName={pack.copy.officeName}
+        locale={pack.locale}
       />
     </div>
   );

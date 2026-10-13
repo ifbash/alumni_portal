@@ -1,20 +1,21 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
+  ArrowRight,
+  ArrowUpRight,
   AtSign,
   BadgeCheck,
   CircleAlert,
   CircleCheck,
   CircleSlash2,
   Database,
-  Eye,
   FileJson,
   Globe,
   Landmark,
   Lock,
-  Server,
   ShieldCheck,
   UserPlus,
 } from 'lucide-react';
@@ -23,6 +24,7 @@ import {
   Alert,
   Badge,
   Button,
+  ButtonLink,
   Card,
   CardBody,
   CardDescription,
@@ -31,42 +33,43 @@ import {
   CardTitle,
   Checkbox,
   ConfirmDialog,
+  Disclosure,
   Field,
   Fieldset,
   FormActions,
   Input,
   Radio,
-  Separator,
   Skeleton,
-  Spinner,
   Switch,
   useToast,
 } from '@/components/ui';
 import { api, outcomeToast, type ApiOutcome } from '@/lib/client/api';
 import { cn } from '@/lib/cn';
-import type { Feature } from '@/lib/branding/pack';
+import type { BrandPack, Feature } from '@/lib/branding/pack';
+
+import { MiniPortal } from '../_shared/MiniPortal';
 
 /**
- * Onboarding a college.
+ * Setting up a college.
  *
  * Three steps, and the third one is the point: before anything is written,
- * the form names every row it is about to create. Provisioning a tenant is
- * not reversible by clicking again — a half-created college with a live
- * subdomain and no admin invite is worse than no college at all.
+ * the server names every row it is about to create. Setting a college up
+ * is not reversible by clicking again — a half-created college with a live
+ * address and no admin invite is worse than no college at all.
  *
  * That third step is not this file's opinion. Arriving on it posts the
  * whole form to `POST /api/platform/tenants` with `dryRun: true`, and what
- * is listed is what the handler says it would write — same route, same
+ * is shown is what the handler says it would write — same route, same
  * schema, same collision checks, one flag apart from the call the button
- * makes. A summary composed here would drift from the writer the first
- * time the schema moved, and this is the one screen where a description
- * that has quietly stopped being true is expensive.
+ * makes. The human summary is built only from fields the server returned
+ * (plus the admin's email the operator typed); the verbatim list sits in a
+ * disclosure for anyone who wants the rows.
  *
- * The subdomain check as you type runs against the tenant list the server
- * passed down. A name that is free here can still lose a race, so the API
- * checks it again against both namespaces — existing tenants and the brand
- * pack registry — and answers 409. The real guarantee is the unique index
- * on `tenants.subdomain`; everything before it is courtesy.
+ * The address check as you type runs against the lists the server passed
+ * down. A name that is free here can still lose a race, so the API checks
+ * it again against both namespaces — existing colleges and the brand pack
+ * registry — and answers 409. The real guarantee is the unique index on
+ * `tenants.subdomain`; everything before it is courtesy.
  */
 
 export interface PackChoice {
@@ -76,11 +79,21 @@ export interface PackChoice {
   primary: string;
   /** Derived server-side by the same contrast rule the button tokens use. */
   onPrimary: string;
+  pack: BrandPack;
+  /** The pack's scoped preview CSS, computed on the server. */
+  css: string;
+  fontHref: string | null;
+  /** The house pack or a demo pack: a starting point, not a college's own. */
+  template: boolean;
+  /** Colleges already using the pack. */
+  inUseBy: string[];
+  /** Where the pack answers on its own, for a live look. */
+  previewHref: string;
 }
 
 type Plan = 'trial' | 'standard' | 'institution';
 type Fcra = 'unknown' | 'registered' | 'not_registered';
-type Availability = 'empty' | 'invalid' | 'reserved' | 'taken' | 'available';
+type Availability = 'empty' | 'invalid' | 'reserved' | 'pack' | 'taken' | 'available';
 
 interface Errors {
   institution?: string;
@@ -89,47 +102,60 @@ interface Errors {
   email?: string;
 }
 
-const FEATURE_LIST: Array<{ key: Feature; label: string; hint: string }> = [
-  { key: 'directory', label: 'Directory', hint: 'Search alumni by branch, batch, company and city. Never anonymous.' },
-  { key: 'connections', label: 'Connections', hint: 'Mentorship and referral requests, with per-cohort quotas on both sides.' },
-  { key: 'events', label: 'Events', hint: 'Reunions, department sessions, ticketing and check-in.' },
-  { key: 'jobs', label: 'Jobs', hint: 'Alumni post roles; the placement cell moderates before anything goes live.' },
-  { key: 'mentorship', label: 'Mentorship', hint: 'Availability flags on profiles and structured mentoring requests.' },
-  { key: 'gallery', label: 'Gallery', hint: 'Photo sets attached to events and batches.' },
-  { key: 'news', label: 'News', hint: 'Announcements on the portal home and, if enabled, the public landing page.' },
-  { key: 'whatsapp', label: 'WhatsApp', hint: 'Business API templates. Email open rates on Indian alumni lists are poor.' },
-  { key: 'publicLanding', label: 'Public landing page', hint: 'A signed-out marketing page on the college’s subdomain. The directory itself stays behind sign-in either way.' },
+/** Every module but giving, which has its own switch under the legal gate. */
+const FEATURE_LIST: Array<{ key: Exclude<Feature, 'donations'>; label: string; hint: string }> = [
+  { key: 'directory', label: 'Directory', hint: 'Alumni find each other by branch, batch, company and city.' },
+  { key: 'connections', label: 'Requests', hint: 'Final-year students ask alumni for mentoring and referrals, within quotas on both sides.' },
+  { key: 'mentorship', label: 'Mentorship', hint: 'Alumni say when they are open to mentoring.' },
+  { key: 'events', label: 'Events', hint: 'Reunions and department sessions, with registration.' },
+  { key: 'jobs', label: 'Jobs', hint: 'Alumni post roles; the placement cell checks them before they go live.' },
+  { key: 'news', label: 'News', hint: 'Stories and announcements from the college.' },
+  { key: 'gallery', label: 'Gallery', hint: 'Photo albums from events and batches.' },
+  { key: 'publicLanding', label: 'Public front page', hint: 'A signed-out page on the college’s address. The directory stays behind sign-in either way.' },
+  { key: 'whatsapp', label: 'WhatsApp messages', hint: 'A WhatsApp channel for staff messages. The college’s Business account is connected separately.' },
 ];
+
+const LABEL: Record<Feature, string> = {
+  ...(Object.fromEntries(FEATURE_LIST.map((f) => [f.key, f.label])) as Record<Exclude<Feature, 'donations'>, string>),
+  donations: 'Giving',
+};
 
 const PLANS: Array<{ value: Plan; label: string; hint: string }> = [
   {
     value: 'trial',
-    label: 'Trial — 90 days',
-    hint: 'The whole feature set, no commitment. Converts to a licence or lapses; nothing is deleted when it does.',
+    label: 'Trial',
+    hint: 'For a college still deciding. The everyday modules are on; WhatsApp and giving are not.',
   },
   {
     value: 'standard',
-    label: 'Standard licence',
-    hint: 'Directory, connections, events and jobs. The right shape for a college running its own alumni cell.',
+    label: 'Standard',
+    hint: 'The core network: directory, requests, mentorship, events, jobs and the public front page.',
   },
   {
     value: 'institution',
-    label: 'Institution licence',
-    hint: 'Everything, including giving, segmented communications and multi-department scoping.',
+    label: 'Institution',
+    hint: 'Everything, including WhatsApp messages, and giving once FCRA registration is confirmed.',
   },
 ];
 
-const DEFAULT_FEATURES: Record<Feature, boolean> = {
-  directory: true,
-  connections: true,
-  events: true,
-  jobs: true,
-  mentorship: true,
-  donations: false,
-  gallery: true,
-  news: true,
-  whatsapp: false,
-  publicLanding: true,
+/**
+ * What each plan switches on. Picking a plan resets the switches to its
+ * envelope; the operator can still change any of them afterwards. Giving
+ * is in the institution envelope but stays under the FCRA gate below.
+ */
+const ENVELOPE: Record<Plan, Record<Feature, boolean>> = {
+  trial: {
+    directory: true, connections: true, events: true, jobs: true, mentorship: true,
+    donations: false, gallery: true, news: true, whatsapp: false, publicLanding: true,
+  },
+  standard: {
+    directory: true, connections: true, events: true, jobs: true, mentorship: true,
+    donations: false, gallery: false, news: false, whatsapp: false, publicLanding: true,
+  },
+  institution: {
+    directory: true, connections: true, events: true, jobs: true, mentorship: true,
+    donations: true, gallery: true, news: true, whatsapp: true, publicLanding: true,
+  },
 };
 
 const FREE_MAIL = ['gmail.com', 'yahoo.com', 'yahoo.co.in', 'outlook.com', 'hotmail.com', 'rediffmail.com'];
@@ -228,16 +254,21 @@ function mapFieldErrors(raw: Record<string, unknown>): { mapped: Errors; rest: s
 
 export function ProvisionForm({
   packs,
+  defaultPackId,
   taken,
   reserved,
   rootDomain,
   actorName,
+  haveInHand,
 }: {
   packs: PackChoice[];
+  defaultPackId: string;
   taken: Array<{ subdomain: string; name: string }>;
   reserved: string[];
+  /** The apex every college's subdomain sits under, e.g. `localhost:3000`. */
   rootDomain: string;
   actorName: string;
+  haveInHand: Array<{ title: string; when: string }>;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -252,9 +283,9 @@ export function ProvisionForm({
   const [email, setEmail] = React.useState('');
   const [plan, setPlan] = React.useState<Plan>('trial');
 
-  const [packId, setPackId] = React.useState(packs[0]?.id ?? '');
+  const [packId, setPackId] = React.useState(defaultPackId);
   const [fcra, setFcra] = React.useState<Fcra>('unknown');
-  const [features, setFeatures] = React.useState<Record<Feature, boolean>>(DEFAULT_FEATURES);
+  const [features, setFeatures] = React.useState<Record<Feature, boolean>>(ENVELOPE.trial);
   const [seedRegister, setSeedRegister] = React.useState(true);
 
   const [errors, setErrors] = React.useState<Errors>({});
@@ -277,18 +308,27 @@ export function ProvisionForm({
       ? 'invalid'
       : reserved.includes(slug)
         ? 'reserved'
-        : takenBy
-          ? 'taken'
-          : 'available';
+        : packs.some((p) => p.id === slug)
+          ? 'pack'
+          : takenBy
+            ? 'taken'
+            : 'available';
 
-  const host = `${slug || 'your-college'}.${rootDomain}`;
+  // One address: the server's, once it has answered for this subdomain.
+  const host =
+    blueprint && blueprint.subdomain === slug ? blueprint.host : `${slug || 'your-college'}.${rootDomain}`;
   const tenantId = `ten-${slug || 'xxx'}`;
   const pack = packs.find((p) => p.id === packId) ?? packs[0];
+  const displayName = shortName.trim() || institution.trim() || 'the new college';
+  const names = { shortName: shortName.trim(), institutionName: institution.trim() };
 
   const emailDomain = email.includes('@') ? email.split('@')[1]?.toLowerCase() ?? '' : '';
   const freeMail = FREE_MAIL.includes(emailDomain);
 
-  const featuresOn = FEATURE_LIST.filter((f) => features[f.key]);
+  const envelope = ENVELOPE[plan];
+  const changed = (Object.keys(envelope) as Feature[]).filter(
+    (k) => features[k] !== (k === 'donations' ? envelope[k] && fcra === 'registered' : envelope[k]),
+  );
 
   // Donations are a legal gate, not a rollout preference. The switch is not
   // merely defaulted off — it cannot be turned on until FCRA status is known.
@@ -298,6 +338,12 @@ export function ProvisionForm({
       setFeatures((f) => ({ ...f, donations: false }));
     }
   }, [donationsAllowed, features.donations]);
+
+  /** A plan resets the switches to its envelope; giving still waits on FCRA. */
+  const choosePlan = (next: Plan) => {
+    setPlan(next);
+    setFeatures({ ...ENVELOPE[next], donations: ENVELOPE[next].donations && donationsAllowed });
+  };
 
   const setInstitutionValue = (v: string) => {
     setInstitution(v);
@@ -316,19 +362,20 @@ export function ProvisionForm({
   const validateStepOne = (): Errors => {
     const e: Errors = {};
     if (institution.trim().length < 4) {
-      e.institution = 'The registered name of the institution, as it appears on a degree certificate.';
+      e.institution = 'The registered name of the college, as it appears on a degree certificate.';
     }
     if (!shortName.trim()) {
-      e.shortName = 'The abbreviation staff actually say out loud — DIET, KIET, SVU.';
+      e.shortName = 'The letters staff say out loud, as on the crest.';
     } else if (shortName.trim().length > 24) {
-      e.shortName = 'Twenty-four characters at most. This sits next to the crest in the sidebar.';
+      e.shortName = 'Twenty-four characters at most. It sits beside the crest in the sidebar.';
     }
-    if (availability === 'empty') e.subdomain = 'A subdomain is required — it is how the tenant is resolved on every request.';
+    if (availability === 'empty') e.subdomain = 'An address is needed. It is how every page finds the college.';
     if (availability === 'invalid') e.subdomain = SUBDOMAIN_RULE;
-    if (availability === 'reserved') e.subdomain = 'That name is reserved for platform infrastructure.';
-    if (availability === 'taken') e.subdomain = `${takenBy?.name ?? 'Another college'} already serves from that subdomain.`;
+    if (availability === 'reserved') e.subdomain = 'That name is kept for the platform itself. Pick another.';
+    if (availability === 'pack') e.subdomain = 'A brand pack already answers on that address. Pick another.';
+    if (availability === 'taken') e.subdomain = `${takenBy?.name ?? 'Another college'} already uses that address.`;
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) {
-      e.email = 'A working address for the person who will hold college_admin. The first invite goes here.';
+      e.email = 'A working address for the first admin. Their invite goes here.';
     }
     return e;
   };
@@ -339,10 +386,7 @@ export function ProvisionForm({
       setErrors(found);
       if (Object.keys(found).length > 0) {
         setStep(1);
-        toast.error(
-          'The institution details need attention',
-          'A tenant cannot be created without a valid subdomain and an admin contact.',
-        );
+        toast.error('Check the college’s details', 'The address and the first admin’s email are needed before anything else.');
         return;
       }
     }
@@ -494,30 +538,51 @@ export function ProvisionForm({
   };
 
   const steps = [
-    { n: 1 as const, label: 'Institution' },
-    { n: 2 as const, label: 'Brand and features' },
-    { n: 3 as const, label: 'Review and confirm' },
+    { n: 1 as const, label: 'The college', short: 'College' },
+    { n: 2 as const, label: 'Look and modules', short: 'Look' },
+    { n: 3 as const, label: 'Review', short: 'Review' },
   ];
+
+  const templates = packs.filter((p) => p.template);
+  const inUse = packs.filter((p) => !p.template);
+  const current = blueprint && blueprint.subdomain === slug && !planning ? blueprint : null;
 
   return (
     <>
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_21rem]">
-        <div className="space-y-6">
+      {/* Phones: what is being set up, pinned under the top bar. */}
+      <div
+        className="sticky top-14 z-20 -mx-4 flex items-center gap-3 border-y border-line bg-[color-mix(in_srgb,var(--surface-raised)_95%,transparent)] px-4 py-2 backdrop-blur lg:hidden"
+        aria-label="Summary"
+        role="region"
+      >
+        <span
+          aria-hidden="true"
+          className="size-3 shrink-0 rounded-full border border-line"
+          style={pack ? { backgroundColor: pack.primary } : undefined}
+        />
+        <p className="min-w-0 flex-1 truncate text-sm">
+          <span className="font-semibold text-primary">{shortName.trim() || institution.trim() || 'New college'}</span>{' '}
+          <span className="font-mono text-xs text-secondary">{host}</span>
+        </p>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="min-w-0 space-y-6">
           {/* Step indicator. Buttons, not links — nothing is in the URL until
-              the tenant exists, and a shareable half-filled form is a trap. */}
-          <nav aria-label="Provisioning steps">
-            <ol className="flex flex-wrap gap-2">
+              the college exists, and a shareable half-filled form is a trap. */}
+          <nav aria-label="Set-up steps">
+            <ol className="grid grid-cols-3 gap-2 sm:flex">
               {steps.map((s) => {
                 const active = s.n === step;
                 const done = s.n < step;
                 return (
-                  <li key={s.n}>
+                  <li key={s.n} className="min-w-0">
                     <button
                       type="button"
                       onClick={() => goToStep(s.n)}
                       aria-current={active ? 'step' : undefined}
                       className={cn(
-                        'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium',
+                        'flex min-h-11 w-full items-center gap-2 whitespace-nowrap rounded-lg border px-3 text-sm font-medium',
                         'transition-colors duration-fast ease-brand',
                         active
                           ? 'border-line-strong bg-surface-raised text-primary shadow-sm'
@@ -526,18 +591,19 @@ export function ProvisionForm({
                     >
                       <span
                         className={cn(
-                          'grid size-5 shrink-0 place-items-center rounded-full font-mono text-[11px]',
+                          'grid size-5 shrink-0 place-items-center rounded-full text-xs',
                           done
                             ? 'bg-success text-success-on'
                             : active
                               ? 'bg-[var(--button-primary-bg)] text-[var(--button-primary-fg)]'
-                              : 'bg-surface-sunken text-muted',
+                              : 'bg-surface-sunken text-secondary',
                         )}
                         aria-hidden="true"
                       >
                         {done ? '✓' : s.n}
                       </span>
-                      {s.label}
+                      <span className="sm:hidden">{s.short}</span>
+                      <span className="hidden sm:inline">{s.label}</span>
                     </button>
                   </li>
                 );
@@ -557,11 +623,9 @@ export function ProvisionForm({
               <Card>
                 <CardHeader>
                   <div className="min-w-0 space-y-1">
-                    <CardTitle>The institution</CardTitle>
+                    <CardTitle as="h2">The college</CardTitle>
                     <CardDescription>
-                      These four values become the tenant row. Everything else can be changed later
-                      from the college&rsquo;s own console; the subdomain cannot, without breaking every
-                      link already shared over WhatsApp.
+                      Everything here except the address can be changed later from the college’s own console.
                     </CardDescription>
                   </div>
                 </CardHeader>
@@ -577,7 +641,6 @@ export function ProvisionForm({
                       id="prov-institution"
                       value={institution}
                       onChange={(e) => setInstitutionValue(e.target.value)}
-                      placeholder="Kakinada Institute of Engineering & Technology"
                       invalid={Boolean(errors.institution)}
                       maxLength={120}
                     />
@@ -587,24 +650,24 @@ export function ProvisionForm({
                     htmlFor="prov-short"
                     label="Short name"
                     required
-                    hint="What staff say out loud. It appears beside the crest, in email subject lines and in the audit log."
+                    hint="The letters staff say out loud, as on the crest."
                     error={errors.shortName}
                   >
                     <Input
                       id="prov-short"
                       value={shortName}
                       onChange={(e) => setShortNameValue(e.target.value)}
-                      placeholder="KIET"
                       invalid={Boolean(errors.shortName)}
                       maxLength={24}
+                      className="sm:max-w-xs"
                     />
                   </Field>
 
                   <Field
                     htmlFor="prov-subdomain"
-                    label="Subdomain"
+                    label="Address"
                     required
-                    hint="Lowercase letters, digits and hyphens. This is how the tenant is resolved from the Host header on every single request."
+                    hint="This becomes the college’s web address. Pick something short staff will say aloud — it cannot be changed later."
                     error={errors.subdomain}
                   >
                     <Input
@@ -614,26 +677,26 @@ export function ProvisionForm({
                         setSubdomain(e.target.value.toLowerCase());
                         setSubTouched(true);
                       }}
-                      placeholder="kakinada"
                       autoComplete="off"
                       spellCheck={false}
-                      className="font-mono"
-                      invalid={availability === 'taken' || availability === 'invalid' || availability === 'reserved'}
+                      className="font-mono sm:max-w-xs"
+                      invalid={
+                        availability === 'taken' ||
+                        availability === 'invalid' ||
+                        availability === 'reserved' ||
+                        availability === 'pack'
+                      }
                       leading={<Globe className="size-4" />}
                     />
                   </Field>
 
-                  <AvailabilityNote
-                    availability={availability}
-                    host={host}
-                    takenByName={takenBy?.name ?? null}
-                  />
+                  <AvailabilityNote availability={availability} host={host} takenByName={takenBy?.name ?? null} />
 
                   <Field
                     htmlFor="prov-email"
-                    label="Admin contact"
+                    label="First admin’s email"
                     required
-                    hint="The first and only college_admin at provisioning time. They grant every other role themselves."
+                    hint="They sign in first and add the rest of the staff themselves."
                     error={errors.email}
                   >
                     <Input
@@ -641,7 +704,7 @@ export function ProvisionForm({
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="principal@kiet.example.ac.in"
+                      placeholder="name@college-domain.ac.in"
                       autoComplete="off"
                       invalid={Boolean(errors.email)}
                       leading={<AtSign className="size-4" />}
@@ -651,34 +714,19 @@ export function ProvisionForm({
                   {freeMail ? (
                     <Alert tone="warning" title="That is a personal mailbox" icon={<CircleAlert className="size-4" />}>
                       <p>
-                        A college-domain address survives the person who set the portal up. Handing
-                        the only administrator account to a Gmail address means the next registrar
-                        inherits nothing, and account recovery becomes a support ticket to us.
+                        An address on the college’s own domain outlives the person who set the portal up. With a
+                        personal one, the next registrar inherits nothing.
                       </p>
                     </Alert>
                   ) : null}
-
-                  <Fieldset
-                    legend="Plan"
-                    hint="The plan sets the licence and the default feature envelope. It does not gate data — every tenant gets the same isolation, the same audit log and the same DPDP endpoints."
-                  >
-                    {PLANS.map((p) => (
-                      <Radio
-                        key={p.value}
-                        id={`prov-plan-${p.value}`}
-                        name="plan"
-                        label={p.label}
-                        hint={p.hint}
-                        checked={plan === p.value}
-                        onChange={() => setPlan(p.value)}
-                      />
-                    ))}
-                  </Fieldset>
                 </CardBody>
               </Card>
 
               <FormActions>
-                <Button type="submit">Continue to brand and features</Button>
+                <Button type="submit">
+                  Continue to look and modules
+                  <ArrowRight className="size-4" aria-hidden="true" />
+                </Button>
               </FormActions>
             </form>
           ) : null}
@@ -695,85 +743,65 @@ export function ProvisionForm({
               <Card>
                 <CardHeader>
                   <div className="min-w-0 space-y-1">
-                    <CardTitle>Starting brand pack</CardTitle>
+                    <CardTitle as="h2">Starting look</CardTitle>
                     <CardDescription>
-                      Every pack in <span className="font-mono">brands/</span>. Pick the nearest one
-                      now; the college replaces the seeds with its own crest and hex values from its
-                      branding console, and nothing else changes.
+                      The look {displayName} opens with. The college’s own crest and colours replace it later.
                     </CardDescription>
                   </div>
                 </CardHeader>
-                <CardBody>
-                  <Fieldset
-                    legend="Brand pack"
-                    hint="A pack supplies colour seeds, typography, shape and copy. The ten-stop ramps, hover states and text-on-brand pairings are derived from the seeds, not chosen."
-                  >
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {packs.map((p) => (
-                        <div
-                          key={p.id}
-                          className={cn(
-                            'rounded-lg border p-3 transition-colors duration-fast ease-brand',
-                            packId === p.id
-                              ? 'border-line-strong bg-surface-sunken'
-                              : 'border-line hover:border-line-strong',
-                          )}
-                        >
-                          <Radio
-                            id={`prov-pack-${p.id}`}
-                            name="pack"
-                            checked={packId === p.id}
-                            onChange={() => setPackId(p.id)}
-                            hint={p.institutionName}
-                            label={
-                              <span className="flex items-center gap-2">
-                                <span
-                                  className="size-4 shrink-0 rounded-sm border border-line"
-                                  style={{ backgroundColor: p.primary }}
-                                  aria-hidden="true"
-                                />
-                                <span className="font-medium">{p.portalName}</span>
-                                <span className="font-mono text-xs text-muted">
-                                  {p.primary.toUpperCase()}
-                                </span>
-                              </span>
-                            }
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </Fieldset>
+                <CardBody className="space-y-5">
+                  <fieldset className="space-y-5">
+                    <legend className="sr-only">Brand pack</legend>
+                    <PackGroup title="Starting templates" packs={templates} value={packId} onChange={setPackId} />
+                    {inUse.length ? (
+                      <PackGroup title="Already in use" packs={inUse} value={packId} onChange={setPackId} />
+                    ) : null}
+                  </fieldset>
+
+                  {pack && !pack.template && pack.inUseBy.length ? (
+                    <Alert tone="warning" icon={<CircleAlert className="size-4" />}>
+                      <p>
+                        In use by {pack.inUseBy[0]}: its name and wording would show on {displayName}’s portal.
+                      </p>
+                    </Alert>
+                  ) : null}
+
+                  <p className="flex min-h-11 items-center text-sm sm:min-h-0">
+                    <Link href="/platform/brands" className="link">
+                      Using the college’s own colours? Add its brand pack first
+                    </Link>
+                  </p>
+                  {/* Every pack's band, scoped, so each tile wears its own colours. */}
+                  <style dangerouslySetInnerHTML={{ __html: packs.map((p) => p.css).join('') }} />
                 </CardBody>
               </Card>
 
               <Card>
                 <CardHeader>
                   <div className="min-w-0 space-y-1">
-                    <CardTitle>Foreign contributions</CardTitle>
-                    <CardDescription>
-                      Asked before the switches because it decides one of them.
-                    </CardDescription>
+                    <CardTitle as="h2">Foreign contributions</CardTitle>
+                    <CardDescription>Asked before the modules because it decides one of them.</CardDescription>
                   </div>
                   <Landmark className="size-5 shrink-0 text-muted" aria-hidden="true" />
                 </CardHeader>
-                <CardBody className="space-y-5">
+                <CardBody>
                   <Fieldset
                     legend="Is the college trust registered under FCRA?"
-                    hint="Donations carry source_country and is_foreign_contribution from the first rupee. Segregation is structural — it cannot be applied retrospectively at audit time."
+                    hint="Foreign gifts have to be kept apart from the first rupee, so giving waits on this answer."
                   >
                     <Radio
                       id="prov-fcra-unknown"
                       name="fcra"
                       label="Not confirmed yet"
-                      hint="The default, and the honest answer for most colleges at this stage. Giving stays off."
+                      hint="The usual answer at this stage. Giving stays off."
                       checked={fcra === 'unknown'}
                       onChange={() => setFcra('unknown')}
                     />
                     <Radio
                       id="prov-fcra-no"
                       name="fcra"
-                      label="No — domestic contributions only"
-                      hint="Giving can still be enabled later, restricted to Indian sources."
+                      label="No — domestic gifts only"
+                      hint="Giving can still be switched on later, for Indian sources only."
                       checked={fcra === 'not_registered'}
                       onChange={() => setFcra('not_registered')}
                     />
@@ -781,7 +809,7 @@ export function ProvisionForm({
                       id="prov-fcra-yes"
                       name="fcra"
                       label="Yes — registration confirmed in writing"
-                      hint="Only tick this against a registration number you have seen. It unlocks the giving module."
+                      hint="Only against a registration number you have seen. It unlocks giving."
                       checked={fcra === 'registered'}
                       onChange={() => setFcra('registered')}
                     />
@@ -792,61 +820,94 @@ export function ProvisionForm({
               <Card>
                 <CardHeader>
                   <div className="min-w-0 space-y-1">
-                    <CardTitle>Feature switches</CardTitle>
-                    <CardDescription>
-                      Hard gates in the navigation and in every route guard, not CSS classes. A
-                      module that is off is not reachable by URL either.
-                    </CardDescription>
+                    <CardTitle as="h2">Plan and modules</CardTitle>
+                    <CardDescription>A plan sets the modules it includes. Any of them can be changed below.</CardDescription>
                   </div>
                 </CardHeader>
-                <CardBody className="space-y-4">
-                  <ul className="divide-y divide-line">
-                    {FEATURE_LIST.map((f) => (
-                      <li key={f.key} className="py-3 first:pt-0 last:pb-0">
+                <CardBody className="space-y-6">
+                  <Fieldset legend="Plan">
+                    <div className="grid gap-3 md:grid-cols-3">
+                      {PLANS.map((p) => (
+                        <div
+                          key={p.value}
+                          className={cn(
+                            'rounded-lg border p-3 transition-colors duration-fast ease-brand',
+                            plan === p.value ? 'border-line-strong bg-surface-sunken' : 'border-line',
+                          )}
+                        >
+                          <Radio
+                            id={`prov-plan-${p.value}`}
+                            name="plan"
+                            label={<span className="font-medium">{p.label}</span>}
+                            hint={p.hint}
+                            checked={plan === p.value}
+                            onChange={() => choosePlan(p.value)}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </Fieldset>
+
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-primary">Modules</p>
+                      {changed.length ? (
+                        <p className="flex flex-wrap items-center gap-2 text-xs text-secondary">
+                          {changed.length} changed from the {PLANS.find((p) => p.value === plan)?.label} plan
+                          <Button type="button" variant="ghost" size="sm" onClick={() => choosePlan(plan)}>
+                            Reset to the plan
+                          </Button>
+                        </p>
+                      ) : (
+                        <p className="text-xs text-secondary">
+                          As the {PLANS.find((p) => p.value === plan)?.label} plan sets them
+                        </p>
+                      )}
+                    </div>
+
+                    <ul className="divide-y divide-line rounded-lg border border-line px-4">
+                      {FEATURE_LIST.map((f) => (
+                        <li key={f.key} className="py-3">
+                          <Switch
+                            id={`prov-feat-${f.key}`}
+                            label={f.label}
+                            hint={f.hint}
+                            checked={features[f.key]}
+                            onChange={(e) => setFeatures((cur) => ({ ...cur, [f.key]: e.target.checked }))}
+                          />
+                        </li>
+                      ))}
+                      <li className="py-3">
                         <Switch
-                          id={`prov-feat-${f.key}`}
-                          label={f.label}
-                          hint={f.hint}
-                          checked={features[f.key]}
-                          onChange={(e) =>
-                            setFeatures((cur) => ({ ...cur, [f.key]: e.target.checked }))
+                          id="prov-feat-donations"
+                          label={
+                            <span className="flex flex-wrap items-center gap-2">
+                              Giving
+                              {donationsAllowed ? null : (
+                                <Badge tone="neutral">
+                                  <Lock className="size-3" aria-hidden="true" />
+                                  Locked until FCRA is confirmed
+                                </Badge>
+                              )}
+                            </span>
                           }
+                          hint={
+                            donationsAllowed
+                              ? 'Campaigns and the giving form, with foreign gifts held apart. Online payment is connected separately.'
+                              : 'Stays off until FCRA registration is confirmed above. This is a legal gate, not a preference.'
+                          }
+                          checked={features.donations}
+                          disabled={!donationsAllowed}
+                          onChange={(e) => setFeatures((cur) => ({ ...cur, donations: e.target.checked }))}
                         />
                       </li>
-                    ))}
-                  </ul>
-
-                  <div className="rounded-lg border border-line bg-surface-sunken p-4">
-                    <Switch
-                      id="prov-feat-donations"
-                      label={
-                        <span className="flex flex-wrap items-center gap-2">
-                          Giving
-                          {donationsAllowed ? null : (
-                            <Badge tone="warning">
-                              <Lock className="size-3" aria-hidden="true" />
-                              Locked
-                            </Badge>
-                          )}
-                        </span>
-                      }
-                      hint={
-                        donationsAllowed
-                          ? 'Campaigns, Razorpay checkout, 80G receipts, and FCRA-segregated reporting from day one.'
-                          : 'Stays off until FCRA registration is confirmed above. This is a legal gate, not a rollout preference.'
-                      }
-                      checked={features.donations}
-                      disabled={!donationsAllowed}
-                      onChange={(e) =>
-                        setFeatures((cur) => ({ ...cur, donations: e.target.checked }))
-                      }
-                    />
+                    </ul>
                   </div>
 
                   <Checkbox
                     id="prov-seed-register"
                     label="Request the degree register from the examinations branch"
-                    hint="Roll number, name, branch and year of passing for every graduate. It has the longest lead time of anything in onboarding, and alumni verification is blocked on it entirely — chase it on day one, not in week six."
+                    hint="It takes longest of anything in set-up, and verification waits on it. Ask on day one."
                     checked={seedRegister}
                     onChange={(e) => setSeedRegister(e.target.checked)}
                   />
@@ -857,247 +918,199 @@ export function ProvisionForm({
                 <Button type="button" variant="secondary" onClick={() => setStep(1)}>
                   Back
                 </Button>
-                <Button type="submit">Review what will be created</Button>
+                <Button type="submit">
+                  Review
+                  <ArrowRight className="size-4" aria-hidden="true" />
+                </Button>
               </FormActions>
             </form>
           ) : null}
 
           {step === 3 ? (
-            <div className="space-y-6">
-              {created ? (
-                <Alert
-                  tone={created.persisted === false ? 'info' : 'success'}
-                  title={
-                    created.persisted === false
-                      ? `${shortName.trim() || 'The college'} was described, not stored`
-                      : `${shortName.trim() || 'The college'} is provisioning`
-                  }
-                  icon={<CircleCheck className="size-4" />}
-                >
-                  <p>{created.note}</p>
-                </Alert>
-              ) : null}
-
+            created ? (
+              <SetUpDone
+                created={created}
+                name={displayName}
+                pack={pack}
+                names={names}
+                note={created.note}
+              />
+            ) : (
               <Card>
                 <CardHeader>
                   <div className="min-w-0 space-y-1">
-                    <CardTitle className="flex flex-wrap items-center gap-2">
-                      What provisioning will create
-                      {planning ? (
-                        <span className="inline-flex items-center gap-1.5 text-xs font-normal text-muted">
-                          <Spinner className="size-3.5" />
-                          asking the server
-                        </span>
-                      ) : null}
-                    </CardTitle>
-                    <CardDescription>
-                      Five writes, in one transaction. If any of them fails, none of them lands — a
-                      college with a live subdomain and no administrator is worse than no college.
-                      This list is the server&rsquo;s answer, not this screen&rsquo;s guess: it comes
-                      back from the same handler that does the writing, one flag apart.
-                    </CardDescription>
+                    <CardTitle as="h2">Review {displayName}</CardTitle>
+                    <CardDescription>The server’s answer to what you entered. Nothing is written until you confirm.</CardDescription>
                   </div>
-                  <Server className="size-5 shrink-0 text-muted" aria-hidden="true" />
                 </CardHeader>
+
                 <CardBody className="space-y-5">
                   {blueprintError ? (
-                    <Alert
-                      tone="danger"
-                      title="The server refused to describe this provision"
-                      icon={<CircleAlert className="size-4" />}
-                    >
+                    <Alert tone="danger" title="The server refused this set-up" icon={<CircleAlert className="size-4" />}>
                       <p>{blueprintError}</p>
-                      <p>Nothing has been written, and no subdomain has been held.</p>
+                      <p>Nothing has been written, and no address has been held.</p>
                     </Alert>
                   ) : null}
 
-                  {!blueprint && !blueprintError ? <PlanSkeleton /> : null}
+                  {!current && !blueprintError ? <PlanWaiting name={displayName} /> : null}
 
-                  {blueprint ? (
+                  {current ? (
                     <>
-                      <ol className="space-y-4">
-                        {blueprint.creates.map((item, index) => (
-                          <CreateItem
-                            key={item.key}
-                            n={index + 1}
-                            icon={PLAN_ICON[item.key] ?? <Database className="size-4" />}
-                            title={item.title}
-                          >
-                            <p>{item.detail}</p>
-                            {item.fields.length ? (
-                              <dl className="mt-2 grid gap-x-3 gap-y-1 sm:grid-cols-[auto_minmax(0,1fr)]">
-                                {item.fields.map((field) => (
-                                  <React.Fragment key={field.label}>
-                                    <dt className="font-mono text-xs text-muted">{field.label}</dt>
-                                    <dd className="break-all font-mono text-xs text-primary">
-                                      {field.value}
-                                    </dd>
-                                  </React.Fragment>
-                                ))}
-                              </dl>
-                            ) : null}
-                          </CreateItem>
-                        ))}
-                      </ol>
+                      <dl className="divide-y divide-line rounded-lg border border-line">
+                        <SummaryRow label="Address">
+                          <span className="break-all font-mono text-sm">{current.host}</span>
+                        </SummaryRow>
+                        <SummaryRow label="Look">
+                          {packs.find((p) => p.id === current.packId)?.portalName ?? current.packId} pack
+                        </SummaryRow>
+                        <SummaryRow label="Plan">{PLANS.find((p) => p.value === current.plan)?.label ?? current.plan}</SummaryRow>
+                        <SummaryRow label="Modules">
+                          {current.modulesOn.length
+                            ? current.modulesOn.map((k) => LABEL[k as Feature] ?? k).join(', ')
+                            : 'None'}
+                        </SummaryRow>
+                        <SummaryRow label="First admin">
+                          <span className="break-all">{email.trim()}</span>
+                        </SummaryRow>
+                      </dl>
 
-                      {blueprint.warnings.length ? (
-                        <Alert
-                          tone="warning"
-                          title={
-                            blueprint.warnings.length === 1
-                              ? 'One thing worth fixing first'
-                              : `${blueprint.warnings.length} things worth fixing first`
-                          }
-                          icon={<CircleAlert className="size-4" />}
-                        >
-                          <ul className="list-disc space-y-1 pl-4">
-                            {blueprint.warnings.map((warning) => (
-                              <li key={warning}>{warning}</li>
-                            ))}
-                          </ul>
-                        </Alert>
+                      {pack ? (
+                        <div className="space-y-2 lg:hidden">
+                          <p className="text-sm font-medium text-primary">How it will look</p>
+                          <MiniPortal pack={pack.pack} css={pack.css} fontHref={pack.fontHref} names={names} size="sm" />
+                        </div>
                       ) : null}
 
-                      <Separator label="And what it will not create" />
+                      <p className="text-sm text-secondary">
+                        Recorded in {displayName}’s own audit log as set up by {actorName}.
+                      </p>
 
-                      <ul className="grid gap-3 sm:grid-cols-3">
-                        {blueprint.notCreated.map((omission) => (
-                          <NotCreated key={omission.title} title={omission.title}>
-                            {omission.detail}
-                          </NotCreated>
-                        ))}
-                      </ul>
+                      <Disclosure summary="What gets created">
+                        <div className="space-y-5">
+                          <ol className="space-y-4">
+                            {current.creates.map((item, index) => (
+                              <CreateItem
+                                key={item.key}
+                                n={index + 1}
+                                icon={PLAN_ICON[item.key] ?? <Database className="size-4" />}
+                                title={item.title}
+                              >
+                                <p>{item.detail}</p>
+                                {item.fields.length ? (
+                                  <dl className="mt-2 grid gap-x-3 gap-y-1 sm:grid-cols-[auto_minmax(0,1fr)]">
+                                    {item.fields.map((field) => (
+                                      <React.Fragment key={field.label}>
+                                        <dt className="font-mono text-xs text-secondary">{field.label}</dt>
+                                        <dd className="break-all font-mono text-xs text-primary">{field.value}</dd>
+                                      </React.Fragment>
+                                    ))}
+                                  </dl>
+                                ) : null}
+                              </CreateItem>
+                            ))}
+                          </ol>
+                          <div className="space-y-2 border-t border-line pt-4">
+                            <p className="text-sm font-medium text-primary">And what it does not create</p>
+                            <ul className="grid gap-3 sm:grid-cols-3">
+                              {current.notCreated.map((omission) => (
+                                <NotCreated key={omission.title} title={omission.title}>
+                                  {omission.detail}
+                                </NotCreated>
+                              ))}
+                            </ul>
+                          </div>
+                          <p className="text-xs text-secondary">{current.note}</p>
+                        </div>
+                      </Disclosure>
                     </>
                   ) : null}
                 </CardBody>
-              </Card>
 
-              <Card>
-                <CardHeader>
-                  <div className="min-w-0 space-y-1">
-                    <CardTitle>How the isolation actually works</CardTitle>
-                    <CardDescription>
-                      Worth being precise about, because every competing portal claims it.
-                    </CardDescription>
+                <CardFooter className="flex-col items-stretch gap-4 sm:flex-row sm:items-end">
+                  <div className="min-w-0 flex-1">
+                    {current && current.warnings.length ? (
+                      <Alert
+                        tone="warning"
+                        title={
+                          current.warnings.length === 1
+                            ? 'One thing worth fixing first'
+                            : `${current.warnings.length} things worth fixing first`
+                        }
+                        icon={<CircleAlert className="size-4" />}
+                      >
+                        <ul className="list-disc space-y-1 pl-4">
+                          {current.warnings.map((warning) => (
+                            <li key={warning}>{warning}</li>
+                          ))}
+                        </ul>
+                      </Alert>
+                    ) : null}
                   </div>
-                  <Lock className="size-5 shrink-0 text-muted" aria-hidden="true" />
-                </CardHeader>
-                <CardBody className="space-y-4 text-sm text-secondary">
-                  <p>
-                    Tenant isolation is enforced in Postgres by row-level security on{' '}
-                    <code className="font-mono text-xs text-primary">app.tenant_id</code>, not in
-                    application code. Every table in the schema carries a tenant column and a policy
-                    that compares it against the session variable set at the start of the request.
-                  </p>
-                  <p>
-                    The practical consequence: a query that forgets its{' '}
-                    <code className="font-mono text-xs text-primary">WHERE tenant_id = …</code>{' '}
-                    clause returns nothing, not another college&rsquo;s rows. One careless join in a
-                    feature written eighteen months from now cannot leak {shortName.trim() || 'this college'}{' '}
-                    into somebody else&rsquo;s directory, because the database refuses before the
-                    application is consulted.
-                  </p>
-                  <p>
-                    The same discipline applies to us. Your account —{' '}
-                    <span className="font-medium text-primary">{actorName}</span> — holds{' '}
-                    <code className="font-mono text-xs text-primary">tenant.provision</code>,{' '}
-                    <code className="font-mono text-xs text-primary">tenant.configure</code> and{' '}
-                    <code className="font-mono text-xs text-primary">audit.read</code>, and no
-                    capability that reads a member row. The provisioning endpoint imports nothing
-                    that returns one. Creating a college does not make anyone at ifBash a member of
-                    it.
-                  </p>
-                  <p className="flex items-center gap-2 text-xs text-muted">
-                    <Globe className="size-3.5 shrink-0" aria-hidden="true" />
-                    Postgres and object storage are created in{' '}
-                    <span className="font-mono">ap-south-1</span>. No tenant data crosses a border,
-                    so DPDP cross-border transfer rules stay out of scope entirely.
-                  </p>
-                </CardBody>
-                <CardFooter>
-                  <p className="mr-auto max-w-prose text-xs text-muted">
-                    {blueprint?.note ??
-                      'The summary above is fetched from the provisioning endpoint before anything is written. Nothing is created until you confirm.'}
-                  </p>
-                  <Button variant="secondary" onClick={() => setStep(2)} disabled={saving}>
-                    Back
-                  </Button>
-                  <Button
-                    onClick={() => setConfirming(true)}
-                    loading={saving}
-                    disabled={!blueprint || planning || Boolean(created)}
-                  >
-                    {created ? 'Provisioned' : `Provision ${shortName.trim() || 'this college'}`}
-                  </Button>
+                  <div className="flex shrink-0 flex-wrap justify-end gap-3">
+                    <Button variant="secondary" onClick={() => setStep(2)} disabled={saving}>
+                      Back
+                    </Button>
+                    <Button
+                      onClick={() => setConfirming(true)}
+                      loading={saving}
+                      disabled={!current || planning || Boolean(created)}
+                    >
+                      Set up {shortName.trim() || 'the college'}
+                    </Button>
+                  </div>
                 </CardFooter>
               </Card>
-            </div>
+            )
           ) : null}
         </div>
 
-        <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
-          <Card className="overflow-hidden">
-            <div
-              className="space-y-1 p-card"
-              style={pack ? { backgroundColor: pack.primary, color: pack.onPrimary } : undefined}
-            >
-              <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider">
-                <Eye className="size-3.5" aria-hidden="true" />
-                Preview
-              </p>
-              <p className="font-display text-lg font-bold">
-                {shortName.trim() || institution.trim() || 'Your college'}
-              </p>
-              <p className="break-all font-mono text-xs">{host}</p>
-            </div>
-
-            <CardBody className="space-y-3 text-sm">
-              <div className="space-y-0.5">
-                <p className="text-xs uppercase tracking-wide text-muted">Institution</p>
-                <p className="font-medium">{institution.trim() || 'Not set'}</p>
-              </div>
-              <div className="space-y-0.5">
-                <p className="text-xs uppercase tracking-wide text-muted">Tenant id</p>
-                <p className="font-mono text-xs">{tenantId}</p>
-              </div>
-              <div className="space-y-0.5">
-                <p className="text-xs uppercase tracking-wide text-muted">Brand pack</p>
-                <p className="font-mono text-xs">brands/{pack?.id ?? 'default'}.json</p>
-              </div>
-              <div className="space-y-0.5">
-                <p className="text-xs uppercase tracking-wide text-muted">Plan</p>
-                <p className="font-medium capitalize">{plan}</p>
-              </div>
+        <aside aria-label="What is being set up" className="hidden space-y-4 lg:sticky lg:top-20 lg:block lg:self-start">
+          <Card>
+            <CardBody className="space-y-4">
               <div className="space-y-1">
-                <p className="text-xs uppercase tracking-wide text-muted">
-                  Modules on ({featuresOn.length + (features.donations ? 1 : 0)})
+                <p className="text-xs font-semibold uppercase tracking-wider text-secondary">Address</p>
+                <p className="break-all font-mono text-md font-semibold text-primary">{host}</p>
+                <p className="text-sm text-secondary">
+                  {shortName.trim() || institution.trim() ? (
+                    <>
+                      <span className="font-medium text-primary">{shortName.trim() || institution.trim()}</span>
+                      {shortName.trim() && institution.trim() ? ` · ${institution.trim()}` : null}
+                    </>
+                  ) : (
+                    'Name the college to see it here.'
+                  )}
                 </p>
-                <ul className="flex flex-wrap gap-1.5">
-                  {featuresOn.map((f) => (
-                    <li key={f.key}>
-                      <Badge tone="neutral">{f.label}</Badge>
-                    </li>
-                  ))}
-                  {features.donations ? (
-                    <li>
-                      <Badge tone="brand">Giving</Badge>
-                    </li>
-                  ) : null}
-                  {featuresOn.length === 0 && !features.donations ? (
-                    <li className="text-xs text-muted">
-                      Every module is off. The college would sign in to an empty portal.
-                    </li>
-                  ) : null}
-                </ul>
               </div>
-            </CardBody>
-
-            <CardFooter>
-              <p className="text-xs text-muted">
-                Data residency <span className="font-mono">ap-south-1</span> · isolation by
-                row-level security on <span className="font-mono">app.tenant_id</span>
+              {pack ? (
+                <MiniPortal pack={pack.pack} css={pack.css} fontHref={pack.fontHref} names={names} size="sm" />
+              ) : null}
+              <p className="border-t border-line pt-3 text-xs text-secondary">
+                <span className="font-medium">Technical</span>{' '}
+                <span className="break-all font-mono">
+                  {slug ? tenantId : 'ten-…'} · brands/{pack?.id ?? 'default'}.json
+                </span>
               </p>
-            </CardFooter>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader variant="stack">
+              <CardTitle as="h2" className="text-md">
+                What to have in hand
+              </CardTitle>
+            </CardHeader>
+            <CardBody>
+              <ul className="space-y-2.5">
+                {haveInHand.map((item) => (
+                  <li key={item.title} className="flex items-start justify-between gap-3 text-sm">
+                    <span className="min-w-0 text-primary">{item.title}</span>
+                    <Badge tone="neutral" className="shrink-0 whitespace-nowrap">
+                      {item.when}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            </CardBody>
           </Card>
         </aside>
       </div>
@@ -1108,21 +1121,18 @@ export function ProvisionForm({
         onConfirm={finish}
         pending={saving}
         tone="primary"
-        confirmLabel="Provision the tenant"
+        confirmLabel={`Set up ${shortName.trim() || 'the college'}`}
         requireTyped={slug}
-        title={`Provision ${shortName.trim() || 'this college'}?`}
+        title={`Set up ${shortName.trim() || 'this college'}?`}
         body={
           <div className="space-y-2">
             <p>
-              This creates the tenant row, its branding record and the first{' '}
-              <span className="font-mono text-primary">college_admin</span> invite to{' '}
+              This creates {displayName}’s record, its look and an invite for its first admin at{' '}
               <span className="font-medium text-primary">{email.trim()}</span>.
             </p>
             <p>
-              The subdomain{' '}
-              <span className="font-mono text-primary">{blueprint?.host ?? host}</span> becomes live
-              immediately and cannot be changed afterwards without breaking every link the college
-              has already shared. The phrase you type is sent with the request and checked again on
+              <span className="font-mono text-primary">{host}</span> becomes its permanent address. It cannot be
+              changed later without breaking every link the college has shared. What you type is checked again on
               the server.
             </p>
           </div>
@@ -1136,6 +1146,132 @@ export function ProvisionForm({
 // Pieces
 // ---------------------------------------------------------------
 
+function PackGroup({
+  title,
+  packs,
+  value,
+  onChange,
+}: {
+  title: string;
+  packs: PackChoice[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-semibold uppercase tracking-wider text-secondary">{title}</p>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {packs.map((p) => {
+          const selected = value === p.id;
+          return (
+            <label
+              key={p.id}
+              htmlFor={`prov-pack-${p.id}`}
+              className={cn(
+                'relative block cursor-pointer overflow-hidden rounded-lg border-2 bg-surface-raised transition-colors duration-fast ease-brand',
+                'has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--focus-ring)]',
+                selected ? 'border-[var(--button-primary-bg)]' : 'border-line hover:border-line-strong',
+              )}
+            >
+              <input
+                id={`prov-pack-${p.id}`}
+                type="radio"
+                name="pack"
+                value={p.id}
+                checked={selected}
+                onChange={() => onChange(p.id)}
+                className="sr-only"
+              />
+              {/* The pack's own band and wordmark, in its scoped tokens. */}
+              <span className={cn(`pack-${p.id} mode-light`, 'band-surface flex h-16 items-center px-4')}>
+                <PackWordmark pack={p.pack} />
+              </span>
+              <span className="flex items-start justify-between gap-2 p-3">
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium text-primary">{p.portalName}</span>
+                  <span className="block truncate text-xs text-secondary">
+                    {p.inUseBy.length && !p.template ? `In use by ${p.inUseBy.join(', ')}` : p.institutionName}
+                  </span>
+                </span>
+                {selected ? (
+                  <CircleCheck className="size-5 shrink-0 text-brand-fg" aria-hidden="true" />
+                ) : null}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** The band logo when the pack has one, else its name in its own display face. */
+function PackWordmark({ pack }: { pack: BrandPack }) {
+  if (pack.assets.logoInverse) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={pack.assets.logoInverse} alt="" className="h-6 w-auto object-contain" />;
+  }
+  return <span className="truncate font-display text-lg font-bold text-band-fg">{pack.copy.portalName}</span>;
+}
+
+function SummaryRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid gap-1 px-4 py-3 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
+      <dt className="text-sm text-secondary">{label}</dt>
+      <dd className="min-w-0 text-sm font-medium text-primary">{children}</dd>
+    </div>
+  );
+}
+
+function SetUpDone({
+  created,
+  name,
+  pack,
+  names,
+  note,
+}: {
+  created: ProvisionPlan;
+  name: string;
+  pack: PackChoice | undefined;
+  names: { shortName: string; institutionName: string };
+  note: string;
+}) {
+  const stored = created.persisted !== false;
+  return (
+    <Card>
+      <CardHeader>
+        <div className="min-w-0 space-y-1">
+          <CardTitle as="h2" className="flex items-center gap-2">
+            <CircleCheck className="size-5 shrink-0 text-success-fg" aria-hidden="true" />
+            {stored ? `${name} is set up` : `${name} passed every check`}
+          </CardTitle>
+          <CardDescription>{note}</CardDescription>
+        </div>
+      </CardHeader>
+      <CardBody className="space-y-5">
+        {pack ? <MiniPortal pack={pack.pack} css={pack.css} fontHref={pack.fontHref} names={names} /> : null}
+        <div className="flex flex-wrap gap-3">
+          {pack ? (
+            <ButtonLink href={pack.previewHref} target="_blank" rel="noreferrer">
+              Open preview
+              <ArrowUpRight className="size-4" aria-hidden="true" />
+              <span className="sr-only">(opens in a new tab)</span>
+            </ButtonLink>
+          ) : null}
+          <ButtonLink href="/platform" variant="secondary">
+            Go to Colleges
+          </ButtonLink>
+          {stored ? (
+            <ButtonLink href={`/platform/${created.tenantId}#setup`} variant="secondary">
+              Open {name}’s checklist
+            </ButtonLink>
+          ) : null}
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
 function AvailabilityNote({
   availability,
   host,
@@ -1147,9 +1283,9 @@ function AvailabilityNote({
 }) {
   if (availability === 'empty') {
     return (
-      <p className="flex items-start gap-2 rounded-lg border border-dashed border-line bg-surface px-3 py-2.5 text-sm text-muted">
+      <p className="flex items-start gap-2 rounded-lg border border-line bg-surface-sunken px-3 py-2.5 text-sm text-secondary">
         <Globe className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-        The portal address appears here as you type.
+        The college’s address appears here as you type.
       </p>
     );
   }
@@ -1163,12 +1299,17 @@ function AvailabilityNote({
     taken: {
       tone: 'border-danger bg-danger-soft text-danger-fg',
       icon: <CircleSlash2 className="mt-0.5 size-4 shrink-0" aria-hidden="true" />,
-      text: `${takenByName ?? 'Another college'} already serves from this subdomain.`,
+      text: `${takenByName ?? 'Another college'} already uses this address.`,
+    },
+    pack: {
+      tone: 'border-danger bg-danger-soft text-danger-fg',
+      icon: <CircleSlash2 className="mt-0.5 size-4 shrink-0" aria-hidden="true" />,
+      text: 'A brand pack already answers on this address. Pick another.',
     },
     reserved: {
       tone: 'border-danger bg-danger-soft text-danger-fg',
       icon: <Lock className="mt-0.5 size-4 shrink-0" aria-hidden="true" />,
-      text: 'Reserved for platform infrastructure. Pick another.',
+      text: 'Kept for the platform itself. Pick another.',
     },
     invalid: {
       tone: 'border-warning bg-warning-soft text-warning-fg',
@@ -1178,13 +1319,10 @@ function AvailabilityNote({
   }[availability];
 
   return (
-    <div
-      role="status"
-      className={cn('flex items-start gap-2 rounded-lg border px-3 py-2.5 text-sm', map.tone)}
-    >
+    <div role="status" className={cn('flex items-start gap-2 rounded-lg border px-3 py-2.5 text-sm', map.tone)}>
       {map.icon}
       <span className="min-w-0 space-y-0.5">
-        <span className="block break-all font-mono text-xs font-semibold">https://{host}</span>
+        <span className="block break-all font-mono text-xs font-semibold">{host}</span>
         <span className="block">{map.text}</span>
       </span>
     </div>
@@ -1192,23 +1330,22 @@ function AvailabilityNote({
 }
 
 /**
- * The waiting shape of the list above, not a spinner in an empty box. Five
- * rows because the answer always has five, so nothing jumps when it lands.
+ * The waiting shape of the summary, not a spinner in an empty box. It
+ * says what is happening, so a slow answer does not read as a stuck page.
  */
-function PlanSkeleton() {
+function PlanWaiting({ name }: { name: string }) {
   return (
-    <ol className="space-y-4" aria-hidden="true">
-      {[0, 1, 2, 3, 4].map((row) => (
-        <li key={row} className="flex gap-3">
-          <Skeleton className="size-7 shrink-0 rounded-full" />
-          <div className="min-w-0 flex-1 space-y-2">
-            <Skeleton className="h-4 w-48 max-w-full" />
-            <Skeleton className="h-3 w-full" />
-            <Skeleton className="h-3 w-3/4" />
+    <div className="space-y-4" role="status">
+      <p className="text-sm font-medium text-primary">Checking the address and building {name}’s plan…</p>
+      <div className="divide-y divide-line rounded-lg border border-line" aria-hidden="true">
+        {[0, 1, 2, 3, 4].map((row) => (
+          <div key={row} className="grid gap-2 px-4 py-3 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
+            <Skeleton className="h-4 w-20" />
+            <Skeleton className={cn('h-4', row % 2 ? 'w-1/2' : 'w-3/4')} />
           </div>
-        </li>
-      ))}
-    </ol>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1232,7 +1369,7 @@ function CreateItem({
         {icon}
       </span>
       <div className="min-w-0 space-y-1">
-        <p className="text-sm font-semibold">
+        <p className="text-sm font-semibold text-primary">
           <span className="sr-only">Step {n}. </span>
           {title}
         </p>
@@ -1245,7 +1382,7 @@ function CreateItem({
 function NotCreated({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <li className="space-y-1 rounded-lg border border-line bg-surface p-3">
-      <p className="flex items-center gap-1.5 text-sm font-semibold">
+      <p className="flex items-center gap-1.5 text-sm font-semibold text-primary">
         <CircleSlash2 className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
         {title}
       </p>

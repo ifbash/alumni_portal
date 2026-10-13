@@ -19,6 +19,7 @@ import type {
   Role,
   MemberStatus,
 } from './types';
+import { SEED_NOW } from '../clock';
 
 /**
  * The seeded dataset behind fixture mode.
@@ -67,8 +68,12 @@ const pickN = <T,>(arr: readonly T[], n: number): T[] => {
 const chance = (p: number) => rand() < p;
 const int = (min: number, max: number) => min + Math.floor(rand() * (max - min + 1));
 
-/** Fixed "now" so relative dates in the UI do not drift between builds. */
-export const SEED_NOW = new Date('2026-08-17T09:30:00+05:30');
+/**
+ * Fixed "now" so relative dates in the UI do not drift between builds.
+ * Declared in `../clock` so client code can read it without bundling the
+ * seed; re-exported here for the callers that import it from the seed.
+ */
+export { SEED_NOW } from '../clock';
 
 const daysFromNow = (d: number) => new Date(SEED_NOW.getTime() + d * 86400000).toISOString();
 
@@ -113,8 +118,6 @@ export const DEPARTMENTS: Department[] = [
   { id: 'dep-it', code: 'IT', name: 'Information Technology', established: 2010, intake: 60 },
   { id: 'dep-aiml', code: 'AIML', name: 'Artificial Intelligence & Machine Learning', established: 2020, intake: 60 },
 ];
-
-const DEPT_CODES = DEPARTMENTS.map((d) => d.code);
 
 /** Weighted so CSE dominates, which is what an intake sheet actually looks like. */
 const DEPT_WEIGHTED = ['CSE', 'CSE', 'CSE', 'CSE', 'ECE', 'ECE', 'ECE', 'EEE', 'MECH', 'CIVIL', 'IT', 'IT', 'AIML'];
@@ -509,6 +512,10 @@ export function buildSeed() {
     m.roles = roles;
     m.privateContact.email = email;
     m.emailLower = email.toLowerCase();
+    // S1. A demo account is renamed below, so the generated row's
+    // preferred name belongs to somebody else: the ECE faculty account
+    // was greeted "Namaste, Kiran" under Dr. Hemalatha Namburi.
+    m.preferredName = null;
     return m;
   };
 
@@ -518,8 +525,8 @@ export function buildSeed() {
   ], 'admin@diet.ac.in');
   adminMember.fullName = 'Dr. Padmaja Vemulapalli';
   adminMember.designation = 'Dean, Alumni Relations';
-  adminMember.currentCompany = 'Dhanekula Institute of Engineering & Technology';
-  adminMember.openToMentoring = true;
+  // S4. The Dean runs the portal; she is not listed as a mentor.
+  adminMember.openToMentoring = false;
 
   const operatorMember = promote(alumni[1]!, [
     { role: 'alumni', departmentCode: null },
@@ -536,7 +543,6 @@ export function buildSeed() {
   hodMember.departmentCode = 'CSE';
   hodMember.departmentName = 'Computer Science & Engineering';
   hodMember.designation = 'Head of Department, CSE';
-  hodMember.currentCompany = 'Dhanekula Institute of Engineering & Technology';
 
   const placementMember = promote(alumni[3]!, [
     { role: 'faculty', departmentCode: null },
@@ -544,7 +550,6 @@ export function buildSeed() {
   ], 'tpo@diet.ac.in');
   placementMember.fullName = 'Srinivas Gollapudi';
   placementMember.designation = 'Training & Placement Officer';
-  placementMember.currentCompany = 'Dhanekula Institute of Engineering & Technology';
 
   const financeMember = promote(alumni[4]!, [{ role: 'finance', departmentCode: null }], 'finance@diet.ac.in');
   financeMember.fullName = 'Anjaneyulu Bandaru';
@@ -555,6 +560,15 @@ export function buildSeed() {
   facultyMember.departmentCode = 'ECE';
   facultyMember.departmentName = 'Electronics & Communication Engineering';
   facultyMember.designation = 'Associate Professor, ECE';
+
+  // S2. Staff are not employees of the companies their seeded alumni row
+  // drew. "Associate Professor, ECE · Mphasis" read as a moonlighter, and
+  // the college itself was being counted as an employer in company facets.
+  for (const staff of [adminMember, operatorMember, hodMember, placementMember, financeMember, facultyMember]) {
+    staff.currentCompany = null;
+    staff.employment = [];
+    staff.industry = null;
+  }
 
   const alumniMember = promote(alumni[9]!, [{ role: 'alumni', departmentCode: null }], 'alumni@example.com');
   alumniMember.fullName = 'Vamsi Krishna Pothineni';
@@ -570,6 +584,40 @@ export function buildSeed() {
   alumniMember.skills = ['Java', 'AWS', 'System Design', 'Kubernetes', 'Mentoring'];
   alumniMember.bio = 'Senior Software Engineer at Amazon. CSE, batch of 2017. Happy to talk to final-years about interview prep — ask before you apply, not after.';
   alumniMember.privateContact.visibility = 'on_accept';
+  // S3. The demo alumnus's history agrees with his headline: a 2017
+  // graduate, four years at Infosys, then Amazon. The generated rows had
+  // him at a random employer from before he graduated.
+  alumniMember.industry = 'E-commerce';
+  alumniMember.employment = [
+    {
+      id: 'emp-9-0',
+      company: 'Amazon',
+      designation: 'Senior Software Engineer',
+      location: 'Hyderabad',
+      startedOn: '2021-04-01',
+      endedOn: null,
+      isCurrent: true,
+    },
+    {
+      id: 'emp-9-1',
+      company: 'Infosys',
+      designation: 'Systems Engineer',
+      location: 'Hyderabad',
+      startedOn: '2017-07-01',
+      endedOn: '2021-03-31',
+      isCurrent: false,
+    },
+  ];
+  alumniMember.education = [
+    {
+      id: 'edu-9-0',
+      institution: 'Dhanekula Institute of Engineering & Technology',
+      qualification: 'B.Tech',
+      field: alumniMember.departmentName,
+      startedOn: '2013-08-01',
+      endedOn: '2017-05-31',
+    },
+  ];
 
   const studentMember = promote(students[0]!, [{ role: 'student', departmentCode: null }], 'student@diet.ac.in');
   studentMember.fullName = 'Harika Nallamothu';
@@ -586,7 +634,8 @@ export function buildSeed() {
   const demoAccounts: DemoAccount[] = [
     { email: 'student@diet.ac.in', label: 'Final-year student', description: 'Searches alumni, requests mentorship. Cannot see contact details or donations.', roles: studentMember.roles, memberId: studentMember.id },
     { email: 'alumni@example.com', label: 'Alumnus', description: 'Full directory, posts jobs, mentors students, gives to campaigns.', roles: alumniMember.roles, memberId: alumniMember.id },
-    { email: 'faculty.ece@diet.ac.in', label: 'Faculty (ECE)', description: 'Sees students in the department and the alumni directory.', roles: facultyMember.roles, memberId: facultyMember.id },
+    // S11. What the faculty account can actually do (the old line promised a department-scoped student list the projection does not apply).
+    { email: 'faculty.ece@diet.ac.in', label: 'Faculty (ECE)', description: 'Searches alumni and final-year students, registers for events, posts jobs.', roles: facultyMember.roles, memberId: facultyMember.id },
     { email: 'hod.cse@diet.ac.in', label: 'HOD (CSE)', description: 'Verification queue and comms, scoped to CSE only.', roles: hodMember.roles, memberId: hodMember.id },
     { email: 'tpo@diet.ac.in', label: 'Placement officer', description: 'CGPA and placement status, job moderation, applicant exports.', roles: placementMember.roles, memberId: placementMember.id },
     { email: 'alumnicell@diet.ac.in', label: 'Alumni cell operator', description: 'Runs verification and events. No bulk export, by design.', roles: operatorMember.roles, memberId: operatorMember.id },
@@ -648,6 +697,26 @@ export const DEGREE_REGISTER: DegreeRecord[] = (() => {
   return out;
 })();
 
+/**
+ * The same person under a married surname: given names kept, the family
+ * name from the register swapped for another. Null when the name carries no
+ * female given name or no full surname to swap. Picks by index, not rand().
+ */
+function marriedName(name: string, n: number): string | null {
+  const tokens = name.split(' ');
+  const lower = (t: string) => t.toLowerCase();
+  if (!tokens.some((t) => FIRST_F.some((f) => lower(f) === lower(t)))) return null;
+  const isSurname = (t: string) => SURNAMES.some((x) => lower(x) === lower(t));
+  if (!tokens.some(isSurname)) return null;
+  const kept = tokens.filter((t) => !isSurname(t) && !t.endsWith('.'));
+  let pickAt = (n * 7 + 3) % SURNAMES.length;
+  while (tokens.some((t) => lower(t) === lower(SURNAMES[pickAt]!))) pickAt = (pickAt + 1) % SURNAMES.length;
+  const next = SURNAMES[pickAt]!;
+  const upper = name === name.toUpperCase();
+  const out = [...kept, upper ? next.toUpperCase() : next].join(' ');
+  return out;
+}
+
 function registerVariant(name: string): string {
   const parts = name.split(' ');
   const style = int(0, 3);
@@ -674,7 +743,12 @@ export const VERIFICATION_CLAIMS: VerificationClaim[] = (() => {
   for (const s of scenarios) {
     for (let i = 0; i < s.count; i++, n++) {
       const source = DEGREE_REGISTER[int(0, DEGREE_REGISTER.length - 1)]!;
-      const claimedName = s.decision === 'reject' ? makeName().full : registerVariant(source.name);
+      const variant = s.decision === 'reject' ? makeName().full : registerVariant(source.name);
+      // A claim sent to review should be one the matcher cannot settle. The
+      // commonest in a real queue is a married surname: the register holds the
+      // name on the mark sheet, the graduate registers under the name they use
+      // now. Deterministic (no rand()), so every other fixture keeps its values.
+      const claimedName = (s.decision === 'review' && marriedName(variant, n)) || variant;
 
       const candidates =
         s.decision === 'reject'
@@ -742,7 +816,9 @@ export const EVENTS: EventItem[] = [
     id: 'evt-1', slug: 'alumni-meet-2026', title: 'Annual Alumni Meet 2026',
     description:
       'The full-day reunion on campus. Department sessions in the morning, the general body meeting after lunch, and the cultural evening in the open-air auditorium. Batch coordinators will have your batch table numbers at the registration desk.',
-    venue: 'Main Auditorium, DIET Campus, Ganguru',
+    // S12. A room name only: `directionsUrl` appends the pack's own
+    // address, so no other college's demo names this campus.
+    venue: 'Main Auditorium',
     startsAt: daysFromNow(38), endsAt: daysFromNow(38.4),
     departmentCode: null, studentEligible: true, alumniOnly: false,
     capacity: 600, registeredCount: 341, ticketPrice: 500, published: true,
@@ -788,7 +864,7 @@ export const EVENTS: EventItem[] = [
   {
     id: 'evt-6', slug: 'convocation-2026', title: 'Convocation 2026',
     description: 'Degree ceremony for the graduating batch.',
-    venue: 'Main Auditorium, DIET Campus',
+    venue: 'Main Auditorium',
     startsAt: daysFromNow(-22), endsAt: daysFromNow(-21.8),
     departmentCode: null, studentEligible: true, alumniOnly: false,
     capacity: 800, registeredCount: 612, ticketPrice: 0, published: true,
@@ -804,6 +880,17 @@ export const EVENTS: EventItem[] = [
     coverImage: null, viewerRegistration: null,
   },
 ];
+
+/**
+ * End times on the quarter hour. Fractional day offsets put the reunion's
+ * end at "7:06 pm" and a panel's at "11:54 am", which reads as generated.
+ * Rounded in place, deterministically; start times are already on the
+ * hour or half hour.
+ */
+const QUARTER_HOUR = 15 * 60 * 1000;
+for (const e of EVENTS) {
+  if (e.endsAt) e.endsAt = new Date(Math.round(new Date(e.endsAt).getTime() / QUARTER_HOUR) * QUARTER_HOUR).toISOString();
+}
 
 export const EVENT_REGISTRATIONS: EventRegistration[] = (() => {
   const out: EventRegistration[] = [];
@@ -840,7 +927,9 @@ export const JOBS: JobPosting[] = (() => {
     { title: 'Embedded Software Engineer', company: 'Qualcomm', location: 'Hyderabad', experienceYears: '1–3 years', salaryRange: '₹16–22 LPA', skills: ['Embedded C', 'RTOS', 'ARM'], isInternship: false },
     { title: 'Site Engineer — Highways', company: 'L&T Construction', location: 'Vijayawada', experienceYears: '0–2 years', salaryRange: '₹4–6 LPA', skills: ['AutoCAD', 'Site Supervision', 'Quantity Surveying'], isInternship: false },
     { title: 'ML Engineer', company: 'Freshworks', location: 'Chennai', experienceYears: '2–4 years', salaryRange: '₹22–30 LPA', skills: ['Python', 'PyTorch', 'MLOps'], isInternship: false },
-    { title: 'ServiceNow Developer', company: 'ifBash', location: 'Remote (India)', experienceYears: '1–4 years', salaryRange: '₹9–18 LPA', skills: ['ServiceNow', 'JavaScript', 'ITSM'], isInternship: false },
+    // S6. Not the vendor: a college's job board advertising the portal's
+    // own maker reads as a plant.
+    { title: 'ServiceNow Developer', company: 'Tech Mahindra', location: 'Remote (India)', experienceYears: '1–4 years', salaryRange: '₹9–18 LPA', skills: ['ServiceNow', 'JavaScript', 'ITSM'], isInternship: false },
     { title: 'QA Automation Engineer', company: 'Cognizant', location: 'Hyderabad', experienceYears: '1–3 years', salaryRange: '₹6–10 LPA', skills: ['Selenium', 'Java', 'TestNG'], isInternship: false },
     { title: 'Design Engineer — Powertrain', company: 'Ashok Leyland', location: 'Chennai', experienceYears: '0–2 years', salaryRange: '₹5–7 LPA', skills: ['CATIA', 'GD&T', 'ANSYS'], isInternship: false },
     { title: 'Backend Engineer', company: 'Razorpay', location: 'Bengaluru', experienceYears: '2–5 years', salaryRange: '₹25–38 LPA', skills: ['Go', 'PostgreSQL', 'Microservices'], isInternship: false },
@@ -850,7 +939,7 @@ export const JOBS: JobPosting[] = (() => {
 
   const states: JobPosting['state'][] = ['live', 'live', 'live', 'live', 'live', 'live', 'live', 'live', 'pending_moderation', 'pending_moderation', 'closed', 'rejected'];
 
-  return templates.map((t, i) => {
+  const jobs = templates.map((t, i) => {
     const poster = SEED.alumni[int(10, 60)]!;
     const state = states[i]!;
     return {
@@ -861,7 +950,7 @@ export const JOBS: JobPosting[] = (() => {
       isInternship: t.isInternship ?? false,
       description:
         `${t.title} at ${t.company}.\n\n` +
-        `We are hiring from the DIET network. ${t.isInternship ? 'Six-month internship with a pre-placement offer for strong performers.' : 'Full-time role, immediate joiners preferred.'}\n\n` +
+        `We are hiring through the alumni network. ${t.isInternship ? 'Six-month internship with a pre-placement offer for strong performers.' : 'Full-time role, immediate joiners preferred.'}\n\n` +
         `What we look for: solid fundamentals, evidence you have built something end to end, and the ability to explain a decision you got wrong.\n\n` +
         `Referrals from this posting go straight to the hiring manager — apply here rather than through the careers portal.`,
       applyUrl: chance(0.5) ? `https://careers.example.com/${t.company.toLowerCase().replace(/\s+/g, '-')}/${i}` : null,
@@ -877,6 +966,30 @@ export const JOBS: JobPosting[] = (() => {
       moderationNote: state === 'rejected' ? 'Posting is a third-party staffing listing, not a direct opening. Placement cell policy is direct employers only.' : null,
     };
   });
+
+  // S7. Posters work where they are hiring. The live Amazon role is the
+  // demo alumnus's own (his notification says it was approved), and every
+  // other live posting whose poster posts only that one is re-homed at
+  // the company it advertises. Deterministic: no draws after the map.
+  const demoIds = new Set(SEED.demoAccounts.map((a) => a.memberId));
+  const vamsi = SEED.alumni[9]!;
+  jobs[0]!.postedBy = toSummary(vamsi);
+
+  for (const job of jobs) {
+    if (job.state !== 'live' || job.postedBy.id === vamsi.id) continue;
+    const poster = SEED.members.find((m) => m.id === job.postedBy.id);
+    if (!poster || demoIds.has(poster.id)) continue;
+    const postsOnlyThis = jobs.filter((j) => j.postedBy.id === poster.id).length === 1;
+    if (!postsOnlyThis || poster.currentCompany === job.company) continue;
+
+    poster.currentCompany = job.company;
+    // Keep the profile's own history in step with the headline.
+    const current = poster.employment.find((e) => e.isCurrent);
+    if (current) current.company = job.company;
+    job.postedBy = toSummary(poster);
+  }
+
+  return jobs;
 })();
 
 export const JOB_APPLICATIONS: JobApplication[] = (() => {
@@ -897,6 +1010,32 @@ export const JOB_APPLICATIONS: JobApplication[] = (() => {
   }
   return out;
 })();
+
+// S8. The applicant count on a posting is the number of applications
+// behind it (it read 34 over a list of 12), and each note is in the
+// applicant's own branch: an ECE student does not write about a payments
+// sandbox. Deterministic rewrites after the draws above.
+{
+  const software = (dept: string) =>
+    `Final-year ${dept} student. My capstone is a full-stack web application; happy to walk through the design.`;
+  const NOTE_BY_DEPT: Record<string, string> = {
+    CSE: software('CSE'),
+    IT: software('IT'),
+    AIML: software('AIML'),
+    ECE: 'Final-year ECE student. My project is an embedded sensor board on an ARM microcontroller; happy to share the schematics.',
+    EEE: 'Final-year EEE student. I did a summer internship at a 132 kV substation; happy to talk through what I worked on.',
+    MECH: 'Final-year MECH student. My project is a two-stage gearbox design with an ANSYS analysis; happy to share the drawings.',
+    CIVIL: 'Final-year CIVIL student. I did a site internship on a highway project; happy to share my daily reports.',
+  };
+  const DEFAULT_NOTE = 'Final-year student. Happy to share my project work.';
+
+  for (const a of JOB_APPLICATIONS) {
+    if (a.note !== null) a.note = NOTE_BY_DEPT[a.applicant.departmentCode ?? ''] ?? DEFAULT_NOTE;
+  }
+  for (const job of JOBS) {
+    if (job.state === 'live') job.applicationCount = JOB_APPLICATIONS.filter((a) => a.jobId === job.id).length;
+  }
+}
 
 // ---------------------------------------------------------------
 // Connections
@@ -937,6 +1076,85 @@ export const CONNECTIONS: ConnectionRequest[] = (() => {
       to: toSummary(to),
     });
   }
+
+  // S5. Every demo persona has real requests, and they tell one story.
+  //
+  //  - Harika (the student) asked Vamsi (the alumnus) about interview
+  //    preparation — the request his notification n-1 announces.
+  //  - Two more final-years are waiting on Vamsi, so his Requests page
+  //    has a queue to answer.
+  //  - Last month Harika's mentorship request to M was accepted. M's
+  //    contact is `alumni_only`, so she is "Connected" and still sees no
+  //    email or mobile: the students rule, working.
+  //  - Vamsi's introduction to M2 was accepted, and M2 is `on_accept`, so
+  //    her contact is released to him: a real release between alumni.
+  //  - One student is waiting on the ECE faculty account.
+  //
+  // M and M2 are the *second* non-demo alumnus with that visibility and
+  // only the alumni role. The first is the e2e contact-release target
+  // (`e2e/fixtures/collect.ts`), and a connection to it would change what
+  // that suite measures.
+  const demoIds = new Set(SEED.demoAccounts.map((a) => a.memberId));
+  const secondWith = (v: ContactDetails['visibility']) =>
+    SEED.members.filter(
+      (x) =>
+        x.status === 'active_alumni' &&
+        !demoIds.has(x.id) &&
+        x.privateContact.visibility === v &&
+        x.roles.every((r) => r.role === 'alumni'),
+    )[1]!;
+
+  const harika = SEED.students[0]!;
+  const vamsi = SEED.alumni[9]!;
+  const facultyEce = SEED.members.find((m) => m.emailLower === 'faculty.ece@diet.ac.in')!;
+  const m1 = secondWith('alumni_only');
+  const m2 = secondWith('on_accept');
+
+  const demo = (
+    n: number,
+    from: SeedMember,
+    to: SeedMember,
+    kind: ConnectionRequest['kind'],
+    state: ConnectionRequest['state'],
+    message: string,
+    createdDays: number,
+    respondedDays: number | null,
+  ): ConnectionRequest => ({
+    id: `conn-demo-${n}`,
+    kind,
+    state,
+    message,
+    createdAt: daysFromNow(createdDays),
+    respondedAt: respondedDays === null ? null : daysFromNow(respondedDays),
+    expiresAt: state === 'pending' ? daysFromNow(14 + createdDays) : null,
+    from: toSummary(from),
+    to: toSummary(to),
+  });
+
+  out.push(
+    {
+      ...demo(1, harika, vamsi, 'mentorship', 'pending',
+        'Hello sir, I am a final-year CSE student. I saw you work at Amazon. Could you tell me what to focus on for the online assessment? I have four weeks.',
+        -0.2, null),
+      // Exactly as S5 specifies: two weeks from now, like every new request.
+      expiresAt: daysFromNow(14),
+    },
+    demo(2, SEED.students[1]!, vamsi, 'referral', 'pending',
+      'Hello, I am a final-year student applying for software roles. Would you be willing to look at my resume and consider a referral at Amazon?',
+      -1, null),
+    demo(3, SEED.students[2]!, vamsi, 'mentorship', 'pending',
+      'Namaste. I am preparing for product-company interviews and would value your advice on planning the next two months.',
+      -3, null),
+    demo(4, harika, m1, 'mentorship', 'accepted',
+      'Hello, I am a final-year CSE student. Could you tell me how you prepared for your first technical interviews?',
+      -25, -2),
+    demo(5, vamsi, m2, 'introduction', 'accepted',
+      'Hi, I am putting together a session for final-years on careers in electronics. Would you be open to a short call about it?',
+      -12, -10),
+    demo(6, SEED.students[3]!, facultyEce, 'introduction', 'pending',
+      'Good morning madam. I am interested in embedded systems. Could you introduce me to a graduate working in that area?',
+      -2, null),
+  );
 
   return out;
 })();
@@ -1021,7 +1239,7 @@ export const AUDIT_LOG: AuditEntry[] = (() => {
     ['Anjaneyulu Bandaru', 'finance'],
   ];
 
-  return Array.from({ length: 84 }, (_, i) => {
+  const rows: AuditEntry[] = Array.from({ length: 84 }, (_, i) => {
     const [action, resource, reason] = actions[i % actions.length]!;
     const [actorName, actorRole] = actors[i % actors.length]!;
     return {
@@ -1038,6 +1256,98 @@ export const AUDIT_LOG: AuditEntry[] = (() => {
       after: action.includes('verify') ? { status: 'active_alumni' } : null,
     };
   });
+
+  // S9. Every entry is made by a role that holds the action, so the audit
+  // log's "role does not hold this" flag means something when it fires.
+  // Exactly one showcase remains: the HOD's bulk export at index 2, which
+  // `capabilityMismatch` flags. Reasons are derived from the seed's own
+  // sizes rather than invented figures ("8,142 recipients" on a portal of
+  // 310 members). Deterministic: no draws below this line.
+  const byRole = new Map(actors.map(([name, role]) => [role, name]));
+  const ELIGIBLE: Record<string, Role[]> = {
+    'member.verify': ['alumni_cell_operator', 'college_admin', 'hod'],
+    'member.reject': ['alumni_cell_operator', 'college_admin', 'hod'],
+    'member.export': ['college_admin'],
+    'role.grant': ['college_admin'],
+    'role.revoke': ['college_admin'],
+    'branding.publish': ['college_admin'],
+    'degree_register.import': ['alumni_cell_operator', 'college_admin'],
+    'job.moderate': ['placement_officer', 'college_admin'],
+    'event.create': ['alumni_cell_operator', 'college_admin', 'hod'],
+    'comms.send': ['alumni_cell_operator', 'placement_officer', 'college_admin', 'hod'],
+    'rollover.execute': ['college_admin'],
+    'data_request.fulfil': ['college_admin'],
+    'member.merge': ['college_admin'],
+    'tenant.configure': ['college_admin'],
+  };
+
+  const memberRows = SEED.members.length;
+  const activeAlumni = SEED.members.filter((m) => m.status === 'active_alumni').length;
+  const EXPORT_PURPOSES = [
+    'NAAC criterion 5 submission',
+    'NIRF graduation outcomes',
+    'Annual alumni meet invitations',
+    'IQAC annual report',
+    'NBA self-assessment report',
+    'Department alumni survey',
+  ];
+  const COMMS_SUBJECTS = [
+    'Annual alumni meet: registration is open',
+    'Placement season update',
+    'Call for mentors',
+    'Privacy notice updated',
+    'Industry Connect: speakers wanted',
+    'Convocation photographs are online',
+  ];
+  const IMPORT_YEARS = [2019, 2020, 2021, 2022, 2023, 2024];
+  const registerRows = (year: number) => DEGREE_REGISTER.filter((d) => d.yearOfPassing === year).length;
+
+  const seen = new Map<string, number>();
+  let rolloverKept: AuditEntry | null = null;
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]!;
+    const k = seen.get(row.action) ?? 0;
+    seen.set(row.action, k + 1);
+
+    // Only the first rollover is real: the annual rollover runs once a
+    // year. The other five become the event creations they sit among.
+    if (row.action === 'rollover.execute' && k > 0) {
+      row.action = 'event.create';
+      row.resource = 'event';
+      row.resourceId = row.resourceId?.replace(/^member-/, 'event-') ?? null;
+      row.reason = null;
+    }
+
+    const eligible = ELIGIBLE[row.action] ?? ['college_admin'];
+    let role: Role = eligible[k % eligible.length]!;
+    if (i === 2 && row.action === 'member.export') role = 'hod'; // The showcase mismatch.
+    row.actorRole = role;
+    row.actorName = byRole.get(role) ?? row.actorName;
+
+    if (row.action === 'member.export') {
+      row.reason = `${EXPORT_PURPOSES[k % EXPORT_PURPOSES.length]} · ${memberRows} rows, contact fields included`;
+    } else if (row.action === 'comms.send') {
+      row.reason = `${COMMS_SUBJECTS[k % COMMS_SUBJECTS.length]} · ${activeAlumni} recipients`;
+    } else if (row.action === 'degree_register.import') {
+      const year = IMPORT_YEARS[k % IMPORT_YEARS.length]!;
+      row.reason = `${year} batch, ${registerRows(year)} rows, 4 rejected`;
+    } else if (row.action === 'rollover.execute') {
+      const promoted = SEED.members.filter((m) => m.batchYear === 2025 && m.status === 'active_alumni').length;
+      row.reason = `Batch of 2025 promoted to alumni · ${promoted} rows`;
+      row.createdAt = new Date('2025-07-15T11:00:00+05:30').toISOString();
+      rolloverKept = row;
+    }
+  }
+
+  // The rollover is dated last July, so it moves to the end of the list
+  // rather than sitting among this week's entries.
+  if (rolloverKept) {
+    rows.splice(rows.indexOf(rolloverKept), 1);
+    rows.push(rolloverKept);
+  }
+
+  return rows;
 })();
 
 export const DATA_REQUESTS: DataRequest[] = Array.from({ length: 9 }, (_, i) => {
@@ -1058,6 +1368,12 @@ export const DATA_REQUESTS: DataRequest[] = Array.from({ length: 9 }, (_, i) => 
   };
 });
 
+// S10. The queue has one of each kind of work open: a deletion just
+// received, a correction in progress. Neither is fulfilled, so neither
+// carries a fulfilment date.
+DATA_REQUESTS[1] = { ...DATA_REQUESTS[1]!, kind: 'deletion', state: 'received', fulfilledAt: null };
+DATA_REQUESTS[2] = { ...DATA_REQUESTS[2]!, kind: 'correction', state: 'in_progress', fulfilledAt: null };
+
 /**
  * Notifications, owned.
  *
@@ -1074,13 +1390,18 @@ export const DATA_REQUESTS: DataRequest[] = Array.from({ length: 9 }, (_, i) => 
 export const NOTIFICATIONS: NotificationItem[] = (() => {
   const demoAlumnus = SEED.alumni[9]!;   // alumni@example.com
   const demoStudent = SEED.students[0]!; // student@diet.ac.in
+  const acceptedMentor = CONNECTIONS.find((c) => c.id === 'conn-demo-4')!.to;
 
   const owned: NotificationItem[] = [
     { id: 'n-1', memberId: demoAlumnus.id, kind: 'connection', title: 'Harika Nallamothu wants to connect', body: 'Final-year CSE student asking about interview preparation.', href: '/connections', readAt: null, createdAt: daysFromNow(-0.2) },
     { id: 'n-2', memberId: demoAlumnus.id, kind: 'event', title: 'CSE Industry Connect is in 11 days', body: 'You are registered. Seminar Hall 2, 10:00 AM.', href: '/events/cse-industry-connect', readAt: null, createdAt: daysFromNow(-1) },
-    { id: 'n-3', memberId: demoAlumnus.id, kind: 'job', title: 'Your posting was approved', body: 'ServiceNow Developer at ifBash is now live in the jobs board.', href: '/jobs', readAt: daysFromNow(-2), createdAt: daysFromNow(-2.5) },
+    // S7. The posting that was approved is his own, the live Amazon role.
+    { id: 'n-3', memberId: demoAlumnus.id, kind: 'job', title: 'Your posting was approved', body: `${JOBS[0]!.title} at ${JOBS[0]!.company} is now live on the jobs board.`, href: `/jobs/${JOBS[0]!.id}`, readAt: daysFromNow(-2), createdAt: daysFromNow(-2.5) },
     { id: 'n-4', memberId: demoStudent.id, kind: 'verification', title: 'Your account is verified', body: 'Matched against the degree register. Full directory access is open.', href: '/directory', readAt: daysFromNow(-30), createdAt: daysFromNow(-31) },
-    { id: 'n-5', memberId: demoStudent.id, kind: 'connection', title: 'Vamsi Krishna Pothineni accepted your request', body: 'Their contact details are now visible on their profile.', href: '/connections', readAt: null, createdAt: daysFromNow(-2) },
+    // S5. The mentor who accepted is M (conn-demo-4), not Vamsi, whose
+    // reply is still pending (n-1). M shares contact with alumni and
+    // faculty only, so nothing here promises contact details.
+    { id: 'n-5', memberId: demoStudent.id, kind: 'connection', title: `${acceptedMentor.fullName} accepted your request`, body: 'See their profile.', href: '/connections', readAt: null, createdAt: daysFromNow(-2) },
   ];
 
   // The privacy notice reaches every member, addressed individually.
@@ -1121,7 +1442,7 @@ export const TENANTS: TenantSummary[] = [
   // still provisioning — and so the branding studio has packs to switch
   // between during a demo.
   {
-    id: 'ten-svu', name: 'Sri Vydehi University', shortName: 'SVU',
+    id: 'ten-svu', name: 'Tamarind Grove University', shortName: 'Tamarind',
     subdomain: 'srivarsity', packId: 'srivarsity', established: 1994,
     memberCount: 1840, alumniCount: 1602, studentCount: 238, verifiedCount: 1204, fcraRegistered: true,
     createdAt: daysFromNow(-24), plan: 'standard', status: 'active',

@@ -44,7 +44,7 @@ export function ActiveFilters({
     if (availability) {
       chips.push({
         id: key,
-        label: 'Available for',
+        label: '',
         value: availability.chip,
         href: buildDirectoryHref(params, { [key]: null }),
       });
@@ -71,16 +71,16 @@ export function ActiveFilters({
   return (
     <div className={className}>
       <ul className="flex flex-wrap items-center gap-2">
-        <li className="text-xs font-semibold uppercase tracking-wide text-muted">Filtered by</li>
+        <li className="text-xs font-semibold uppercase tracking-wide text-secondary">Filtered by</li>
 
         {chips.map((chip) => (
           <li key={chip.id}>
             <Link
               href={chip.href}
-              aria-label={`Remove filter: ${chip.label} ${chip.value}`}
-              className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface-raised py-1 pl-2.5 pr-1.5 text-xs font-medium transition-colors duration-fast ease-brand hover:border-line-strong hover:bg-surface-sunken"
+              aria-label={`Remove filter: ${chip.label ? `${chip.label} ` : ''}${chip.value}`}
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-line bg-surface-raised py-1 pl-3 pr-2 text-xs font-medium transition-colors duration-fast ease-brand hover:border-line-strong hover:bg-surface-sunken sm:min-h-8"
             >
-              <span className="text-muted">{chip.label}</span>
+              {chip.label ? <span className="text-secondary">{chip.label}</span> : null}
               <span className="max-w-40 truncate text-primary">{chip.value}</span>
               <X className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
             </Link>
@@ -91,7 +91,7 @@ export function ActiveFilters({
           <li>
             <Link
               href={buildDirectoryHref({}, { q: params.q ?? null, sort: params.sort ?? null })}
-              className="link text-xs font-medium"
+              className="link inline-flex min-h-11 items-center text-xs font-medium sm:min-h-8"
             >
               Clear {chips.length} filters
             </Link>
@@ -114,7 +114,7 @@ const LABELS: Partial<Record<DirectoryParamKey, string>> = {
 
 const COHORT_LABELS: Record<string, string> = {
   alumni: 'Alumni only',
-  students: 'Final years only',
+  students: 'Final-year students',
   all: 'Everyone',
 };
 

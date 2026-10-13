@@ -1,0 +1,9 @@
+{
+  "root": true,
+  "extends": ["next/core-web-vitals", "next/typescript"],
+  "ignorePatterns": ["node_modules/", ".next/", "out/", "coverage/", "playwright-report/", "test-results/", "next-env.d.ts", "e2e/.state/"],
+  "rules": {
+    "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_", "caughtErrorsIgnorePattern": "^_" }],
+    "@typescript-eslint/consistent-type-imports": ["error", { "prefer": "type-imports", "fixStyle": "inline-type-imports", "disallowTypeAnnotations": false }]
+  }
+}

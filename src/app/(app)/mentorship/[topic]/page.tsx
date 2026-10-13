@@ -1,25 +1,27 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { ArrowLeft, Compass, Info, Users } from 'lucide-react';
+import { ArrowRight, Users } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
-import { require as requireCap } from '@/lib/auth/guard';
+import { can, require as requireCap } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
-import { getConnectionQuota } from '@/lib/data/repo';
+import { getConnectionQuota, getConnections } from '@/lib/data/repo';
 import { getMentorTopics, getMentorsByTopic, type MentorTopic } from '@/lib/data/content';
 import {
-  Alert,
   Badge,
   Breadcrumbs,
   ButtonLink,
-  Card,
-  CardBody,
+  ChipNav,
   EmptyState,
+  HowThisWorks,
   PageHeader,
-  Section,
 } from '@/components/ui';
 import { MemberCard } from '@/components/members/MemberCard';
-import { MarginNote } from '@/components/brand/Marks';
+import { RequestIntroButton } from '@/components/directory/RequestIntroButton';
+import { cn } from '@/lib/cn';
+import { yearsOut } from '@/lib/format';
+import { viewerBranch } from '@/lib/identity';
+import type { ConnectionKind, MemberSummary } from '@/lib/data/types';
 
 /**
  * One question, and the graduates the register says can answer it.
@@ -28,9 +30,8 @@ import { MarginNote } from '@/components/brand/Marks';
  * alumni to tick eight boxes produces eight empty boxes, so the topic is
  * derived from branch, batch, employment history and location. That is a
  * defensible way to build the list and an indefensible thing to hide, so
- * every page states the rule it used in one sentence. A student who knows
- * "these are graduates at least five years out" can judge the list; one
- * who thinks each person hand-picked this topic cannot.
+ * the chips under the question state the rule, and the disclosure says
+ * it in full.
  */
 
 const SHOWN = 24;
@@ -38,75 +39,116 @@ const SHOWN = 24;
 interface TopicCopy {
   /** The topic restated as the question a final-year actually asks. */
   question: string;
-  /** The literal grouping rule, in words. Must match `getMentorsByTopic`. */
-  heuristic: string;
+  /** The literal grouping rule, in words, given the branch codes present. Must match `getMentorsByTopic`. */
+  heuristic: (codes: string) => string;
   /** What the list is therefore good and bad for. */
   caveat: string;
+  /** The rule as a chip, where branches alone do not say it. */
+  rule: string | null;
 }
 
 const COPY: Record<string, TopicCopy> = {
   interviews: {
     question: 'What should I be studying, in what order, and how long does it really take?',
-    heuristic:
-      'Graduates from the software branches — CSE, IT and AIML — who left at least two years ago.',
+    heuristic: (codes) =>
+      `Graduates from the software branches${codes ? ` (${codes})` : ''} who left at least two years ago.`,
     caveat:
       'Two years out is deliberate: someone who sat the same interviews recently enough to remember the questions, and has since been on the other side of at least a few.',
+    rule: '2+ years out',
   },
   'first-job': {
     question: 'Do I take the offer in hand, or hold out for something better?',
-    heuristic: 'Graduates who are between three and eight years out of college.',
+    heuristic: () => 'Graduates who are between three and eight years out of college.',
     caveat:
       'Close enough to remember making the same decision, far enough to know how it turned out. A graduate twenty years out has a good answer to a different question.',
+    rule: '3 to 8 years out',
   },
   'higher-studies': {
     question: 'Is a masters worth it for my branch, and when should I go?',
-    heuristic: 'Graduates who have themselves done a masters or a second qualification.',
+    heuristic: () => 'Graduates who have themselves done a masters or a second qualification.',
     caveat:
       'Taken from the education section of their profile, so it is only as complete as they filled it in. Someone who studied further and never updated their record will not appear here.',
+    rule: 'Further study on their record',
   },
   'core-vs-software': {
     question: 'Do I stay in my branch, or move to software like everyone else seems to?',
-    heuristic:
-      'Graduates from the non-software branches — ECE, EEE, MECH, CIVIL and the rest of the core disciplines.',
+    heuristic: (codes) => `Graduates from the branches outside software${codes ? ` (${codes})` : ''}.`,
     caveat:
       'The list holds both outcomes on purpose. Some of these graduates stayed in core and some left for software, and the ones who stayed are usually the more useful conversation.',
+    rule: null,
   },
   abroad: {
     question: 'How do people actually get out, and what is nobody telling me about the first year?',
-    heuristic: 'Graduates whose current location on their profile is outside India.',
-    caveat:
-      'This is the cohort no other channel reaches — they miss the annual meet and drop off the batch WhatsApp group. Allow for the time difference and write, do not expect a call.',
+    heuristic: () => 'Graduates whose current location on their profile is outside India.',
+    caveat: 'Allow for the time difference and write; do not expect a call.',
+    rule: 'Working outside India',
   },
   startups: {
     question: 'Should I join something small, or start something, instead of taking a job?',
-    heuristic:
-      'Graduates whose current designation contains the word founder or co-founder.',
+    heuristic: () => 'Graduates whose current designation contains the word founder or co-founder.',
     caveat:
-      'A small list by nature, and it includes the ones it did not work out for — which is the half of the picture a founder profile on LinkedIn never shows you.',
+      'A small list by nature, and it includes the ones it did not work out for — which is the half of the picture a founder profile never shows you.',
+    rule: 'Founders and co-founders',
   },
   resume: {
     question: 'Why is my resume not getting shortlisted?',
-    heuristic: 'Graduates at least five years out of college.',
+    heuristic: () => 'Graduates at least five years out of college.',
     caveat:
       'Five years is roughly when a graduate starts sitting on the screening side of a hiring loop, reading the pile rather than being in it.',
+    rule: '5+ years out',
   },
   'career-change': {
     question: 'I think I picked wrong. Can I still change direction?',
-    heuristic: 'Graduates who have more than one employer on their record.',
+    heuristic: () => 'Graduates who have more than one employer on their record.',
     caveat:
       'A change of employer is a rough proxy for a change of direction and it will catch some people who simply switched companies doing the same work. Read the profile before you write.',
+    rule: 'More than one employer',
   },
 };
 
 const FALLBACK: TopicCopy = {
   question: 'Who can help me with this?',
-  heuristic: 'Graduates who have switched mentoring on and have skills listed on their profile.',
+  heuristic: () => 'Graduates who have switched mentoring on and have skills listed on their profile.',
   caveat: 'A broad list. Filter it yourself by branch, batch or company from the directory.',
+  rule: null,
 };
+
+/**
+ * Why this person is on this list, from fields the viewer may already
+ * see. Null when the card already says it: the card prints the work line
+ * and, when a city is shared, the place.
+ */
+function reasonFor(topicId: string, m: MemberSummary): string | null {
+  switch (topicId) {
+    case 'abroad':
+      return m.city ? null : m.country ? `Works outside India · ${m.country}` : null;
+    case 'startups':
+      return m.designation || m.currentCompany ? null : 'Founder';
+    case 'first-job':
+    case 'resume':
+    case 'interviews':
+      return yearsOut(m.batchYear);
+    default:
+      return null;
+  }
+}
+
+/** What a graduate has said yes to, in the directory's order. */
+function offeredKinds(m: MemberSummary): ConnectionKind[] {
+  const kinds: ConnectionKind[] = [];
+  if (m.openToMentoring) kinds.push('mentorship');
+  if (m.openToReferrals) kinds.push('referral');
+  if (m.openToSpeaking) kinds.push('speaking');
+  kinds.push('introduction');
+  return kinds;
+}
 
 function findTopic(id: string): MentorTopic | null {
   return getMentorTopics().find((t) => t.id === id) ?? null;
 }
+
+const one = (v: string | string[] | undefined): string | undefined =>
+  Array.isArray(v) ? v[0] : v;
 
 export async function generateMetadata({
   params,
@@ -125,8 +167,10 @@ export async function generateMetadata({
 
 export default async function MentorTopicPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ topic: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const session = await getSession();
   if (!session) redirect('/login');
@@ -145,124 +189,181 @@ export default async function MentorTopicPage({
   const mentors = getMentorsByTopic(session, topic.id, SHOWN);
   const isStudent = session.roles.some((r) => r.role === 'student');
   const quota = isStudent ? getConnectionQuota(session) : null;
+
+  const pack = resolved.brand.pack;
+  const mine = viewerBranch(session);
+
+  // The fetched list, without the viewer's own card, the viewer's own
+  // branch first for a student. Every filter below narrows this array
+  // and nothing else.
+  const pool = mentors
+    .filter((m) => m.id !== session.memberId)
+    .sort((a, b) =>
+      isStudent && mine ? Number(b.departmentCode === mine) - Number(a.departmentCode === mine) : 0,
+    );
+
+  const byBranch = new Map<string, number>();
+  for (const m of pool) if (m.departmentCode) byBranch.set(m.departmentCode, (byBranch.get(m.departmentCode) ?? 0) + 1);
+  const codes = [...byBranch.entries()]
+    .sort((a, b) => (isStudent && mine ? Number(b[0] === mine) - Number(a[0] === mine) : 0) || b[1] - a[1])
+    .map(([c]) => c);
+  const abroad = pool.filter((m) => m.country && m.country !== 'IN');
+  const refers = pool.filter((m) => m.openToReferrals);
+
+  const sp = await searchParams;
+  const show = one(sp.show);
+  const requestedBranch = one(sp.branch)?.toUpperCase();
+  const branch = requestedBranch && byBranch.has(requestedBranch) ? requestedBranch : null;
+  const filtered =
+    branch !== null
+      ? pool.filter((m) => m.departmentCode === branch)
+      : show === 'abroad'
+        ? abroad
+        : show === 'refers'
+          ? refers
+          : pool;
+
+  const base = `/mentorship/${topic.id}`;
+  const codeList = codes.length > 5 ? `${codes.slice(0, 5).join(', ')} and ${codes.length - 5} more` : codes.join(', ');
+
+  // Ask, under the same conditions the profile page applies before it
+  // offers the request button. The connections API checks them again.
+  const askQuota = quota ?? getConnectionQuota(session);
+  const sent = getConnections(session, 'sent');
+  const asked = new Set(sent.filter((c) => c.state === 'pending').map((c) => c.to.id));
+  const connected = new Set(getConnections(session, 'accepted').flatMap((c) => [c.from.id, c.to.id]));
+  const mayAsk = pack.features.connections && can(session, 'connection.send') && askQuota.canSend;
+
+  const action = (m: MemberSummary) =>
+    asked.has(m.id) ? (
+      <Badge tone="brand">Asked</Badge>
+    ) : connected.has(m.id) ? (
+      <Badge tone="success">Connected</Badge>
+    ) : mayAsk ? (
+      <RequestIntroButton
+        toMemberId={m.id}
+        toName={m.fullName}
+        kinds={offeredKinds(m)}
+        defaultKind={offeredKinds(m)[0]!}
+        quota={askQuota}
+        label="Ask"
+        variant="secondary"
+        size="sm"
+        className="min-h-11 sm:min-h-0"
+      />
+    ) : null;
+
   const openLeft = quota ? Math.max(0, quota.openLimit - quota.openRequests) : 0;
-  const more = Math.max(0, topic.mentorCount - mentors.length);
+  const monthLeft = quota ? Math.max(0, quota.monthlyLimit - quota.usedThisMonth) : 0;
+  const available = Math.min(openLeft, monthLeft);
+
+  const chip = 'inline-flex min-h-8 items-center rounded-full border border-line bg-surface-raised px-3 text-sm text-secondary';
 
   return (
     <div className="space-y-6">
       <PageHeader
         breadcrumbs={
-          <Breadcrumbs
-            items={[{ label: 'Mentorship', href: '/mentorship' }, { label: topic.label }]}
-          />
+          <Breadcrumbs items={[{ label: 'Mentorship', href: '/mentorship' }, { label: topic.label }]} />
         }
         eyebrow={topic.label}
         title={copy.question}
-        description={topic.description}
+        meta={
+          <ul className="flex flex-wrap gap-1.5" aria-label="Who is on this list">
+            <li className={cn(chip, 'font-medium text-primary')}>
+              {topic.mentorCount.toLocaleString('en-IN')} {topic.mentorCount === 1 ? 'graduate' : 'graduates'}
+            </li>
+            {codeList ? <li className={chip}>{codeList}</li> : null}
+            {copy.rule ? <li className={chip}>{copy.rule}</li> : null}
+          </ul>
+        }
         actions={
-          <ButtonLink href="/mentorship" variant="secondary">
-            <ArrowLeft className="size-4" aria-hidden="true" />
-            All topics
-          </ButtonLink>
+          quota ? (
+            <Link
+              href="/connections?tab=sent"
+              className={cn(
+                'inline-flex min-h-11 items-center rounded-full px-3 text-sm font-medium sm:min-h-8',
+                available > 0 ? 'bg-brand-soft text-brand-soft-fg' : 'bg-warning-soft text-warning-fg',
+              )}
+            >
+              {available > 0
+                ? `${available} ${available === 1 ? 'request' : 'requests'} available`
+                : monthLeft === 0
+                  ? 'No requests left this month'
+                  : 'Your requests are all waiting for replies'}
+            </Link>
+          ) : null
         }
       />
 
-      {/* The heuristic, stated before the list rather than in a footnote. A
-          derived grouping is only fair to the reader if the reader knows it
-          is derived. */}
-      <Card>
-        <CardBody className="space-y-2">
-          <p className="flex items-center gap-2 text-sm font-semibold">
-            <Compass className="size-4 text-muted" aria-hidden="true" />
-            What these graduates have in common
-          </p>
-          <p className="max-w-prose text-sm leading-relaxed text-secondary">
-            {copy.heuristic} {copy.caveat}
-          </p>
-          <p className="max-w-prose border-t border-line pt-2 text-xs text-muted">
-            Nobody on this page chose this topic by hand. The portal grouped them from their own
-            record, and any of them can correct it from their profile — which is a far easier ask
-            than filling in a form from nothing.
-          </p>
-        </CardBody>
-      </Card>
+      <HowThisWorks summary="How we grouped them" className="max-w-prose">
+        <p>
+          {copy.heuristic(codes.join(', '))} {copy.caveat}
+        </p>
+        <p>
+          Nobody on this page chose this topic by hand. The portal grouped them from their own record, and any of
+          them can correct it from their profile.
+        </p>
+      </HowThisWorks>
 
-      {mentors.length === 0 ? (
+      {pool.length === 0 ? (
         <EmptyState
           icon={<Users className="size-5" />}
           title="Nobody matches this question yet"
-          description="The grouping rule above found no graduate who is also open to mentoring. That is a thin register rather than a closed door — it fills as more batches verify their records and set their preferences."
+          description="It fills as more graduates verify their records and switch mentoring on."
           action={
-            <div className="flex flex-wrap justify-center gap-2">
-              <ButtonLink href="/mentorship">Back to the other topics</ButtonLink>
-              <ButtonLink href="/directory?mentoring=1" variant="secondary">
-                Everyone open to mentoring
-              </ButtonLink>
-            </div>
+            <ButtonLink href="/directory?mentoring=1" variant="secondary">
+              Everyone open to mentoring
+            </ButtonLink>
           }
         />
       ) : (
-        <Section
-          title={`${topic.mentorCount} ${topic.mentorCount === 1 ? 'graduate' : 'graduates'}`}
-          description={
-            more > 0
-              ? `Showing the first ${mentors.length}. The rest are reachable through the directory with the same availability filter.`
-              : 'Everyone the rule matched, in full.'
-          }
-          actions={
-            <Badge tone="success" dot>
-              All open to mentoring
-            </Badge>
-          }
-        >
-          <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {mentors.map((member) => (
+        <section aria-labelledby="topic-mentors" className="space-y-4">
+          <h2 id="topic-mentors" className="sr-only">
+            Graduates for this question
+          </h2>
+          <ChipNav
+            ariaLabel="Filter graduates"
+            items={[
+              { label: 'All', href: base, active: !branch && show !== 'abroad' && show !== 'refers', count: pool.length },
+              ...codes.map((c) => ({
+                label: c,
+                href: `${base}?branch=${encodeURIComponent(c)}`,
+                active: branch === c,
+                count: byBranch.get(c),
+              })),
+              ...(abroad.length > 0
+                ? [{ label: 'Works abroad', href: `${base}?show=abroad`, active: !branch && show === 'abroad', count: abroad.length }]
+                : []),
+              ...(refers.length > 0
+                ? [{ label: 'Also refers', href: `${base}?show=refers`, active: !branch && show === 'refers', count: refers.length }]
+                : []),
+            ]}
+          />
+
+          <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {filtered.map((member) => (
               // `relative` so the card's overlay link covers the tile and
               // nothing outside it.
-              <li key={member.id} className="relative">
-                <MemberCard member={member} className="h-full" />
+              <li key={member.id} className="relative min-w-0">
+                <MemberCard
+                  member={member}
+                  className="h-full"
+                  note={reasonFor(topic.id, member)}
+                  action={action(member)}
+                />
               </li>
             ))}
           </ul>
-
-          {more > 0 ? (
-            <p className="text-sm text-secondary">
-              <Link href="/directory?mentoring=1" className="link">
-                Open the directory
-              </Link>{' '}
-              to see the remaining {more} and filter them by branch, batch, company or city.
-            </p>
-          ) : null}
-        </Section>
+        </section>
       )}
 
-      {quota ? (
-        <Alert
-          tone={openLeft === 0 ? 'warning' : 'info'}
-          title={
-            openLeft === 0
-              ? 'You have no request slots free right now'
-              : `You can send ${openLeft} more ${openLeft === 1 ? 'request' : 'requests'} right now`
-          }
-          icon={<Info className="size-4" />}
-        >
-          <p>
-            {quota.reason ??
-              'Open a profile to send one. Say who you are, the single decision you are stuck on, and what you have already tried — and ask before you apply somewhere, not after the rejection.'}{' '}
-            <Link href="/connections?tab=sent" className="link">
-              See what you have sent
-            </Link>
-            .
-          </p>
-        </Alert>
-      ) : null}
-
-      <MarginNote className="max-w-prose border-t border-line pt-4">
-        Contact details are not on this page and are not released by opening a profile. A
-        graduate&apos;s email or number appears only when they have consented to it in their own
-        privacy settings <em>and</em> you are entitled to see it — both, never either.
-      </MarginNote>
+      <div className="flex flex-col gap-1 border-t border-line pt-4 text-sm text-secondary sm:flex-row sm:items-center sm:justify-between">
+        <p>Contact details show on a profile only when the graduate&rsquo;s own privacy setting allows it.</p>
+        <Link href="/directory?mentoring=1" className="link inline-flex min-h-11 items-center gap-1.5 font-medium">
+          See all mentors in the directory
+          <ArrowRight className="size-3.5" aria-hidden="true" />
+        </Link>
+      </div>
     </div>
   );
 }
-

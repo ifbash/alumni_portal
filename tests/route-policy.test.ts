@@ -6,14 +6,21 @@ import {
   ROUTE_POLICY,
   STAFF_CONSOLE_CAPABILITIES,
   UNAUTHORISED_REDIRECT,
+  VENDOR_FALLBACK_REDIRECT,
+  VENDOR_REDIRECT,
+  VENDOR_ROLE,
+  coarseVerdict,
   holdsAnyCapability,
   isAssetPath,
+  isVendorOnly,
   loginRedirectPath,
+  needsViewer,
   policyFor,
   readSessionMemberId,
   requiresCapability,
   requiresSession,
   safeNextParam,
+  vendorRefusalPath,
   UNAUTHENTICATED_BODY,
   type CoarseViewer,
 } from '@/lib/auth/route-policy';
@@ -41,6 +48,17 @@ import { IS_FIXTURE } from '@/lib/config';
  * which is an outage caused by a status-code fix. The suite below asserts
  * agreement across the whole role × capability matrix rather than
  * spot-checking a few roles.
+ *
+ * The fourth is the vendor. A session holding nothing but
+ * `platform_admin` was served `/jobs`, `/news` and `/gallery` — pages
+ * that name alumni and ask no capability, because "any signed-in member"
+ * is the right bar for a member. The gate now turns a vendor-only caller
+ * away from the member community before anything renders, and "the
+ * vendor" block below pins both halves of that: the vendor is refused
+ * everywhere it should be, and nobody else is refused anywhere new. It
+ * also walks every redirect chain the gate can produce, because the
+ * vendor refusal points at `/platform` and `/platform` points refusals at
+ * `/dashboard`.
  */
 
 // ---------------------------------------------------------------
@@ -78,14 +96,69 @@ describe('the policy table', () => {
     }
   });
 
-  it('only spends a storage read on the two console prefixes', () => {
-    // Every rule carrying `requiresAnyCapability` costs a member lookup on
-    // every request to it. That is affordable for staff-console traffic
-    // and is not affordable for the member portal or for /api. If this
-    // list grows, the growth has to be a decision somebody took, not a
-    // line somebody added.
+  it('only asks for a capability on the two console prefixes', () => {
+    // The capability half of the gate is coarse and console-only. A
+    // capability on any other prefix is the start of a second
+    // authorisation model; see "does not answer any of it from the policy
+    // table" below.
     const gated = ROUTE_POLICY.filter((r) => r.requiresAnyCapability).map((r) => r.prefix);
     expect(gated.sort()).toEqual(['/admin', '/platform']);
+  });
+
+  it('spends a storage read exactly where a rule needs the viewer, and nowhere else', () => {
+    // Every rule `needsViewer()` is true for costs a member lookup on
+    // every request to it. Until the vendor rule that was the two
+    // consoles; it is now also the member-community surfaces and their
+    // API twins, a decision argued at the top of route-policy.ts. The
+    // list is pinned exactly: if it grows again, the growth has to be a
+    // decision somebody took, not a line somebody added.
+    const paying = ROUTE_POLICY.filter(needsViewer).map((r) => r.prefix);
+    expect(paying.sort()).toEqual(
+      [
+        '/admin',
+        '/platform',
+        '/dashboard',
+        '/directory',
+        '/connections',
+        '/mentorship',
+        '/events',
+        '/jobs',
+        '/news',
+        '/gallery',
+        '/giving',
+        '/notifications',
+        '/api/directory',
+        '/api/members',
+        '/api/connections',
+        '/api/events',
+        '/api/jobs',
+        '/api/news',
+        '/api/gallery',
+        '/api/donations',
+        '/api/notifications',
+      ].sort(),
+    );
+
+    // And the account itself, the public surface and the rest of /api
+    // still read nothing but the cookie.
+    for (const path of [
+      '/profile',
+      '/profile/edit',
+      '/settings',
+      '/settings/security',
+      '/api/auth/me',
+      '/api/profile',
+      '/api/settings/privacy',
+      '/api/data-requests',
+      '/api/admin/members/export',
+      '/api/platform/tenants',
+      '/api/health',
+      '/',
+      '/login',
+      '/campus-events',
+    ]) {
+      expect(needsViewer(policyFor(path)), `${path} must not cost a lookup`).toBe(false);
+    }
   });
 
   it('never gates the path it redirects the refused to', () => {
@@ -497,10 +570,12 @@ describe('the console prefixes', () => {
   });
 
   it('leaves the member portal and the API to the page and the handler', () => {
-    // These are the paths that must not pay for a member lookup. /api in
-    // particular already answers 403 correctly from the route handler —
-    // `fail()` runs before anything is streamed — so there is nothing here
-    // for middleware to fix and no reason to charge for it.
+    // No capability requirement on any of these. /api in particular
+    // already answers 403 correctly from the route handler — `fail()`
+    // runs before anything is streamed — so there is no capability
+    // question here for middleware to ask. (Some of them do now pay a
+    // lookup, for the vendor rule alone; that is pinned separately in
+    // "spends a storage read exactly where a rule needs the viewer".)
     for (const path of [
       '/dashboard',
       '/directory',
@@ -512,7 +587,7 @@ describe('the console prefixes', () => {
       '/login',
       '/campus-events',
     ]) {
-      expect(requiresCapability(path), `${path} must not cost a lookup`).toBeNull();
+      expect(requiresCapability(path), `${path} must carry no capability rule`).toBeNull();
     }
   });
 
@@ -556,6 +631,294 @@ describe('refusing a signed-in caller', () => {
     // the wrong one forever.
     expect(FORBIDDEN_BODY.code).not.toBe(UNAUTHENTICATED_BODY.code);
     expect(loginRedirectPath('/admin/members')).not.toBe(UNAUTHORISED_REDIRECT);
+  });
+});
+
+// ---------------------------------------------------------------
+// The vendor
+// ---------------------------------------------------------------
+
+/** The college's community surfaces: every one names members to members. */
+const MEMBER_COMMUNITY_PAGES = [
+  '/dashboard',
+  '/directory',
+  '/connections',
+  '/mentorship',
+  '/events',
+  '/jobs',
+  '/news',
+  '/gallery',
+  '/giving',
+  '/notifications',
+] as const;
+
+/** Deeper paths under them, including the three that leaked by name. */
+const MEMBER_COMMUNITY_DEEP = [
+  '/directory/kandula-sai-teja-2017',
+  '/directory/batch/2017',
+  '/directory/branch/CSE',
+  '/mentorship/interviews',
+  '/events/alumni-meet-2026',
+  '/events/alumni-meet-2026/ticket',
+  '/jobs/new',
+  '/jobs/job-0',
+  '/jobs/job-0/applicants',
+  '/news/in-memoriam-prof-narasimha-rao',
+  '/gallery/cse-block-then-and-now',
+  '/giving/library-modernisation',
+] as const;
+
+/** The same content as JSON. `/api/news` and `/api/gallery` have no handler yet. */
+const MEMBER_COMMUNITY_API = [
+  '/api/directory',
+  '/api/members/vandana-siva-chalasani-6',
+  '/api/connections',
+  '/api/connections/conn-0',
+  '/api/events/alumni-meet-2026/ticket',
+  '/api/events/alumni-meet-2026/register',
+  '/api/events/alumni-meet-2026/checkin',
+  '/api/jobs',
+  '/api/jobs/job-0/applicants',
+  '/api/jobs/job-0/applicants/export',
+  '/api/news',
+  '/api/gallery',
+  '/api/donations',
+  '/api/notifications',
+] as const;
+
+/** The account itself. Open to the vendor, and costing no lookup. */
+const OWN_ACCOUNT = [
+  '/profile',
+  '/profile/edit',
+  '/profile/preview',
+  '/settings',
+  '/settings/data',
+  '/settings/privacy',
+  '/settings/security',
+  '/api/auth/me',
+  '/api/profile',
+  '/api/settings/privacy',
+  '/api/settings/notifications',
+  '/api/data-requests',
+] as const;
+
+const ALL_STATUSES: MemberStatus[] = [
+  'unclaimed',
+  'invited',
+  'pending',
+  'active_student',
+  'active_alumni',
+  'rejected',
+  'lapsed',
+  'deceased',
+];
+
+const vendor = (status: MemberStatus = 'active_alumni') => viewer([VENDOR_ROLE], status);
+
+/**
+ * Follows the gate the way a browser follows 307s, and returns every path
+ * visited. Stops at an admission, at a rule that needs no viewer (the
+ * page decides), or at a JSON refusal (a 403 is not followed). Throws on
+ * a revisit, because that is a redirect loop.
+ */
+function walk(start: string, v: CoarseViewer): string[] {
+  const visited = [start];
+  let path = start;
+  for (let hop = 0; hop < 10; hop++) {
+    const rule = policyFor(path);
+    if (!rule.requiresSession || !needsViewer(rule)) return visited;
+    const verdict = coarseVerdict(rule, v);
+    if (verdict.admit || rule.refuse === 'json') return visited;
+    path = verdict.redirectTo;
+    if (visited.includes(path)) throw new Error(`redirect loop: ${[...visited, path].join(' → ')}`);
+    visited.push(path);
+  }
+  throw new Error(`no landing after 10 hops from ${start}`);
+}
+
+describe('the vendor', () => {
+  it('is the role that alone holds tenant.provision, and its console is the /platform gate', () => {
+    // If these two ever named different things, the vendor rule would send
+    // somebody to a console that refuses them.
+    expect(VENDOR_ROLE).toBe('platform_admin');
+    expect(ROLES.filter((role) => can(sessionOf(viewer([role])), 'tenant.provision'))).toEqual([VENDOR_ROLE]);
+    expect(requiresCapability(VENDOR_REDIRECT)).toEqual(['tenant.provision']);
+  });
+
+  it('is recognised by holding nothing but the vendor role, whatever the status', () => {
+    for (const status of ALL_STATUSES) {
+      expect(isVendorOnly(vendor(status)), status).toBe(true);
+    }
+    expect(isVendorOnly(viewer([VENDOR_ROLE, VENDOR_ROLE]))).toBe(true);
+  });
+
+  it('is not recognised in anybody holding a second role, or no role at all', () => {
+    for (const role of ROLES.filter((r) => r !== VENDOR_ROLE)) {
+      expect(isVendorOnly(viewer([role])), role).toBe(false);
+      expect(isVendorOnly(viewer([VENDOR_ROLE, role])), `${VENDOR_ROLE} + ${role}`).toBe(false);
+      expect(isVendorOnly(viewer([role, VENDOR_ROLE])), `${role} + ${VENDOR_ROLE}`).toBe(false);
+    }
+    // Pending verification: no roles yet. Not the vendor, so not this
+    // rule's business — the page decides, exactly as before.
+    expect(isVendorOnly(viewer([], 'pending'))).toBe(false);
+  });
+
+  it('is refused every member-community page, and sent to its own console', () => {
+    for (const path of [...MEMBER_COMMUNITY_PAGES, ...MEMBER_COMMUNITY_DEEP]) {
+      const rule = policyFor(path);
+      expect(rule.refuseVendorOnly, `${path} must refuse the vendor`).toBe(true);
+      expect(rule.refuse, path).toBe('redirect');
+      expect(coarseVerdict(rule, vendor()), path).toEqual({ admit: false, redirectTo: '/platform' });
+    }
+  });
+
+  it('is refused the same content as JSON, with the ordinary 403', () => {
+    for (const path of MEMBER_COMMUNITY_API) {
+      const rule = policyFor(path);
+      expect(rule.refuseVendorOnly, `${path} must refuse the vendor`).toBe(true);
+      // `json` is what makes middleware answer 403 FORBIDDEN_BODY rather
+      // than follow `redirectTo` — an API client handed a 307 to an HTML
+      // console reports "the endpoint returned garbage".
+      expect(rule.refuse, path).toBe('json');
+      expect(coarseVerdict(rule, vendor()).admit, path).toBe(false);
+    }
+  });
+
+  it('keeps its own account: profile, settings and sign-out, at no lookup', () => {
+    for (const path of OWN_ACCOUNT) {
+      const rule = policyFor(path);
+      expect(rule.requiresSession, path).toBe(true);
+      expect(rule.refuseVendorOnly, `${path} must stay open to the vendor`).toBeFalsy();
+      expect(needsViewer(rule), `${path} must not cost a lookup`).toBe(false);
+    }
+  });
+
+  it('still reaches its own console, and the college console the coarse gate admits it to', () => {
+    for (const path of ['/platform', '/platform/brands', '/platform/ten-demo', '/admin', '/admin/branding']) {
+      expect(coarseVerdict(policyFor(path), vendor()), path).toEqual({ admit: true });
+    }
+    // The vendor's API surface is decided by its handlers, not the gate.
+    for (const path of ['/api/platform/tenants', '/api/admin/branding', '/api/admin/reports/export']) {
+      expect(needsViewer(policyFor(path)), path).toBe(false);
+    }
+  });
+
+  it('refuses nobody else anywhere new: every other role is admitted to every member surface', () => {
+    // The lockout direction. If this fails, a real member of the college
+    // is being bounced off their own portal by the vendor rule.
+    const everyPath = [...MEMBER_COMMUNITY_PAGES, ...MEMBER_COMMUNITY_DEEP, ...MEMBER_COMMUNITY_API];
+    for (const role of ROLES.filter((r) => r !== VENDOR_ROLE)) {
+      for (const status of ALL_STATUSES) {
+        for (const path of everyPath) {
+          expect(
+            coarseVerdict(policyFor(path), viewer([role], status)),
+            `${role} (${status}) on ${path}`,
+          ).toEqual({ admit: true });
+        }
+      }
+    }
+    // Including somebody with no roles yet.
+    for (const path of everyPath) {
+      expect(coarseVerdict(policyFor(path), viewer([], 'pending')), path).toEqual({ admit: true });
+    }
+  });
+
+  it('treats a vendor who is also a member of the college as that member', () => {
+    // One person, one row, and roles are a set. An ifBash engineer who is
+    // a DIET alumnus holds `alumni` because the college granted it; on
+    // /jobs they are an alumnus, and the vendor grant neither adds to nor
+    // takes from that. They keep their own console too.
+    const engineerWhoIsAnAlumnus = viewer(['alumni', VENDOR_ROLE]);
+    for (const path of [...MEMBER_COMMUNITY_PAGES, ...MEMBER_COMMUNITY_API]) {
+      expect(coarseVerdict(policyFor(path), engineerWhoIsAnAlumnus), path).toEqual({ admit: true });
+    }
+    expect(coarseVerdict(policyFor('/platform'), engineerWhoIsAnAlumnus)).toEqual({ admit: true });
+
+    // What they can *do* on those surfaces is the union of the two grants,
+    // decided by `can()` in the page — and the vendor half adds nothing
+    // about members to it.
+    const s = sessionOf(engineerWhoIsAnAlumnus);
+    expect(can(s, 'directory.view.contact')).toBe(false);
+    expect(can(s, 'profile.read.any')).toBe(false);
+    expect(can(s, 'member.export')).toBe(false);
+
+    // A college admin who also holds the vendor role is a college admin.
+    const adminAndVendor = viewer(['college_admin', VENDOR_ROLE]);
+    for (const path of ['/jobs', '/news', '/gallery', '/api/jobs', '/admin', '/platform']) {
+      expect(coarseVerdict(policyFor(path), adminAndVendor), path).toEqual({ admit: true });
+    }
+  });
+
+  it('sends a suspended vendor account to its settings rather than round in a circle', () => {
+    // /platform refuses anyone without an ACTIVE tenant.provision grant by
+    // sending them to /dashboard; /dashboard refuses the vendor by sending
+    // them to /platform. For a lapsed vendor account that is a loop, so
+    // the vendor refusal falls back to /settings when /platform would not
+    // have them either.
+    expect(vendorRefusalPath(vendor('active_alumni'))).toBe(VENDOR_REDIRECT);
+    for (const status of ['pending', 'invited', 'unclaimed', 'rejected', 'lapsed', 'deceased'] as MemberStatus[]) {
+      expect(vendorRefusalPath(vendor(status)), status).toBe(VENDOR_FALLBACK_REDIRECT);
+      expect(walk('/jobs', vendor(status)), status).toEqual(['/jobs', '/settings']);
+      expect(walk('/platform', vendor(status)), status).toEqual(['/platform', '/dashboard', '/settings']);
+    }
+    // And the fallback is somewhere the vendor rule does not reach.
+    expect(policyFor(VENDOR_FALLBACK_REDIRECT).refuseVendorOnly).toBeFalsy();
+    expect(needsViewer(policyFor(VENDOR_FALLBACK_REDIRECT))).toBe(false);
+  });
+
+  it('lands an active vendor on /platform from every member surface, in one hop', () => {
+    for (const path of [...MEMBER_COMMUNITY_PAGES, ...MEMBER_COMMUNITY_DEEP]) {
+      expect(walk(path, vendor()), path).toEqual([path, '/platform']);
+    }
+  });
+
+  it('never produces a redirect loop, for anybody, from anywhere', () => {
+    // Every role alone, every role paired with the vendor role, no roles,
+    // across every status, from every protected prefix in the table and
+    // the deep paths under it. `walk()` throws on a revisit.
+    const viewers: CoarseViewer[] = [];
+    for (const status of ALL_STATUSES) {
+      viewers.push(viewer([], status));
+      for (const role of ROLES) {
+        viewers.push(viewer([role], status));
+        if (role !== VENDOR_ROLE) viewers.push(viewer([role, VENDOR_ROLE], status));
+      }
+    }
+    const starts = [
+      ...ROUTE_POLICY.filter((r) => r.requiresSession).map((r) => r.prefix),
+      ...MEMBER_COMMUNITY_DEEP,
+      '/admin/members',
+      '/platform/brands',
+    ];
+    for (const v of viewers) {
+      for (const start of starts) {
+        expect(() => walk(start, v), `${v.roles.join('+') || '(none)'} ${v.status} from ${start}`).not.toThrow();
+      }
+    }
+  });
+
+  it('covers every member-portal page but the account itself — a new one must choose', () => {
+    // The structural guard. A member surface added to the table without
+    // `refuseVendorOnly` would be served to the vendor the way /jobs was.
+    // The only signed-in portal pages allowed to omit it are the account
+    // itself; the consoles are governed by their capability rule instead.
+    const OWN_ACCOUNT_PREFIXES = ['/profile', '/settings'];
+    const portalPages = ROUTE_POLICY.filter(
+      (r) => r.requiresSession && r.refuse === 'redirect' && !r.requiresAnyCapability,
+    );
+    for (const rule of portalPages) {
+      const expected = !OWN_ACCOUNT_PREFIXES.includes(rule.prefix);
+      expect(Boolean(rule.refuseVendorOnly), `${rule.prefix}: refuseVendorOnly`).toBe(expected);
+    }
+    expect(portalPages.map((r) => r.prefix).sort()).toEqual(
+      [...MEMBER_COMMUNITY_PAGES, ...OWN_ACCOUNT_PREFIXES].sort(),
+    );
+  });
+
+  it('never carries the vendor rule on a public prefix, where there is nobody to look up', () => {
+    for (const rule of ROUTE_POLICY) {
+      if (rule.refuseVendorOnly) expect(rule.requiresSession, rule.prefix).toBe(true);
+    }
   });
 });
 
