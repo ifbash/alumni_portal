@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Compass, Link2, ShieldCheck, SignpostBig } from 'lucide-react';
-import { ButtonLink, Card, CardBody, EmptyState } from '@/components/ui';
+import { ButtonLink } from '@/components/ui';
+import { NotFoundPanel } from '../../jobs/NotFoundPanel';
 
 /**
  * Topic not found.
@@ -38,48 +39,23 @@ export default function MentorTopicNotFound() {
   ];
 
   return (
-    <div className="space-y-6">
-      {/* `EmptyState`'s title is a paragraph by design — the document still
-          owes itself exactly one h1. */}
-      <h1 className="sr-only">Mentorship topic not found</h1>
-
-      <EmptyState
-        icon={<Compass className="size-5" />}
-        title="There is no mentorship topic at this address"
-        description="Either the link points at something that is not a question we group by, or it is not one your account can open. Here is what usually explains it."
-        action={
-          <div className="flex flex-wrap justify-center gap-2">
-            <ButtonLink href="/mentorship">Back to the topics</ButtonLink>
-            <ButtonLink href="/directory?mentoring=1" variant="secondary">
-              Everyone open to mentoring
-            </ButtonLink>
-          </div>
-        }
-      />
-
-      <Card className="mx-auto max-w-prose">
-        <CardBody>
-          <ul className="space-y-4 text-sm">
-            {reasons.map((r) => (
-              <li key={r.title} className="flex gap-3">
-                <span className="mt-0.5 shrink-0 text-muted" aria-hidden="true">
-                  {r.icon}
-                </span>
-                <div className="min-w-0 space-y-0.5">
-                  <p className="font-medium">{r.title}</p>
-                  <p className="text-secondary">{r.body}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
-
-          <p className="mt-5 border-t border-line pt-4 text-xs text-muted">
-            If a lecturer or the placement cell sent you this link and you think it should open,
-            write to the alumni cell with the address you clicked — they can see which topic it was
-            meant to point at.
-          </p>
-        </CardBody>
-      </Card>
-    </div>
+    <NotFoundPanel
+      documentTitle="Mentorship topic not found"
+      icon={<Compass className="size-6" />}
+      title="There is no mentorship topic at this address"
+      description="Either the link points at something that is not a question we group by, or it is not one your account can open. Here is what usually explains it."
+      actions={
+        <>
+          <ButtonLink href="/mentorship" className="min-h-11">
+            Back to the topics
+          </ButtonLink>
+          <ButtonLink href="/directory?mentoring=1" variant="secondary" className="min-h-11">
+            Everyone open to mentoring
+          </ButtonLink>
+        </>
+      }
+      reasons={reasons}
+      footnote="If a lecturer or the placement cell sent you this link and you think it should open, write to the alumni cell with the address you clicked. They can see which topic it was meant to point at."
+    />
   );
 }

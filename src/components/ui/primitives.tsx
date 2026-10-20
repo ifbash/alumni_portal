@@ -24,16 +24,20 @@ type ButtonSize = 'sm' | 'md' | 'lg' | 'icon' | 'icon-sm';
 
 const BUTTON_BASE =
   'inline-flex items-center justify-center gap-2 whitespace-nowrap font-semibold ' +
-  'transition-colors duration-fast ease-brand select-none ' +
+  'transition-[background-color,border-color,color,box-shadow,transform] duration-fast ease-brand select-none ' +
+  'active:translate-y-px ' +
   'disabled:pointer-events-none disabled:opacity-50 ' +
   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]';
 
 const BUTTON_VARIANT: Record<ButtonVariant, string> = {
   primary:
-    'bg-[var(--button-primary-bg)] text-[var(--button-primary-fg)] shadow-sm ' +
-    'hover:bg-[var(--button-primary-hover)]',
+    // A 1px inner highlight in the label colour: the button reads as a
+    // raised key rather than a flat swatch, in every college's colour.
+    'bg-[var(--button-primary-bg)] text-[var(--button-primary-fg)] ' +
+    'shadow-[var(--shadow-sm),inset_0_1px_0_color-mix(in_srgb,var(--button-primary-fg)_20%,transparent)] ' +
+    'hover:bg-[var(--button-primary-hover)] hover:shadow-[var(--shadow-md),inset_0_1px_0_color-mix(in_srgb,var(--button-primary-fg)_20%,transparent)]',
   secondary:
-    'bg-surface-raised text-primary border border-line ' +
+    'bg-surface-raised text-primary border border-line shadow-sm ' +
     'hover:bg-surface-sunken hover:border-line-strong',
   ghost: 'text-secondary hover:bg-surface-sunken hover:text-primary',
   danger: 'bg-danger text-danger-on shadow-sm hover:brightness-95',
@@ -41,7 +45,7 @@ const BUTTON_VARIANT: Record<ButtonVariant, string> = {
     'bg-surface-inverse text-on-inverse hover:opacity-90',
   link: 'text-brand-fg underline underline-offset-4 hover:opacity-80 h-auto p-0',
   /** Only inside `.band-surface`: the band's foreground as the fill, the band as the label. */
-  band: 'bg-band-fg text-band shadow-sm hover:bg-band-muted',
+  band: 'bg-band-fg text-band shadow-md hover:bg-band-muted',
   /** Only inside `.band-surface`: the quieter partner of `band`. */
   'band-outline':
     'border border-band-muted text-band-fg hover:bg-[color-mix(in_srgb,var(--band-fg)_12%,transparent)]',
@@ -122,21 +126,29 @@ export function Spinner({ className }: { className?: string }) {
 // Card
 // ---------------------------------------------------------------
 
+/**
+ * A raised surface: a hairline edge, a soft shadow, and a 1px rim of light
+ * on the top edge (`.ring-hairline`). `interactive` is for a card that is
+ * itself a link: it lifts on hover (pointer devices only). `flat` drops the
+ * rim and shadow for a card nested inside another.
+ */
 export function Card({
   className,
   as: As = 'div',
   interactive = false,
+  flat = false,
   ...props
 }: React.HTMLAttributes<HTMLDivElement> & {
   as?: React.ElementType;
   interactive?: boolean;
+  flat?: boolean;
 }) {
   return (
     <As
       className={cn(
-        'rounded-lg border border-line bg-surface-raised shadow-sm',
-        interactive &&
-          'transition-shadow duration-fast ease-brand hover:shadow-md hover:border-line-strong',
+        'rounded-lg border border-line bg-surface-raised',
+        flat ? null : 'shadow-sm ring-hairline',
+        interactive && 'lift',
         className,
       )}
       {...props}
@@ -167,7 +179,7 @@ export function CardHeader({
 }
 
 export function CardTitle({ className, as: As = 'h3', ...props }: React.HTMLAttributes<HTMLHeadingElement> & { as?: React.ElementType }) {
-  return <As className={cn('font-display text-lg font-semibold', className)} {...props} />;
+  return <As className={cn('font-display text-lg font-semibold tracking-tight', className)} {...props} />;
 }
 
 export function CardDescription({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
@@ -216,13 +228,13 @@ export function Badge({
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold',
+        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold leading-5 tabular tracking-[0.01em]',
         BADGE_TONE[tone],
         className,
       )}
       {...props}
     >
-      {dot ? <span className="size-1.5 rounded-full bg-current" aria-hidden="true" /> : null}
+      {dot ? <span className="size-1.5 rounded-full bg-current shadow-[0_0_0_3px_color-mix(in_srgb,currentColor_18%,transparent)]" aria-hidden="true" /> : null}
       {children}
     </span>
   );
@@ -382,12 +394,12 @@ export function EmptyState({
     <div
       className={cn(
         'flex flex-col items-center justify-center gap-3 rounded-lg border border-line',
-        'bg-surface-raised px-6 py-10 text-center',
+        'bg-surface-raised px-6 py-10 text-center shadow-sm ring-hairline',
         className,
       )}
     >
       {icon ? (
-        <span className="grid size-11 place-items-center rounded-full bg-brand-soft text-brand-soft-fg" aria-hidden="true">
+        <span className="grid size-12 place-items-center rounded-full bg-brand-soft text-brand-soft-fg shadow-[0_0_0_6px_color-mix(in_srgb,var(--brand-soft)_45%,transparent)]" aria-hidden="true">
           {icon}
         </span>
       ) : null}
@@ -432,7 +444,7 @@ export function Progress({
       aria-valuemax={100}
       aria-label={label}
     >
-      <div className={cn('h-full rounded-full transition-[width] duration-slow ease-brand', fill)} style={{ width: `${pct}%` }} />
+      <div className={cn('h-full rounded-full shadow-[inset_0_1px_0_color-mix(in_srgb,var(--surface-raised)_30%,transparent)] transition-[width] duration-slow ease-brand', fill)} style={{ width: `${pct}%` }} />
     </div>
   );
 }
@@ -503,29 +515,42 @@ export function Stat({
     <>
       <div className="flex items-start justify-between gap-3">
         <p className="text-sm font-medium text-secondary">{label}</p>
-        {icon ? <span className="text-muted" aria-hidden="true">{icon}</span> : null}
+        {icon ? (
+          <span
+            className="grid size-8 shrink-0 place-items-center rounded bg-surface-sunken text-secondary [&>svg]:size-4"
+            aria-hidden="true"
+          >
+            {icon}
+          </span>
+        ) : null}
       </div>
       {/* Joined, not `cn`: tailwind-merge reads `text-display-xs` as a
           colour and would drop it in favour of the tone. */}
-      <p className={['mt-2 font-display text-display-xs font-bold tabular', valueTone].filter(Boolean).join(' ')}>{value}</p>
+      <p className={['mt-2 font-display text-display-xs font-bold leading-none tracking-tight tabular', valueTone].filter(Boolean).join(' ')}>{value}</p>
       {trend || hint ? (
-        <p className="mt-1 flex items-center gap-2 text-xs">
-          {trend ? <span className={cn('font-semibold', trendTone)}>{trend.label}</span> : null}
+        <p className="mt-2 flex items-center gap-2 text-xs">
+          {trend ? <span className={cn('font-semibold tabular', trendTone)}>{trend.label}</span> : null}
           {hint ? <span className="text-secondary">{hint}</span> : null}
         </p>
       ) : null}
     </>
   );
 
-  const frame = cn('p-card', tone === 'attention' && 'border-l-4 border-l-warning', className);
+  // The attention edge is a rail inside the card, so it follows the
+  // corner radius instead of squaring it off like a thick border does.
+  const frame = cn(
+    'relative p-card',
+    tone === 'attention' &&
+      "after:absolute after:inset-y-3 after:left-0 after:w-1 after:rounded-r-full after:bg-warning after:content-['']",
+    className,
+  );
 
   if (href) {
     return (
       <Link
         href={href}
         className={cn(
-          'block rounded-lg border border-line bg-surface-raised shadow-sm',
-          'transition-colors duration-fast ease-brand hover:border-line-strong',
+          'lift ring-hairline block rounded-lg border border-line bg-surface-raised shadow-sm',
           'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]',
           frame,
         )}
@@ -558,7 +583,7 @@ export function DetailRow({
 
 export function Kbd({ children }: { children: React.ReactNode }) {
   return (
-    <kbd className="rounded-sm border border-line bg-surface-sunken px-1.5 py-0.5 font-mono text-xs text-secondary">
+    <kbd className="rounded-sm border border-line bg-surface-sunken px-1.5 py-0.5 font-mono text-xs text-secondary shadow-[inset_0_-1px_0_var(--border)]">
       {children}
     </kbd>
   );

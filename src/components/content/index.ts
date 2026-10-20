@@ -10,7 +10,7 @@
  * viewer may do.
  */
 
-export { EventSummary, SeatBadge, eventMetaLine, type EventSummaryData } from './EventSummary';
+export { EventSummary, EventDateBlock, SeatBadge, eventMetaLine, type EventSummaryData } from './EventSummary';
 export { StoryCard, type StoryCardData } from './StoryCard';
 export { AlbumCard, parseContributor, isContributed, type AlbumCardData } from './AlbumCard';
 export { JobSummary, closesLabel, posterLine, type JobSummaryData } from './JobSummary';

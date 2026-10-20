@@ -1,13 +1,8 @@
 import type { Metadata } from 'next';
-import { Compass, Home, LogIn, Users } from 'lucide-react';
-import {
-  ButtonLink,
-  Card,
-  CardBody,
-  CardDescription,
-  CardTitle,
-  EmptyState,
-} from '@/components/ui';
+import Link from 'next/link';
+import { Compass, Home, Users } from 'lucide-react';
+import { ButtonLink } from '@/components/ui';
+import { StatusPanel } from '@/components/status/StatusPanel';
 
 export const metadata: Metadata = {
   title: 'Page not found',
@@ -29,67 +24,56 @@ export const metadata: Metadata = {
  */
 export default function NotFound() {
   return (
-    <main id="main" className="mx-auto flex min-h-dvh max-w-page items-center px-4 py-section sm:px-8">
-      <div className="mx-auto w-full max-w-prose space-y-6 animate-fade-up">
-        <EmptyState
-          icon={<Compass className="size-5" />}
+    <main id="main" className="mx-auto flex min-h-dvh max-w-page items-center px-4 py-10 sm:px-8">
+      <div className="mx-auto w-full max-w-3xl space-y-6">
+        <StatusPanel
+          icon={<Compass aria-hidden="true" />}
+          eyebrow="Page not found"
           title="That page is not here"
-          description="The address did not match anything in the portal — or it is a page this account cannot open. Both answer the same way, on purpose."
-          action={
-            <div className="flex flex-wrap justify-center gap-2">
-              <ButtonLink href="/dashboard">
-                <Home className="size-4" />
+          glyph="404"
+          actions={
+            <>
+              <ButtonLink href="/dashboard" variant="band" size="lg">
+                <Home className="size-4" aria-hidden="true" />
                 Go to the portal
               </ButtonLink>
-              <ButtonLink href="/directory" variant="secondary">
-                <Users className="size-4" />
+              <ButtonLink href="/directory" variant="band-outline" size="lg">
+                <Users className="size-4" aria-hidden="true" />
                 Search the directory
               </ButtonLink>
-            </div>
+            </>
           }
-        />
+        >
+          <p>
+            The address did not match anything in the portal, or it is a page this account cannot
+            open. Both look the same, on purpose.
+          </p>
+        </StatusPanel>
 
-        <Card>
-          <CardBody className="space-y-3">
-            <div className="space-y-1">
-              <CardTitle as="h2">The usual reasons</CardTitle>
-              <CardDescription>In roughly the order they happen.</CardDescription>
-            </div>
-
-            <ul className="space-y-2 text-sm text-secondary">
-              <li>
-                <span className="font-medium text-primary">The link was cut short.</span> WhatsApp
-                and SMS both truncate long addresses. Ask whoever sent it to share it again from the
-                page itself.
-              </li>
-              <li>
-                <span className="font-medium text-primary">You are signed out.</span> Almost nothing
-                in this portal is public — the directory is never anonymous — so a session that has
-                expired turns most links into this page.
-              </li>
-              <li>
-                <span className="font-medium text-primary">It is a staff-side page.</span>{' '}
-                Verification, the degree register and the audit log are restricted to the people who
-                work on them.
-              </li>
-              <li>
-                <span className="font-medium text-primary">The record has gone.</span> A member can
-                ask for their profile to be removed, and the portal honours it the same day.
-              </li>
-            </ul>
-
-            <p className="flex items-center gap-2 pt-1 text-sm text-secondary">
-              <LogIn className="size-4 shrink-0" aria-hidden="true" />
-              <span>
-                Not signed in?{' '}
-                <ButtonLink href="/login" variant="link">
-                  Sign in with your email
-                </ButtonLink>{' '}
-                and try the link again.
-              </span>
-            </p>
-          </CardBody>
-        </Card>
+        <section aria-labelledby="usual-reasons" className="px-1">
+          <h2 id="usual-reasons" className="eyebrow text-brand-fg">
+            The usual reasons
+          </h2>
+          <ul className="mt-3 space-y-2.5 text-sm text-secondary">
+            <li>
+              <span className="font-medium text-primary">The link was cut short.</span> WhatsApp and
+              SMS both shorten long addresses. Ask whoever sent it to share it again from the page
+              itself.
+            </li>
+            <li>
+              <span className="font-medium text-primary">You are signed out.</span> Almost nothing
+              here is public, so a session that has expired turns most links into this page.{' '}
+              <Link href="/login" className="link">
+                Sign in with your email address
+              </Link>{' '}
+              and try the link again.
+            </li>
+            <li>
+              <span className="font-medium text-primary">It is a staff page.</span> Verification,
+              the degree register and the audit log are open only to the people who work on them.
+            </li>
+          </ul>
+        </section>
       </div>
     </main>
   );

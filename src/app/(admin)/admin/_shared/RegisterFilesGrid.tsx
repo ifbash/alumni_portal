@@ -278,6 +278,65 @@ export function CoverageChips({
   );
 }
 
+/**
+ * The same coverage, drawn as a heatmap: a tile per batch with the year, the
+ * percentage set large and a fill bar that repeats it. Tone comes from the
+ * coverage scale (never a hue of its own), and the percentage is always text,
+ * so colour is only ever the second carrier.
+ */
+export function CoverageHeatmap({
+  batches,
+  hrefFor,
+  ariaLabel,
+  className,
+}: {
+  batches: BatchCoverage[];
+  hrefFor?: (year: number) => string | null;
+  ariaLabel: string;
+  className?: string;
+}) {
+  return (
+    <ul aria-label={ariaLabel} className={cn('grid grid-cols-3 gap-2 sm:grid-cols-5 xl:grid-cols-7', className)}>
+      {batches.map((b) => {
+        const pct = b.total ? b.claimed / b.total : 0;
+        const tone = coverageTone(pct);
+        const href = hrefFor?.(b.year) ?? null;
+        const body = (
+          <>
+            <span className="font-mono text-xs font-semibold tabular opacity-80">{b.year}</span>
+            <span className="font-display text-xl font-bold leading-none tabular">{formatPercent(pct)}</span>
+            <span
+              aria-hidden="true"
+              className="mt-1 block h-1 overflow-hidden rounded-full bg-[color-mix(in_srgb,currentColor_18%,transparent)]"
+            >
+              <span className="block h-full rounded-full bg-current" style={{ width: `${Math.max(4, Math.round(pct * 100))}%` }} />
+            </span>
+            <span className="sr-only">
+              {' '}
+              joined, {formatNumber(b.claimed)} of {formatNumber(b.total)}
+            </span>
+          </>
+        );
+        const classes = cn('flex min-h-16 flex-col justify-between gap-1 rounded-lg p-2.5 text-left', COVERAGE_CLASS[tone]);
+        return (
+          <li key={b.year} className="min-w-0">
+            {href ? (
+              <Link
+                href={href}
+                className={cn(classes, 'min-h-[4.25rem] transition-[filter,transform] duration-fast ease-brand hover:-translate-y-0.5 hover:brightness-95')}
+              >
+                {body}
+              </Link>
+            ) : (
+              <span className={cn(classes, 'min-h-[4.25rem]')}>{body}</span>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 /** The coverage scale, said in words once beside the chips. */
 export function CoverageLegend({ className }: { className?: string }) {
   const item = (tone: 'danger' | 'warning' | 'success', label: string) => (

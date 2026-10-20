@@ -30,9 +30,9 @@ type Mode = 'light' | 'dark';
 const MODES: Mode[] = ['light', 'dark'];
 
 /** The scoped token CSS for both preview modes, plus any self-hosted faces. */
-export function miniPortalCss(pack: BrandPack): string {
+export function miniPortalCss(pack: BrandPack, modes: Mode[] = MODES): string {
   const tokens = buildTokens(pack);
-  return fontFaceCss(pack) + MODES.map((m) => scopedTokensCss(tokens, `.pack-${pack.id}.mode-${m}`, m)).join('');
+  return fontFaceCss(pack) + modes.map((m) => scopedTokensCss(tokens, `.pack-${pack.id}.mode-${m}`, m)).join('');
 }
 
 export interface MiniPortalNames {
@@ -46,6 +46,7 @@ export function MiniPortal({
   fontHref,
   names,
   size = 'md',
+  modes = MODES,
   className,
 }: {
   pack: BrandPack;
@@ -57,6 +58,8 @@ export function MiniPortal({
   names?: MiniPortalNames;
   /** `sm` for a narrow rail: smaller type, no subhead. */
   size?: 'sm' | 'md';
+  /** One side only, for a card with room for a single screen. Build `css` for the same modes. */
+  modes?: Mode[];
   className?: string;
 }) {
   const shown = withNames(pack, names);
@@ -66,19 +69,19 @@ export function MiniPortal({
   return (
     <div
       role="group"
-      aria-label={`${shown.copy.portalName}, sign-in screen in light and dark`}
-      className={cn('grid min-w-0 grid-cols-2 gap-3', className)}
+      aria-label={`${shown.copy.portalName}, sign-in screen${modes.length > 1 ? ' in light and dark' : ''}`}
+      className={cn('grid min-w-0 gap-3', modes.length > 1 ? 'grid-cols-2' : 'grid-cols-1', className)}
     >
       <style dangerouslySetInnerHTML={{ __html: styles }} />
       {href ? <link rel="stylesheet" href={href} precedence="default" /> : null}
-      {MODES.map((mode) => (
-        <Screen key={mode} pack={shown} mode={mode} size={size} />
+      {modes.map((mode) => (
+        <Screen key={mode} pack={shown} mode={mode} size={size} caption={modes.length > 1} />
       ))}
     </div>
   );
 }
 
-function Screen({ pack, mode, size }: { pack: BrandPack; mode: Mode; size: 'sm' | 'md' }) {
+function Screen({ pack, mode, size, caption }: { pack: BrandPack; mode: Mode; size: 'sm' | 'md'; caption: boolean }) {
   const { copy, assets } = pack;
   const small = size === 'sm';
   const headline = copy.heroHeadline ?? `Welcome back to ${copy.shortName}.`;
@@ -130,7 +133,9 @@ function Screen({ pack, mode, size }: { pack: BrandPack; mode: Mode; size: 'sm' 
           </span>
         </div>
       </div>
-      <figcaption className="text-xs text-secondary">{mode === 'light' ? 'Light' : 'Dark'}</figcaption>
+      {caption ? (
+        <figcaption className="font-mono text-xs uppercase tracking-[0.14em] text-secondary">{mode}</figcaption>
+      ) : null}
     </figure>
   );
 }

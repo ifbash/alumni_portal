@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { Ban, Check, Lock, ShieldCheck } from 'lucide-react';
+import { Ban, Check, Lock, Minus, ShieldCheck } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap } from '@/lib/auth/guard';
 import {
@@ -22,6 +22,7 @@ import {
   Disclosure,
   PageHeader,
   Section,
+  SummaryLine,
   Table,
   TableWrap,
   TBody,
@@ -251,6 +252,13 @@ export default async function AdminRolesPage() {
         }
       />
 
+      <SummaryLine
+        items={[
+          { value: new Set(grants.filter((g) => g.role !== 'platform_admin').map((g) => g.memberId)).size, label: 'people with staff access' },
+          { value: grantGroups.length, label: grantGroups.length === 1 ? 'role in use' : 'roles in use' },
+        ]}
+      />
+
       <Section title="People with staff access">
         <GrantList
           groups={grantGroups}
@@ -259,6 +267,60 @@ export default async function AdminRolesPage() {
       </Section>
 
       <Section title="What each role can do">
+        {/* The matrix: one glance answers "can an HOD do this". Computed from
+            the same grants the portal checks, so it cannot drift. */}
+        <TableWrap caption="Access by role and area" className="mb-gutter">
+          <Table>
+            <THead>
+              <TR>
+                <TH className="sticky left-0 bg-surface-sunken">Area</TH>
+                {GRANTABLE.map((r) => (
+                  <TH key={r} align="center" className="whitespace-normal">
+                    {ROLE_LABELS[r] ?? r}
+                  </TH>
+                ))}
+              </TR>
+            </THead>
+            <TBody>
+              {allGroups
+                .filter((g) => g.caps.length > 0)
+                .map((g) => (
+                  <TR key={g.id}>
+                    <TH scope="row" className="sticky left-0 bg-surface-raised text-left font-medium normal-case tracking-normal text-primary">
+                      {g.label}
+                    </TH>
+                    {GRANTABLE.map((r) => {
+                      const held = g.caps.filter((c) => roleHas(r, c));
+                      const all = held.length === g.caps.length;
+                      return (
+                        <TD key={r} align="center">
+                          {held.length === 0 ? (
+                            <>
+                              <Minus className="inline size-4 text-muted" aria-hidden="true" />
+                              <span className="sr-only">None</span>
+                            </>
+                          ) : (
+                            <span
+                              title={held.map((c) => CAPABILITY_LABEL[c]).join(', ')}
+                              className={
+                                all
+                                  ? 'inline-flex items-center gap-1 rounded-full bg-success-soft px-2 py-0.5 text-xs font-semibold text-success-fg'
+                                  : 'inline-flex items-center gap-1 rounded-full bg-brand-soft px-2 py-0.5 text-xs font-semibold text-brand-soft-fg'
+                              }
+                            >
+                              {all ? <Check className="size-3" aria-hidden="true" /> : null}
+                              {all ? 'All' : `${held.length} of ${g.caps.length}`}
+                            </span>
+                          )}
+                        </TD>
+                      );
+                    })}
+                  </TR>
+                ))}
+            </TBody>
+          </Table>
+        </TableWrap>
+
         <div className="grid grid-cols-1 gap-gutter md:grid-cols-2 xl:grid-cols-3">
           {roleOptions.map((r) => (
             <Card key={r.value} className="min-w-0">

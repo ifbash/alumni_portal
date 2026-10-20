@@ -10,6 +10,10 @@ import { Card, CardBody, Skeleton } from '@/components/ui';
  * geometry roughly right is what stops the page jumping when the real
  * content lands.
  *
+ * The hubs open on the college band, so the first block is drawn as a solid
+ * band: the page does not flash white where the college's colour is about
+ * to be.
+ *
  * Never a spinner in an empty box. A spinner says "wait" and nothing
  * else; a skeleton says what is about to be there.
  */
@@ -46,10 +50,15 @@ export default function RootLoading() {
         </div>
 
         <main id="main" className="min-w-0 space-y-6">
-          <div className="space-y-3">
-            <Skeleton className="h-3 w-24" />
-            <Skeleton className="h-9 w-64" />
-            <Skeleton className="h-4 w-full max-w-prose" />
+          <div
+            className="band-surface -mx-4 px-5 py-5 sm:mx-0 sm:rounded-xl sm:px-8 lg:py-7"
+            aria-hidden="true"
+          >
+            <div className="max-w-prose space-y-3">
+              <div className="h-3 w-40 animate-pulse rounded-full bg-[color-mix(in_srgb,var(--band-fg)_22%,transparent)]" />
+              <div className="h-9 w-64 animate-pulse rounded bg-[color-mix(in_srgb,var(--band-fg)_28%,transparent)]" />
+              <div className="h-4 w-full max-w-md animate-pulse rounded bg-[color-mix(in_srgb,var(--band-fg)_18%,transparent)]" />
+            </div>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

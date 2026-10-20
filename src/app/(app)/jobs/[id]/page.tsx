@@ -16,6 +16,7 @@ import { getTenantBrand } from '@/lib/tenant';
 import { getConnectionQuota, getJobById, getMyApplications } from '@/lib/data/repo';
 import {
   Avatar,
+  Badge,
   Breadcrumbs,
   ButtonLink,
   Card,
@@ -23,6 +24,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  Progress,
   ShareActions,
   StickyActionBar,
 } from '@/components/ui';
@@ -30,7 +32,7 @@ import { closesLabel } from '@/components/content';
 import { cn } from '@/lib/cn';
 import { jobReviewLine } from '@/lib/branding/copy';
 import { isFresherFriendly } from '@/lib/event-status';
-import { formatDate, formatRelative, memberLine } from '@/lib/format';
+import { displayNow, formatDate, formatRelative, memberLine } from '@/lib/format';
 import { firstNameOf } from '@/lib/identity';
 import { mailto } from '@/lib/mailto';
 import { siteOrigin, whatsappShareUrl } from '@/lib/share';
@@ -102,6 +104,11 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
   const count = job.applicationCount;
   const seeApplicants = count > 0 ? `See ${count.toLocaleString('en-IN')} applicant${count === 1 ? '' : 's'}` : 'Open the applicant list';
 
+  // How much of the application window has gone, for the rail's bar. Read
+  // against the display clock like every other date on the portal.
+  const windowSpan = job.closesOn ? Date.parse(job.closesOn) - Date.parse(job.createdAt) : 0;
+  const windowGone = windowSpan > 0 ? displayNow().getTime() - Date.parse(job.createdAt) : 0;
+
   // The poster, as a way in rather than a byline.
   const posterFirst = firstNameOf(job.postedBy.fullName);
   const yy = job.postedBy.batchYear ? `’${String(job.postedBy.batchYear).slice(-2)}` : null;
@@ -121,79 +128,104 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
   const reviewLine = jobReviewLine(pack.copy);
   const railOnPhones = showApplied || isAuthor || (isModerator && !isAuthor) || shareWithStudents;
 
-  const chip = 'inline-flex min-h-8 items-center gap-1.5 rounded-full border border-line bg-surface-raised px-3 text-sm text-secondary';
+  // The fact strip: what a student weighs before reading a word of the brief.
+  const facts: Array<{ label: string; value: string; icon: React.ReactNode; warn?: boolean }> = [];
+  if (job.salaryRange) facts.push({ label: 'Pay', value: job.salaryRange, icon: <Wallet /> });
+  const level = job.isInternship ? 'Internship' : job.experienceYears;
+  if (level) {
+    facts.push({ label: 'Experience', value: level, icon: job.isInternship ? <GraduationCap /> : <Briefcase /> });
+  }
+  if (job.location) facts.push({ label: 'Where', value: job.location, icon: <MapPin /> });
+  if (live) {
+    facts.push({
+      label: 'Closes',
+      value: closes ? closes.text.replace(/^Closes /, '') : 'Open until filled',
+      icon: <CalendarClock />,
+      warn: closes?.soon,
+    });
+  } else if (job.state === 'closed' && job.closesOn) {
+    facts.push({ label: 'Closed', value: formatDate(job.closesOn, timing), icon: <CalendarClock /> });
+  }
+
+  const shareCard = (
+    <div className="space-y-2 border-t border-line p-card">
+      <p className="text-sm font-semibold">Pass it on</p>
+      <ShareActions url={url} whatsappHref={whatsappHref} title={`${job.title} at ${job.company}`} size="sm" />
+    </div>
+  );
 
   return (
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Jobs', href: '/jobs' }, { label: job.title }]} />
 
-      <header className="space-y-3">
-        <div className="flex items-start gap-4">
-          <Avatar name={job.company} size="lg" shape="square" />
-          <div className="min-w-0 flex-1 space-y-0.5">
-            <h1 className="font-display text-display-xs font-bold">{job.title}</h1>
-            <p className="text-md text-secondary">{job.company}</p>
+      <header className="ring-hairline relative isolate animate-fade-up overflow-hidden rounded-xl border border-line bg-surface-raised shadow-md">
+        {/* A wash of the college's tint behind the monogram, fading to the card. */}
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-32 bg-[linear-gradient(to_bottom,color-mix(in_srgb,var(--brand-soft)_85%,transparent),transparent)]"
+        />
+        <div className="flex flex-col gap-5 p-5 sm:flex-row sm:items-start sm:gap-6 sm:p-7">
+          <Avatar
+            name={job.company}
+            size="lg"
+            shape="square"
+            className="size-16 rounded-xl text-xl shadow-sm sm:size-20 sm:text-2xl"
+          />
+          <div className="min-w-0 flex-1 space-y-3">
+            <div className="space-y-1.5">
+              <p className="eyebrow text-xs text-brand-fg">{job.company}</p>
+              <h1 className="font-display text-display-sm font-bold tracking-tight">{job.title}</h1>
+            </div>
+
+            <ul className="flex flex-wrap items-center gap-1.5" aria-label="About this role">
+              {job.state !== 'live' ? (
+                <li className="flex">
+                  <JobStateBadge state={job.state} />
+                </li>
+              ) : null}
+              {fresher ? (
+                <li>
+                  <Badge tone="accent">Open to freshers</Badge>
+                </li>
+              ) : null}
+              {job.isInternship ? (
+                <li>
+                  <Badge tone="outline">Internship</Badge>
+                </li>
+              ) : null}
+              <li className="text-sm text-secondary">
+                Posted {formatDate(job.createdAt, timing)}
+                {job.isInternship ? null : ' · Full-time'}
+              </li>
+            </ul>
           </div>
         </div>
 
-        {/* Under the title from sm; the full width on a phone, where the
-            monogram's column would squeeze the chips into a stack. */}
-        <div className="space-y-3 sm:pl-[4.5rem]">
-          <ul className="flex flex-wrap gap-1.5" aria-label="About this role">
-            {job.state !== 'live' ? (
-              <li className="flex">
-                <JobStateBadge state={job.state} className="min-h-8 px-3" />
-              </li>
-            ) : null}
-            {job.location ? (
-              <li className={chip}>
-                <MapPin className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
-                {job.location}
-              </li>
-            ) : null}
-            {fresher ? (
-              <li className={cn(chip, 'border-transparent bg-accent-soft font-medium text-accent-soft-fg')}>Open to freshers</li>
-            ) : job.experienceYears ? (
-              <li className={chip}>
-                <Briefcase className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
-                {job.experienceYears}
-              </li>
-            ) : null}
-            {job.salaryRange ? (
-              <li className={cn(chip, 'tabular')}>
-                <Wallet className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
-                {job.salaryRange}
-              </li>
-            ) : null}
-            {job.isInternship ? (
-              <li className={chip}>
-                <GraduationCap className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
-                Internship
-              </li>
-            ) : null}
-            {live ? (
-              <li
-                className={cn(
-                  chip,
-                  closes?.soon && 'border-transparent bg-warning-soft font-medium text-warning-fg',
-                )}
+        {facts.length > 0 ? (
+          <dl className="divide-y divide-line border-t border-line bg-surface-raised sm:flex sm:divide-x sm:divide-y-0">
+            {facts.map((f) => (
+              <div
+                key={f.label}
+                className="flex min-w-0 items-baseline justify-between gap-4 px-5 py-3 sm:block sm:flex-1 sm:px-6 sm:py-4"
               >
-                <CalendarClock className={cn('size-3.5 shrink-0', !closes?.soon && 'text-muted')} aria-hidden="true" />
-                {closes ? closes.text : 'Open until filled'}
-              </li>
-            ) : job.state === 'closed' && job.closesOn ? (
-              <li className={chip}>
-                <CalendarClock className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
-                Closed {formatDate(job.closesOn, timing)}
-              </li>
-            ) : null}
-          </ul>
-
-          <p className="text-sm text-secondary">
-            Posted {formatDate(job.createdAt, timing)}
-            {job.isInternship ? null : ' · Full-time'}
-          </p>
-        </div>
+                <dt className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-secondary">
+                  <span aria-hidden="true" className="grid place-items-center">
+                    {f.icon}
+                  </span>
+                  {f.label}
+                </dt>
+                <dd
+                  className={cn(
+                    'font-display text-md font-semibold leading-snug tabular sm:mt-1 sm:text-lg',
+                    f.warn ? 'text-warning-fg' : 'text-primary',
+                  )}
+                >
+                  {f.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
       </header>
 
       <div className="grid grid-cols-1 gap-gutter lg:grid-cols-[minmax(0,1fr)_20rem]">
@@ -207,32 +239,66 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
           )}
         >
           {applyNow ? (
-            <Card className="hidden lg:block">
-              <CardBody className="space-y-3">
-                <ApplyButton
-                  jobTitle={job.title}
-                  company={job.company}
-                  alreadyApplied={false}
-                  appliedOn={null}
-                  appliedNote={null}
-                />
-                {job.applyUrl ? (
-                  <ButtonLink
-                    href={job.applyUrl}
-                    variant="secondary"
-                    className="min-h-11 w-full"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <ExternalLink className="size-4" aria-hidden="true" />
-                    Company site
-                    <span className="sr-only"> (opens in a new tab)</span>
-                  </ButtonLink>
+            <Card className="hidden overflow-hidden lg:block">
+              <CardBody className="space-y-4">
+                {job.salaryRange ? (
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-secondary">Pay</p>
+                    <p className="font-display text-xl font-bold leading-tight tabular">{job.salaryRange}</p>
+                  </div>
                 ) : null}
-                <p className="text-sm text-secondary">
-                  The poster sees your name, branch, batch and note — never your phone or email.
+
+                {job.closesOn ? (
+                  <div className="space-y-1.5">
+                    <p className={cn('text-sm font-semibold', closes?.soon ? 'text-warning-fg' : 'text-primary')}>
+                      {closes ? closes.text : `Closed ${formatDate(job.closesOn, timing)}`}
+                    </p>
+                    {windowSpan > 0 ? (
+                      <Progress
+                        value={windowGone}
+                        max={windowSpan}
+                        tone={closes?.soon ? 'warning' : 'brand'}
+                        label="How much of the application window has passed"
+                      />
+                    ) : null}
+                    <p className="flex justify-between gap-2 text-xs text-secondary">
+                      <span>Posted {formatDate(job.createdAt, timing)}</span>
+                      <span>Closes {formatDate(job.closesOn, timing)}</span>
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-secondary">Open until filled.</p>
+                )}
+
+                <div className="space-y-2.5">
+                  <ApplyButton
+                    jobTitle={job.title}
+                    company={job.company}
+                    alreadyApplied={false}
+                    appliedOn={null}
+                    appliedNote={null}
+                  />
+                  {job.applyUrl ? (
+                    <ButtonLink
+                      href={job.applyUrl}
+                      variant="secondary"
+                      className="min-h-11 w-full"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <ExternalLink className="size-4" aria-hidden="true" />
+                      Company site
+                      <span className="sr-only"> (opens in a new tab)</span>
+                    </ButtonLink>
+                  ) : null}
+                </div>
+
+                <p className="flex gap-2 text-sm text-secondary">
+                  <ShieldCheck className="mt-0.5 size-4 shrink-0 text-brand-fg" aria-hidden="true" />
+                  <span>The poster sees your name, branch, batch and note — never your phone or email.</span>
                 </p>
               </CardBody>
+              {shareCard}
             </Card>
           ) : null}
 
@@ -247,6 +313,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
                   appliedNote={myApplication?.note ?? null}
                 />
               </CardBody>
+              {live ? shareCard : null}
             </Card>
           ) : null}
 
@@ -261,9 +328,12 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
               <CardBody className="space-y-3">
                 {job.state === 'live' || job.state === 'closed' ? (
                   <>
-                    <p className="text-sm text-secondary">
+                    <p className="flex items-baseline gap-2 text-sm text-secondary">
+                      <span className="font-display text-display-xs font-bold leading-none tabular text-primary">
+                        {count.toLocaleString('en-IN')}
+                      </span>
                       {count > 0
-                        ? `${count.toLocaleString('en-IN')} ${count === 1 ? 'person has' : 'people have'} applied through the portal.`
+                        ? `${count === 1 ? 'person has' : 'people have'} applied through the portal.`
                         : 'Nobody has applied yet.'}
                     </p>
                     <ButtonLink href={applicantsHref} className="min-h-11 w-full">
@@ -292,6 +362,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
                   </>
                 ) : null}
               </CardBody>
+              {live ? shareCard : null}
             </Card>
           ) : null}
 
@@ -335,15 +406,34 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
           ) : null}
         </aside>
 
-        <div className="min-w-0 space-y-6 lg:col-start-1 lg:row-start-1">
+        <div className="min-w-0 space-y-8 lg:col-start-1 lg:row-start-1">
+          <section aria-labelledby="job-about" className="space-y-3">
+            <h2 id="job-about" className="font-display text-xl font-semibold tracking-tight">
+              About the role
+            </h2>
+            {job.description ? (
+              // Line breaks are preserved: posters write these as short
+              // paragraphs, and collapsing them turns a readable brief into
+              // one grey block.
+              <div className="max-w-prose whitespace-pre-line text-md leading-relaxed text-primary">
+                {job.description}
+              </div>
+            ) : (
+              <p className="text-sm text-secondary">The poster did not write a description.</p>
+            )}
+          </section>
+
           {job.skills.length ? (
-            <section aria-labelledby="job-skills" className="space-y-2">
-              <h2 id="job-skills" className="font-sans text-sm font-semibold text-secondary">
+            <section aria-labelledby="job-skills" className="space-y-2.5">
+              <h2 id="job-skills" className="eyebrow text-xs text-secondary">
                 They screen for
               </h2>
-              <ul className="flex flex-wrap gap-1.5">
+              <ul className="flex flex-wrap gap-2">
                 {job.skills.map((s) => (
-                  <li key={s} className="inline-flex min-h-8 items-center rounded-full bg-brand-soft px-3 text-sm font-medium text-brand-soft-fg">
+                  <li
+                    key={s}
+                    className="inline-flex min-h-9 items-center rounded-full bg-brand-soft px-3.5 text-sm font-medium text-brand-soft-fg"
+                  >
                     {s}
                   </li>
                 ))}
@@ -351,36 +441,16 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
             </section>
           ) : null}
 
-          <Card>
-            <CardHeader>
-              <CardTitle as="h2">About the role</CardTitle>
-            </CardHeader>
-            <CardBody>
-              {job.description ? (
-                // Line breaks are preserved: posters write these as short
-                // paragraphs, and collapsing them turns a readable brief into
-                // one grey block.
-                <div className="max-w-prose whitespace-pre-line text-md leading-relaxed text-secondary">
-                  {job.description}
-                </div>
-              ) : (
-                <p className="text-sm text-secondary">The poster did not write a description.</p>
-              )}
-            </CardBody>
-          </Card>
-
           {!isAuthor ? (
-            <Card>
-              <CardHeader variant="stack">
-                <CardTitle as="h2" className="text-md">
+            <Card as="section" aria-labelledby="job-poster">
+              <CardBody className="space-y-4">
+                <p id="job-poster" className="eyebrow text-xs text-secondary">
                   {canApply ? 'Your way in' : 'Posted by'}
-                </CardTitle>
-              </CardHeader>
-              <CardBody className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <Avatar name={job.postedBy.fullName} src={job.postedBy.photoUrl} size="md" />
+                </p>
+                <div className="flex items-center gap-4">
+                  <Avatar name={job.postedBy.fullName} src={job.postedBy.photoUrl} size="lg" />
                   <div className="min-w-0">
-                    <p className="font-medium">
+                    <p className="font-display text-md font-semibold leading-snug">
                       {posterFirst}
                       {posterTag ? ` · ${posterTag}` : ''} posted this
                     </p>
@@ -406,7 +476,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
           ) : null}
 
           {live ? (
-            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-secondary">
+            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line pt-4 text-sm text-secondary">
               <span className="inline-flex items-center gap-2">
                 <ShieldCheck className="size-4 shrink-0 text-muted" aria-hidden="true" />
                 Checked by the placement cell before students could see it.

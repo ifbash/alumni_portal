@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { ArrowRight, History, ScrollText, ShieldAlert, ShieldCheck, TriangleAlert } from 'lucide-react';
+import { ArrowRight, History, Minus, Plus, ScrollText, ShieldAlert, ShieldCheck, TriangleAlert } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
 import { can, isVendorOnlySession, require as requireCap } from '@/lib/auth/guard';
@@ -187,18 +187,15 @@ export default async function AuditEntryPage({ params }: { params: Promise<{ id:
         </>
       ),
     },
-    {
-      label: 'Resource',
-      value: (
-        <>
-          {resourceLabel(entry.resource)}
-          <span className="block font-mono text-xs font-normal text-secondary">{entry.resourceId ?? 'no id recorded'}</span>
-        </>
-      ),
-    },
+    { label: 'Record type', value: resourceLabel(entry.resource) },
     { label: 'From', value: <span className="font-mono text-xs">{entry.ip ?? '—'}</span> },
-    { label: 'Action', value: <span className="font-mono text-xs">{entry.action}</span> },
-    { label: 'Entry ID', value: <span className="font-mono text-xs">{entry.id}</span> },
+  ];
+
+  // Machine names: for the engineer who greps for them, never the reader.
+  const technical: Array<{ label: string; value: string }> = [
+    { label: 'Action', value: entry.action },
+    { label: 'Record', value: `${entry.resource} ${entry.resourceId ?? '(no id recorded)'}` },
+    { label: 'Entry', value: entry.id },
   ];
 
   return (
@@ -296,32 +293,36 @@ export default async function AuditEntryPage({ params }: { params: Promise<{ id:
                   {changed.map((change) => {
                     const badge = CHANGE_BADGE[change.kind as Exclude<ChangeKind, 'same'>];
                     return (
-                      <li
-                        key={change.path}
-                        className="grid gap-2 py-3.5 first:pt-0 last:pb-0 sm:grid-cols-[minmax(0,13rem)_minmax(0,1fr)] sm:gap-5"
-                      >
-                        <div className="space-y-1.5">
-                          <p className="text-sm font-medium">{fieldLabel(change.path)}</p>
-                          {/* Colour never carries the meaning alone — the word does. */}
+                      <li key={change.path} className="space-y-2 py-3.5 first:pt-0 last:pb-0">
+                        <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                          {fieldLabel(change.path)}
+                          {/* Colour never carries the meaning alone: the word and the sign do. */}
                           <Badge tone={badge.tone}>{badge.label}</Badge>
-                        </div>
+                        </p>
 
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                          {change.kind !== 'added' ? (
-                            <span className="text-sm text-secondary line-through decoration-1">
-                              {renderValue(change.before)}
-                            </span>
-                          ) : null}
-
-                          {change.kind === 'changed' ? (
-                            <ArrowRight className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
-                          ) : null}
-
-                          {change.kind !== 'removed' ? (
-                            <span className="rounded-sm bg-success-soft px-2 py-0.5 text-sm font-semibold text-success-fg">
-                              {renderValue(change.after)}
-                            </span>
-                          ) : null}
+                        <div className="grid gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-2">
+                          <div className="flex min-w-0 items-start gap-2 bg-[color-mix(in_srgb,var(--danger)_9%,var(--surface-raised))] px-3 py-2">
+                            <Minus className="mt-0.5 size-3.5 shrink-0 text-danger-fg" aria-hidden="true" />
+                            <p className="min-w-0 break-words text-sm">
+                              <span className="sr-only">Before: </span>
+                              {change.kind === 'added' ? (
+                                <span className="text-secondary">Nothing recorded</span>
+                              ) : (
+                                renderValue(change.before)
+                              )}
+                            </p>
+                          </div>
+                          <div className="flex min-w-0 items-start gap-2 bg-[color-mix(in_srgb,var(--success)_10%,var(--surface-raised))] px-3 py-2">
+                            <Plus className="mt-0.5 size-3.5 shrink-0 text-success-fg" aria-hidden="true" />
+                            <p className="min-w-0 break-words text-sm font-semibold">
+                              <span className="sr-only">After: </span>
+                              {change.kind === 'removed' ? (
+                                <span className="font-normal text-secondary">Removed</span>
+                              ) : (
+                                renderValue(change.after)
+                              )}
+                            </p>
+                          </div>
                         </div>
                       </li>
                     );
@@ -364,6 +365,17 @@ export default async function AuditEntryPage({ params }: { params: Promise<{ id:
               ) : null}
             </CardBody>
           </Card>
+
+          <Disclosure summary="Technical details">
+            <dl className="space-y-1.5">
+              {technical.map((t) => (
+                <div key={t.label} className="flex flex-wrap justify-between gap-x-4">
+                  <dt className="text-secondary">{t.label}</dt>
+                  <dd className="break-all font-mono text-xs">{t.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </Disclosure>
 
           <Disclosure
             summary={

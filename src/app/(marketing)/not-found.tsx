@@ -1,15 +1,9 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Compass, LogIn, ShieldCheck } from 'lucide-react';
+import { Compass, Home, LogIn } from 'lucide-react';
 import { getTenantBrand } from '@/lib/tenant';
-import {
-  ButtonLink,
-  Card,
-  CardBody,
-  CardDescription,
-  CardTitle,
-  EmptyState,
-} from '@/components/ui';
+import { ButtonLink } from '@/components/ui';
+import { StatusPanel } from '@/components/status/StatusPanel';
 
 export const metadata: Metadata = {
   title: 'Page not found',
@@ -25,74 +19,114 @@ export const metadata: Metadata = {
  * directory is never anonymous, by design, and a visitor who does not know
  * that reads a 404 as a broken site.
  *
- * The public pages are listed by name because there are only four of them,
- * and two of those — the privacy notice and the terms — have to stay
- * reachable without an account for the consent on the registration form to
- * mean anything.
+ * The public pages are listed by name, because a visitor who has landed
+ * here needs somewhere to go that works. Campus events appears only for a
+ * college that has the module on, so the list never links to a page that
+ * would itself be a 404. The privacy notice and the terms stay in it: they
+ * have to be reachable without an account for the consent on the
+ * registration form to mean anything.
+ *
+ * It sits in the marketing layout's `<main>`, under the site header, so it
+ * runs edge to edge like the other public heroes.
  */
 export default async function MarketingNotFound() {
   const resolved = await getTenantBrand();
-  const copy = resolved?.brand.pack.copy;
-  const collegeName = copy?.shortName ?? 'the college';
-  const supportEmail = copy?.supportEmail ?? null;
+  const pack = resolved?.brand.pack;
+  const collegeName = pack?.copy.shortName ?? 'the college';
+  const supportEmail = pack?.copy.supportEmail ?? null;
+
+  const pages = [
+    {
+      href: '/',
+      label: 'Home',
+      description: 'What the portal is and who it is for',
+    },
+    {
+      href: '/about',
+      label: 'About the network',
+      description: 'How verification and the register work',
+    },
+    ...(pack?.features.events && pack.features.publicLanding
+      ? [
+          {
+            href: '/campus-events',
+            label: 'Campus events',
+            description: 'Dates and venues, open to everyone',
+          },
+        ]
+      : []),
+    {
+      href: '/contact',
+      label: 'Contact',
+      description: 'Who to write to, and how to fix a record',
+    },
+    {
+      href: '/privacy',
+      label: 'Privacy notice',
+      description: 'What is collected, why, and for how long',
+    },
+    {
+      href: '/terms',
+      label: 'Terms of use',
+      description: 'The rules every account agrees to',
+    },
+  ];
 
   return (
-    <div className="page-shell max-w-prose space-y-6 py-section">
-      {/* The visual heading is the empty state's title; this is the one the
-          document outline needs, so the h2 below descends from something. */}
-      <h1 className="sr-only">Page not found</h1>
-
-      <EmptyState
-        icon={<Compass className="size-5" />}
+    <>
+      <StatusPanel
+        variant="bleed"
+        icon={<Compass aria-hidden="true" />}
+        eyebrow="Page not found"
         title="That address is not a page here"
-        description={`It may never have been one, or it may be a page inside the portal — where nearly everything sits behind a sign-in. Signing in with the email address ${collegeName} holds for you will open it if it exists.`}
-        action={
-          <div className="flex flex-wrap justify-center gap-2">
-            <ButtonLink href="/login">
+        glyph="404"
+        actions={
+          <>
+            <ButtonLink href="/" variant="band" size="lg">
+              <Home className="size-4" aria-hidden="true" />
+              Go to the home page
+            </ButtonLink>
+            <ButtonLink href="/login" variant="band-outline" size="lg">
               <LogIn className="size-4" aria-hidden="true" />
               Sign in
             </ButtonLink>
-            <ButtonLink href="/" variant="secondary">
-              Home
-            </ButtonLink>
-          </div>
+          </>
         }
-      />
+      >
+        <p>
+          The link may have been cut short when it was shared, or it may be a page inside the
+          portal, where nearly everything needs a sign-in. If it exists, signing in with the email
+          address {collegeName} holds for you will open it.
+        </p>
+      </StatusPanel>
 
-      <Card>
-        <CardBody className="space-y-4">
-          <div className="space-y-1">
-            <CardTitle as="h2">The pages that are public</CardTitle>
-            <CardDescription>
-              Four, and no more than four. Everything else needs an account.
-            </CardDescription>
-          </div>
-
-          <ul className="grid gap-2 sm:grid-cols-2">
-            {PUBLIC_PAGES.map((page) => (
+      <div className="page-shell space-y-8 py-10 lg:py-14">
+        <section aria-labelledby="public-pages">
+          <h2 id="public-pages" className="eyebrow text-brand-fg">
+            Pages anyone can open
+          </h2>
+          <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {pages.map((page) => (
               <li key={page.href}>
                 <Link
                   href={page.href}
-                  className="block rounded border border-line px-3.5 py-2.5 transition-colors duration-fast ease-brand hover:border-line-strong hover:bg-surface-sunken"
+                  className="lift ring-hairline block h-full min-h-14 rounded-lg border border-line bg-surface-raised px-4 py-3"
                 >
-                  <span className="block text-sm font-medium">{page.label}</span>
-                  <span className="block text-xs text-secondary">{page.description}</span>
+                  <span className="block text-sm font-semibold">{page.label}</span>
+                  <span className="mt-0.5 block text-xs text-secondary">{page.description}</span>
                 </Link>
               </li>
             ))}
           </ul>
+        </section>
 
-          <p className="flex items-start gap-2 border-t border-line pt-4 text-sm text-secondary">
-            <ShieldCheck className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            <span>
-              The alumni directory is never anonymous — there is no public profile page to have
-              landed on. That is a deliberate choice, not a missing feature: it is what stops the
-              network being scraped by recruiters.
-            </span>
+        <div className="max-w-prose space-y-2 text-sm text-secondary">
+          <p>
+            There is no public profile page to have landed on. The alumni directory is never
+            anonymous, so the network cannot be scraped by recruiters.
           </p>
-
           {supportEmail ? (
-            <p className="text-sm text-secondary">
+            <p>
               Sent this link by {collegeName} and it should work?{' '}
               <a href={`mailto:${supportEmail}`} className="link">
                 Write to {supportEmail}
@@ -100,15 +134,8 @@ export default async function MarketingNotFound() {
               with the address you tried.
             </p>
           ) : null}
-        </CardBody>
-      </Card>
-    </div>
+        </div>
+      </div>
+    </>
   );
 }
-
-const PUBLIC_PAGES = [
-  { href: '/', label: 'Home', description: 'What the portal is and who it is for' },
-  { href: '/about', label: 'About the network', description: 'How verification and the register work' },
-  { href: '/privacy', label: 'Privacy notice', description: 'What is collected, why, and for how long' },
-  { href: '/terms', label: 'Terms of use', description: 'The rules every account agrees to' },
-];

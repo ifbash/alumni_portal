@@ -25,6 +25,7 @@ import {
 import { BandChip, PageBand } from '@/components/brand/PageBand';
 import { BarList, ColumnChart } from '@/components/charts';
 import { MemberCard } from '@/components/members/MemberCard';
+import { OutlineNumeral } from '../../batch/OutlineNumeral';
 
 /**
  * One department, across every batch.
@@ -156,13 +157,15 @@ export default async function BranchPage({ params }: { params: Promise<{ code: s
   const departments = getDepartments();
   const isYourBranch = viewerBranch(session) === dcode;
 
+  const bandPhoto = photoForBranch(pack, dcode);
   const band = (
     <PageBand
       pack={pack}
       eyebrow={pack.copy.institutionName}
       title={department.name}
       lead={total > 0 ? lead || undefined : undefined}
-      photo={photoForBranch(pack, dcode)}
+      photo={bandPhoto}
+      aside={bandPhoto ? undefined : <OutlineNumeral>{dcode}</OutlineNumeral>}
       photoOnPhones
       meta={isYourBranch ? <BandChip icon={<GraduationCap />}>Your branch</BandChip> : undefined}
       actions={

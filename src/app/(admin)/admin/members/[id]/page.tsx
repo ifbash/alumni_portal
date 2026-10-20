@@ -8,6 +8,7 @@ import { canOpen, ROLE_LABELS } from '@/lib/navigation';
 import {
   getDepartments,
   getEventRegistrations,
+  getAuditLog,
   getEvents,
   getMemberForAdminView,
   getMembersForAdminView,
@@ -33,6 +34,7 @@ import { formatDate, maskEmail, maskMobile, memberLine } from '@/lib/format';
 import type { ContactVisibility } from '@/lib/data/types';
 import { STATUS_META, STATUS_ORDER } from '../status';
 import { evidenceWords, methodLabel, reasonLabel, reasonTone, sourceFileLabel } from '../../_shared/verification-labels';
+import { AuditTimeline } from './AuditTimeline';
 import { MemberActions } from './MemberActions';
 
 export const metadata = { title: 'Member record · Staff console' };
@@ -158,6 +160,15 @@ export default async function AdminMemberDetailPage({
 
   const method = methodLabel(member.verificationMethod);
 
+  // The record's own history, for those who may read the log at all.
+  const canAudit = can(session, 'audit.read');
+  const history = canAudit
+    ? getAuditLog({ limit: 10000 })
+        .filter((e) => e.resourceId === member.id)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 8)
+    : [];
+
   return (
     <div className="space-y-6">
       <Breadcrumbs
@@ -198,6 +209,19 @@ export default async function AdminMemberDetailPage({
                 </Badge>
               ))}
             </div>
+            {member.roles.length ? (
+              <ul className="flex flex-wrap items-center gap-1.5" aria-label="Roles held">
+                {member.roles.map((r) => (
+                  <li key={`${r.role}-${r.departmentCode ?? 'all'}`}>
+                    <Badge tone="brand">
+                      <ShieldCheck className="size-3.5" aria-hidden="true" />
+                      {ROLE_LABELS[r.role] ?? r.role}
+                      {r.departmentCode ? ` · ${r.departmentCode} only` : ''}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             <div className="flex flex-wrap items-start gap-2 pt-1">
               {canWrite || canMerge || canVerify ? (
                 <MemberActions
@@ -225,6 +249,12 @@ export default async function AdminMemberDetailPage({
               <ButtonLink href={`/directory/${member.slug}`} variant="secondary">
                 View as a member sees it
               </ButtonLink>
+              {can(session, 'role.manage') ? (
+                <ButtonLink href="/admin/roles" variant="ghost">
+                  <ShieldCheck className="size-4" aria-hidden="true" />
+                  Manage roles
+                </ButtonLink>
+              ) : null}
             </div>
           </div>
         </CardBody>
@@ -480,44 +510,28 @@ export default async function AdminMemberDetailPage({
               )}
             </CardBody>
           </Card>
+
+          {canAudit ? (
+            <Card>
+              <CardHeader variant="stack">
+                <CardTitle as="h2" className="text-md">
+                  History
+                </CardTitle>
+              </CardHeader>
+              <CardBody className="space-y-3 pt-3">
+                <AuditTimeline entries={history} fmt={fmt} />
+                <Link href="/admin/audit" className="link inline-flex min-h-11 items-center text-sm sm:min-h-0">
+                  Open the audit log
+                </Link>
+              </CardBody>
+            </Card>
+          ) : null}
         </div>
 
         {/* ---------------------------------------------------------------
             Aside
            --------------------------------------------------------------- */}
         <aside aria-label="Roles and contact" className="min-w-0 space-y-6">
-          {/* Roles */}
-          <Card>
-            <CardHeader variant="stack">
-              <CardTitle as="h2" className="text-md">
-                Roles held
-              </CardTitle>
-            </CardHeader>
-            <CardBody className="space-y-3 pt-3">
-              <ul className="space-y-2">
-                {member.roles.map((r) => (
-                  <li
-                    key={`${r.role}-${r.departmentCode ?? 'all'}`}
-                    className="flex items-center justify-between gap-3 rounded border border-line px-3 py-2"
-                  >
-                    <span className="text-sm font-medium">{ROLE_LABELS[r.role] ?? r.role}</span>
-                    {r.departmentCode ? (
-                      <Badge tone="brand">{r.departmentCode} only</Badge>
-                    ) : (
-                      <span className="text-xs text-secondary">Whole college</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-              {can(session, 'role.manage') ? (
-                <ButtonLink href="/admin/roles" variant="secondary" size="sm" className="min-h-11 w-full sm:min-h-0">
-                  <ShieldCheck className="size-4" />
-                  Manage roles
-                </ButtonLink>
-              ) : null}
-            </CardBody>
-          </Card>
-
           {/* Contact */}
           <Card>
             <CardHeader variant="stack">

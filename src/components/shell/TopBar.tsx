@@ -89,15 +89,15 @@ export function ShellIdentity({
   onNavigate?: () => void;
 }) {
   return (
-    <Link href={href} aria-label={label} onClick={onNavigate} className="flex min-h-11 items-center gap-3 rounded">
+    <Link href={href} aria-label={label} onClick={onNavigate} className="group flex min-h-11 items-center gap-3 rounded-lg">
       {crest}
       <span className="min-w-0">
-        <span className="block">{logo}</span>
+        <span className="block transition-opacity duration-fast ease-brand group-hover:opacity-90">{logo}</span>
         <span
           className={cn(
-            'mt-1 block text-xs',
+            'mt-1.5 block text-xs',
             tone === 'console'
-              ? 'truncate font-semibold uppercase tracking-wider text-band-accent'
+              ? 'truncate font-semibold uppercase tracking-[0.14em] text-band-accent'
               : 'line-clamp-2 text-band-muted',
           )}
           title={line2}
@@ -208,7 +208,7 @@ export function TopBar({
     // an opacity modifier, so `bg-surface-raised/95` emits nothing at all.
     <header
       data-print-hide=""
-      className="sticky top-0 z-40 border-b border-line bg-[color-mix(in_srgb,var(--surface-raised)_95%,transparent)] backdrop-blur supports-[backdrop-filter]:bg-[color-mix(in_srgb,var(--surface-raised)_80%,transparent)]"
+      className="sticky top-0 z-40 border-b border-line bg-[color-mix(in_srgb,var(--surface-raised)_95%,transparent)] backdrop-blur-md backdrop-saturate-150 supports-[backdrop-filter]:bg-[color-mix(in_srgb,var(--surface-raised)_72%,transparent)]"
     >
       <div className="flex h-14 items-center gap-1 pl-1 pr-2 sm:gap-2 sm:px-4 lg:px-6">
         <button
@@ -238,12 +238,13 @@ export function TopBar({
               aria-haspopup="dialog"
               aria-keyshortcuts="Control+K Meta+K"
               className={cn(
-                'hidden h-11 w-full max-w-md items-center gap-2 rounded-full border border-line bg-surface px-3 text-sm text-secondary sm:flex',
-                'transition-colors duration-fast ease-brand hover:border-line-strong',
+                'group hidden h-10 w-full max-w-md items-center gap-2.5 rounded-full border border-line bg-surface-sunken pl-3.5 pr-2 text-sm text-secondary sm:flex',
+                'shadow-[inset_0_1px_2px_var(--shadow-color)] transition-[background-color,border-color,box-shadow] duration-fast ease-brand',
+                'hover:border-line-strong hover:bg-surface-raised hover:shadow-sm',
                 'focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]',
               )}
             >
-              <Search className="size-4 shrink-0 text-muted" aria-hidden="true" />
+              <Search className="size-4 shrink-0 text-muted transition-colors duration-fast group-hover:text-secondary" aria-hidden="true" />
               <span className="min-w-0 flex-1 truncate text-left">Search people, batches and pages</span>
               <span className="flex shrink-0 items-center gap-1" aria-hidden="true">
                 <Kbd>{mac ? '⌘' : 'Ctrl'}</Kbd>
@@ -356,15 +357,15 @@ export function TopBar({
               aria-expanded={accountOpen}
               aria-controls={accountOpen ? accountMenuId : undefined}
               className={cn(
-                'flex min-h-11 items-center gap-2 rounded px-1.5 text-left',
-                'transition-colors duration-fast ease-brand hover:bg-surface-sunken',
+                'flex min-h-11 items-center gap-2 rounded-full border border-transparent p-1 text-left md:border-line md:bg-surface md:pr-3',
+                'transition-[background-color,border-color,box-shadow] duration-fast ease-brand hover:bg-surface-sunken md:hover:border-line-strong md:hover:shadow-sm',
                 'focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]',
               )}
             >
               <Avatar name={user.name} src={user.photoUrl} size="sm" />
               <span className="hidden leading-tight md:block">
-                <span className="block max-w-56 truncate text-sm font-medium">{user.name}</span>
-                <span className="block max-w-56 truncate text-xs text-secondary">{user.identity}</span>
+                <span className="block max-w-52 truncate text-sm font-semibold">{user.name}</span>
+                <span className="block max-w-52 truncate text-xs text-secondary">{user.identity}</span>
               </span>
               <ChevronDown className="hidden size-4 text-muted md:block" aria-hidden="true" />
             </button>
@@ -376,7 +377,7 @@ export function TopBar({
               <div
                 onKeyDown={onAccountKeyDown}
                 onClick={() => setAccountOpen(false)}
-                className="absolute right-0 z-50 mt-1.5 w-64 animate-slide-down rounded-lg border border-line bg-surface-raised p-1 shadow-lg"
+                className="absolute right-0 z-50 mt-1.5 w-64 animate-slide-down rounded-lg border border-line bg-surface-raised p-1 shadow-lg ring-hairline"
               >
                 <div className="px-2.5 pb-2 pt-1.5">
                   <p className="truncate text-sm font-semibold">{user.name}</p>
@@ -439,7 +440,9 @@ export function TopBar({
       </div>
 
       <Sheet open={drawer} onClose={() => setDrawer(false)} title="Menu" side="left">
-        <div className="-mx-4 -mt-4 band-surface px-4 pb-4 pt-3">
+        <div className="band-surface grain relative isolate -mx-4 -mt-4 overflow-hidden px-4 pb-4 pt-3">
+          <div className="aurora" aria-hidden="true" />
+          <div className="relative z-[2]">
           <ShellIdentity
             href={brand.homeHref}
             label={brand.homeLabel}
@@ -455,6 +458,7 @@ export function TopBar({
               <span className="block truncate text-sm font-semibold">{user.name}</span>
               <span className="mt-0.5 block truncate text-xs text-secondary">{user.identity}</span>
             </span>
+          </div>
           </div>
         </div>
 

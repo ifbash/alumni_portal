@@ -10,6 +10,7 @@ import { getJobs, getMyApplications, getOwnProfile } from '@/lib/data/repo';
 import type { JobApplication, JobPosting } from '@/lib/data/types';
 import {
   Alert,
+  Avatar,
   Badge,
   Button,
   ButtonLink,
@@ -288,6 +289,12 @@ export default async function JobsPage({
 
   const own = tab === 'mine' && minePosts.length === 0 ? getOwnProfile(session) : null;
 
+  // The first tile of an unfiltered board leads at double width. Only on the
+  // deadline-ordered board, where "first" means something, and only with
+  // enough roles that a lead is not simply the whole list.
+  const leadLabel =
+    tab === 'open' && !filtering && ordered.length >= 3 && ordered[0]?.closesOn ? 'Closing next' : null;
+
   return (
     <div className="space-y-6">
       <PageBand
@@ -410,12 +417,16 @@ export default async function JobsPage({
                   <h3 id={`jobs-${g.key}`} className="font-sans text-sm font-semibold text-secondary">
                     {g.label} <span className="font-normal tabular">· {g.jobs.length}</span>
                   </h3>
-                  <JobList items={items(g.jobs)} locale={pack.locale} />
+                  <JobList
+                    items={items(g.jobs)}
+                    locale={pack.locale}
+                    lead={g.key === 'soon' && g.jobs.length >= 3 ? 'Closing next' : null}
+                  />
                 </section>
               ))}
             </div>
           ) : (
-            <JobList items={items(ordered)} locale={pack.locale} />
+            <JobList items={items(ordered)} locale={pack.locale} lead={leadLabel} />
           )}
         </Section>
       )}
@@ -539,42 +550,58 @@ function AppliedList({
       title={`${plural(applications.length, 'application')} · newest first`}
       description="The poster and the placement cell see your name, branch, batch and note."
     >
-      <ul className="grid grid-cols-1 gap-3">
-        {sorted.map((app) => {
+      <ul className="stagger grid grid-cols-1 gap-3 lg:grid-cols-2">
+        {sorted.map((app, i) => {
           const job = reachable.get(app.jobId);
           return (
-            <li key={app.id} className="min-w-0">
-              <Card as="article" className="p-card">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <h3 className="font-display text-md font-semibold leading-snug">
+            <li
+              key={app.id}
+              className="min-w-0"
+              style={i < 8 ? ({ '--i': i } as React.CSSProperties) : undefined}
+            >
+              <Card as="article" interactive={Boolean(job)} className="relative flex h-full flex-col gap-4 p-card">
+                <div className="flex items-start gap-4">
+                  <Avatar name={app.company} size="lg" shape="square" className="size-12 rounded-lg text-md" />
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-display text-lg font-semibold leading-snug tracking-tight">
                       {job ? (
-                        <Link href={`/jobs/${app.jobId}`} className="link-quiet">
+                        <Link
+                          href={`/jobs/${app.jobId}`}
+                          className="link-quiet after:absolute after:inset-0 after:rounded-lg"
+                        >
                           {app.jobTitle}
                         </Link>
                       ) : (
                         app.jobTitle
                       )}
                     </h3>
-                    <p className="mt-0.5 text-sm text-secondary">{app.company}</p>
+                    <p className="mt-0.5 text-sm font-medium text-secondary">{app.company}</p>
                   </div>
-                  <p className="shrink-0 text-sm text-secondary">
-                    Applied {formatRelative(app.createdAt, timing)}
-                    <span className="sr-only">, on {formatDate(app.createdAt, timing)}</span>
-                  </p>
+                  <Badge tone={job ? 'success' : 'neutral'} dot className="shrink-0">
+                    {job ? 'Sent' : 'Closed'}
+                  </Badge>
                 </div>
 
                 {app.note ? (
-                  <blockquote className="mt-3 border-l-2 border-line-strong pl-3 text-sm text-secondary">
-                    {app.note}
-                  </blockquote>
+                  <figure className="rounded-lg bg-surface-sunken px-4 py-3">
+                    <figcaption className="text-xs font-semibold uppercase tracking-[0.12em] text-secondary">
+                      Your note
+                    </figcaption>
+                    <blockquote className="mt-1 line-clamp-4 text-sm leading-relaxed text-primary">
+                      {app.note}
+                    </blockquote>
+                  </figure>
                 ) : (
-                  <p className="mt-3 text-sm text-secondary">You applied without a note.</p>
+                  <p className="rounded-lg bg-surface-sunken px-4 py-3 text-sm text-secondary">
+                    You applied without a note.
+                  </p>
                 )}
 
-                {!job ? (
-                  <p className="mt-3 text-sm text-secondary">This posting has closed. Your application is kept here.</p>
-                ) : null}
+                <p className="mt-auto text-sm text-secondary">
+                  Applied {formatRelative(app.createdAt, timing)}
+                  <span className="sr-only">, on {formatDate(app.createdAt, timing)}</span>
+                  {!job ? ' · This posting has closed. Your application is kept here.' : null}
+                </p>
               </Card>
             </li>
           );

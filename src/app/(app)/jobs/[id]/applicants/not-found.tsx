@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Briefcase, LinkIcon, Timer, UserX } from 'lucide-react';
-import { ButtonLink, Card, CardBody, EmptyState } from '@/components/ui';
+import { ButtonLink } from '@/components/ui';
+import { NotFoundPanel } from '../../NotFoundPanel';
 
 /**
  * The applicant list did not resolve.
@@ -34,44 +35,22 @@ export default function JobApplicantsNotFound() {
   ];
 
   return (
-    <div className="space-y-6">
-      {/* EmptyState's title is a paragraph by design — the page still owes
-          the document exactly one h1. */}
-      <h1 className="sr-only">Applicant list not available</h1>
-
-      <EmptyState
-        icon={<Briefcase className="size-5" />}
-        title="We cannot show you this applicant list"
-        description="It is one of the three below. The jobs board and your own postings are one click away."
-        action={
-          <div className="flex flex-wrap justify-center gap-2">
-            <ButtonLink href="/jobs" className="min-h-11">
-              Back to the jobs board
-            </ButtonLink>
-            <ButtonLink href="/jobs?tab=mine" variant="secondary" className="min-h-11">
-              My postings
-            </ButtonLink>
-          </div>
-        }
-      />
-
-      <Card className="mx-auto max-w-prose">
-        <CardBody>
-          <ul className="space-y-4 text-sm">
-            {reasons.map((r) => (
-              <li key={r.title} className="flex gap-3">
-                <span className="mt-0.5 shrink-0 text-muted" aria-hidden="true">
-                  {r.icon}
-                </span>
-                <div className="min-w-0 space-y-0.5">
-                  <p className="font-medium">{r.title}</p>
-                  <p className="text-secondary">{r.body}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </CardBody>
-      </Card>
-    </div>
+    <NotFoundPanel
+      documentTitle="Applicant list not available"
+      icon={<Briefcase className="size-6" />}
+      title="We cannot show you this applicant list"
+      description="It is one of the three below. The jobs board and your own postings are one click away."
+      actions={
+        <>
+          <ButtonLink href="/jobs" className="min-h-11">
+            Back to the jobs board
+          </ButtonLink>
+          <ButtonLink href="/jobs?tab=mine" variant="secondary" className="min-h-11">
+            My postings
+          </ButtonLink>
+        </>
+      }
+      reasons={reasons}
+    />
   );
 }

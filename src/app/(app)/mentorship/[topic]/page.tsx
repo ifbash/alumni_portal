@@ -1,24 +1,28 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { ArrowRight, Users } from 'lucide-react';
+import {
+  ArrowRight,
+  BookOpen,
+  Briefcase,
+  Compass,
+  Earth,
+  FileText,
+  MessageSquare,
+  Repeat,
+  Rocket,
+  Users,
+  Wrench,
+} from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
 import { can, require as requireCap } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
 import { getConnectionQuota, getConnections } from '@/lib/data/repo';
 import { getMentorTopics, getMentorsByTopic, type MentorTopic } from '@/lib/data/content';
-import {
-  Badge,
-  Breadcrumbs,
-  ButtonLink,
-  ChipNav,
-  EmptyState,
-  HowThisWorks,
-  PageHeader,
-} from '@/components/ui';
+import { Badge, Breadcrumbs, ButtonLink, ChipNav, EmptyState, HowThisWorks } from '@/components/ui';
+import { BandChip, PageBand } from '@/components/brand/PageBand';
 import { MemberCard } from '@/components/members/MemberCard';
 import { RequestIntroButton } from '@/components/directory/RequestIntroButton';
-import { cn } from '@/lib/cn';
 import { yearsOut } from '@/lib/format';
 import { viewerBranch } from '@/lib/identity';
 import type { ConnectionKind, MemberSummary } from '@/lib/data/types';
@@ -35,6 +39,18 @@ import type { ConnectionKind, MemberSummary } from '@/lib/data/types';
  */
 
 const SHOWN = 24;
+
+/** The same glyphs the hub draws, so a topic keeps its mark when you open it. */
+const TOPIC_ICON: Record<string, typeof Compass> = {
+  interviews: MessageSquare,
+  'first-job': Briefcase,
+  'higher-studies': BookOpen,
+  'core-vs-software': Wrench,
+  abroad: Earth,
+  startups: Rocket,
+  resume: FileText,
+  'career-change': Repeat,
+};
 
 interface TopicCopy {
   /** The topic restated as the question a final-year actually asks. */
@@ -257,41 +273,34 @@ export default async function MentorTopicPage({
   const monthLeft = quota ? Math.max(0, quota.monthlyLimit - quota.usedThisMonth) : 0;
   const available = Math.min(openLeft, monthLeft);
 
-  const chip = 'inline-flex min-h-8 items-center rounded-full border border-line bg-surface-raised px-3 text-sm text-secondary';
+  const Icon = TOPIC_ICON[topic.id] ?? Compass;
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        breadcrumbs={
-          <Breadcrumbs items={[{ label: 'Mentorship', href: '/mentorship' }, { label: topic.label }]} />
-        }
+      <Breadcrumbs items={[{ label: 'Mentorship', href: '/mentorship' }, { label: topic.label }]} />
+
+      <PageBand
+        pack={pack}
+        size="compact"
         eyebrow={topic.label}
         title={copy.question}
         meta={
-          <ul className="flex flex-wrap gap-1.5" aria-label="Who is on this list">
-            <li className={cn(chip, 'font-medium text-primary')}>
+          <>
+            <BandChip icon={<Icon />}>
               {topic.mentorCount.toLocaleString('en-IN')} {topic.mentorCount === 1 ? 'graduate' : 'graduates'}
-            </li>
-            {codeList ? <li className={chip}>{codeList}</li> : null}
-            {copy.rule ? <li className={chip}>{copy.rule}</li> : null}
-          </ul>
-        }
-        actions={
-          quota ? (
-            <Link
-              href="/connections?tab=sent"
-              className={cn(
-                'inline-flex min-h-11 items-center rounded-full px-3 text-sm font-medium sm:min-h-8',
-                available > 0 ? 'bg-brand-soft text-brand-soft-fg' : 'bg-warning-soft text-warning-fg',
-              )}
-            >
-              {available > 0
-                ? `${available} ${available === 1 ? 'request' : 'requests'} available`
-                : monthLeft === 0
-                  ? 'No requests left this month'
-                  : 'Your requests are all waiting for replies'}
-            </Link>
-          ) : null
+            </BandChip>
+            {codeList ? <BandChip>{codeList}</BandChip> : null}
+            {copy.rule ? <BandChip>{copy.rule}</BandChip> : null}
+            {quota ? (
+              <BandChip href="/connections?tab=sent">
+                {available > 0
+                  ? `${available} ${available === 1 ? 'request' : 'requests'} available`
+                  : monthLeft === 0
+                    ? 'No requests left this month'
+                    : 'Your requests are all waiting for replies'}
+              </BandChip>
+            ) : null}
+          </>
         }
       />
 
@@ -340,11 +349,15 @@ export default async function MentorTopicPage({
             ]}
           />
 
-          <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {filtered.map((member) => (
+          <ul className="stagger grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {filtered.map((member, i) => (
               // `relative` so the card's overlay link covers the tile and
               // nothing outside it.
-              <li key={member.id} className="relative min-w-0">
+              <li
+                key={member.id}
+                className="relative min-w-0"
+                style={i < 9 ? ({ '--i': i } as React.CSSProperties) : undefined}
+              >
                 <MemberCard
                   member={member}
                   className="h-full"

@@ -4,11 +4,11 @@ import { Card, CardBody, Skeleton } from '@/components/ui';
  * The portal home, mid-load.
  *
  * The same shape as the member home: the college band, then the main
- * column (Needs you, the next events, the news and the newest album) and
- * the rail (the availability switches and recent activity). The band is
- * drawn as a solid band block so the page does not flash white where the
- * college's colour is about to be; the phone gets the same blocks in the
- * same order, one column.
+ * column (the lead event tile with its list, the news and the newest
+ * album) and the side column (people, the invitation and the activity
+ * timeline). The band is drawn as a solid band block so the page does not
+ * flash white where the college's colour is about to be; the phone gets
+ * the same blocks in the same order, one column.
  */
 export default function DashboardLoading() {
   return (
@@ -18,8 +18,8 @@ export default function DashboardLoading() {
       {/* The band */}
       <div className="band-surface -mx-4 px-5 py-5 sm:mx-0 sm:rounded-xl sm:px-8 lg:py-7" aria-hidden="true">
         <div className="max-w-prose space-y-3">
-          <div className="h-4 w-48 rounded bg-[color-mix(in_srgb,var(--band-fg)_22%,transparent)]" />
-          <div className="h-8 w-64 rounded bg-[color-mix(in_srgb,var(--band-fg)_28%,transparent)]" />
+          <div className="h-3 w-48 rounded-full bg-[color-mix(in_srgb,var(--band-fg)_22%,transparent)]" />
+          <div className="h-9 w-72 rounded bg-[color-mix(in_srgb,var(--band-fg)_28%,transparent)]" />
           <div className="h-4 w-full max-w-md rounded bg-[color-mix(in_srgb,var(--band-fg)_18%,transparent)]" />
           <div className="flex gap-2 pt-2">
             <div className="h-11 w-28 rounded bg-[color-mix(in_srgb,var(--band-fg)_32%,transparent)]" />
@@ -28,46 +28,54 @@ export default function DashboardLoading() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-8">
-        <div className="min-w-0 space-y-6 lg:space-y-8">
-          {/* Needs you */}
-          <div className="space-y-3">
-            <Skeleton className="h-4 w-20" />
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {[0, 1].map((i) => (
-                <Card key={i} className={i === 1 ? 'hidden p-4 sm:block' : 'p-4'}>
-                  <Skeleton className="h-7 w-10" />
-                  <Skeleton className="mt-3 h-4 w-44" />
-                  <Skeleton className="mt-2 h-3.5 w-28" />
-                  <Skeleton className="mt-4 h-4 w-16" />
-                </Card>
-              ))}
-            </div>
-          </div>
+      {/* Needs you: one slim row */}
+      <Card className="flex items-center gap-3 px-4 py-3" flat>
+        <Skeleton className="size-9 shrink-0 rounded-full" />
+        <Skeleton className="h-4 w-2/3 max-w-sm" />
+        <Skeleton className="ml-auto h-4 w-14" />
+      </Card>
 
-          {/* Happening at: events */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-8 xl:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="min-w-0 space-y-6 lg:space-y-8">
+          {/* Happening at: the lead event tile and the list beside it */}
           <div className="space-y-4">
-            <Skeleton className="h-6 w-48" />
-            <div className="grid gap-4 sm:grid-cols-2">
-              {[0, 1].map((i) => (
-                <Card key={i} className={i === 1 ? 'hidden p-4 sm:block' : 'p-4'}>
-                  <div className="flex gap-3">
-                    <Skeleton className="h-16 w-14 shrink-0 rounded" />
+            <Skeleton className="h-7 w-56" />
+            <Skeleton className="h-3 w-20" />
+            <div className="grid gap-4 min-[1360px]:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
+              <Card className="space-y-4 p-5">
+                <div className="flex gap-4">
+                  <Skeleton className="h-20 w-16 shrink-0 rounded" />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <Skeleton className="h-3 w-28" />
+                    <Skeleton className="h-5 w-4/5" />
+                    <Skeleton className="h-4 w-full" />
+                  </div>
+                </div>
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-3/4" />
+                <div className="flex justify-end pt-2">
+                  <Skeleton className="h-11 w-28 rounded-lg" />
+                </div>
+              </Card>
+              <Card className="space-y-4 p-5">
+                <Skeleton className="h-4 w-28" />
+                {[0, 1].map((i) => (
+                  <div key={i} className="flex gap-3">
+                    <Skeleton className="h-14 w-12 shrink-0 rounded" />
                     <div className="min-w-0 flex-1 space-y-2">
                       <Skeleton className="h-4 w-4/5" />
-                      <Skeleton className="h-3.5 w-full" />
-                      <Skeleton className="h-5 w-24 rounded-full" />
+                      <Skeleton className="h-5 w-16 rounded-full" />
                     </div>
                   </div>
-                </Card>
-              ))}
+                ))}
+              </Card>
             </div>
           </div>
 
-          {/* Happening at: news and photos */}
+          {/* News and photos */}
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-[minmax(0,1fr)_14rem] xl:grid-cols-[minmax(0,1fr)_17rem]">
             <div className="min-w-0 space-y-3">
-              <Skeleton className="h-4 w-14" />
+              <Skeleton className="h-3 w-14" />
               <Skeleton className="hidden aspect-video h-auto w-full rounded-lg sm:block" />
               {[0, 1].map((row) => (
                 <div key={row} className="space-y-2 border-b border-line py-3">
@@ -77,7 +85,7 @@ export default function DashboardLoading() {
               ))}
             </div>
             <div className="hidden min-w-0 space-y-3 sm:block">
-              <Skeleton className="h-4 w-14" />
+              <Skeleton className="h-3 w-14" />
               <Skeleton className="aspect-[3/2] h-auto w-full rounded-lg" />
               <Skeleton className="h-4 w-3/5" />
             </div>
@@ -85,22 +93,29 @@ export default function DashboardLoading() {
         </div>
 
         <div className="min-w-0 space-y-6">
-          {/* Give back: three switches */}
+          {/* People */}
           <Card>
             <CardBody className="space-y-4">
-              <Skeleton className="h-5 w-36" />
+              <Skeleton className="h-5 w-28" />
+              <Skeleton className="h-16 w-full rounded-lg" />
               {[0, 1, 2].map((row) => (
-                <div key={row} className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <Skeleton className="h-4 w-2/3" />
-                    <Skeleton className="h-3 w-full" />
+                <div key={row} className="flex items-center gap-3">
+                  <Skeleton className="size-8 shrink-0 rounded-full" />
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <Skeleton className="h-4 w-3/5" />
+                    <Skeleton className="h-3 w-4/5" />
                   </div>
-                  <Skeleton className="h-5 w-9 shrink-0 rounded-full" />
                 </div>
               ))}
-              <Skeleton className="h-12 w-full rounded-lg" />
             </CardBody>
           </Card>
+
+          {/* The invitation */}
+          <div className="space-y-3 rounded-xl bg-brand-soft p-card">
+            <Skeleton className="size-10 rounded-full" />
+            <Skeleton className="h-5 w-3/4" />
+            <Skeleton className="h-9 w-40 rounded" />
+          </div>
 
           {/* Recent activity */}
           <Card>
@@ -108,7 +123,7 @@ export default function DashboardLoading() {
               <Skeleton className="h-5 w-32" />
               {[0, 1, 2].map((row) => (
                 <div key={row} className="flex items-center gap-3">
-                  <Skeleton className="size-2 shrink-0 rounded-full" />
+                  <Skeleton className="size-3.5 shrink-0 rounded-full" />
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <Skeleton className="h-4 w-4/5" />
                     <Skeleton className="h-3 w-16" />

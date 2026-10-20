@@ -277,9 +277,22 @@ export function EventForm({
       {previewEvent ? (
         <EventSummary event={previewEvent} href="#event-preview" locale={share.locale} variant="card" />
       ) : (
-        <p className="rounded-lg border border-line bg-surface p-4 text-sm text-secondary">
-          The card appears here once the event has a date.
-        </p>
+        // The card's own shape with the gaps shown as gaps, so the preview is
+        // designed before the first keystroke and fills in as the form does.
+        <div className="flex items-start gap-3 rounded-lg border border-line bg-surface-raised p-3 shadow-sm">
+          <span
+            aria-hidden="true"
+            className="grid size-14 shrink-0 place-items-center rounded-lg border border-line bg-surface-sunken text-center text-xs font-semibold uppercase tracking-wider text-secondary"
+          >
+            Date
+          </span>
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <p className={title.trim() ? 'font-display text-md font-semibold leading-snug' : 'font-display text-md font-semibold leading-snug text-secondary'}>
+              {title.trim() || 'Your event title'}
+            </p>
+            <p className="text-sm text-secondary">{venue.trim() || 'Venue'} · add a date to see the full card</p>
+          </div>
+        </div>
       )}
       <div className="space-y-1 text-sm">
         <p className="font-medium text-primary">Who will see it</p>

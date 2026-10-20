@@ -210,9 +210,9 @@ export default async function GivingPage() {
 
       {others.length > 0 ? (
         <Section title="Also open">
-          <ul className="grid grid-cols-1 gap-gutter md:grid-cols-2">
-            {others.map((c) => (
-              <li key={c.id} className="min-w-0">
+          <ul className="stagger grid grid-cols-1 gap-gutter md:grid-cols-2">
+            {others.map((c, i) => (
+              <li key={c.id} className="min-w-0" style={{ '--i': i } as React.CSSProperties}>
                 <OpenCampaignCard campaign={c} tz={tz} />
               </li>
             ))}
@@ -237,8 +237,8 @@ export default async function GivingPage() {
           <ul className="grid grid-cols-1 gap-gutter md:grid-cols-3">
             {ways.map((w) => (
               <li key={w.href} className="min-w-0">
-                <Card interactive className="relative flex h-full items-start gap-3 p-card">
-                  <span className="grid size-10 shrink-0 place-items-center rounded bg-brand-soft text-brand-soft-fg" aria-hidden="true">
+                <Card interactive className="relative flex h-full items-start gap-4 p-card">
+                  <span className="grid size-11 shrink-0 place-items-center rounded-full bg-brand-soft text-brand-soft-fg shadow-[0_0_0_5px_color-mix(in_srgb,var(--brand-soft)_45%,transparent)]" aria-hidden="true">
                     {w.icon}
                   </span>
                   <div className="min-w-0 space-y-1">
@@ -316,17 +316,17 @@ function FeaturedCampaign({ campaign, tz }: { campaign: DonationCampaign; tz: st
   const first = campaign.donorCount === 0;
 
   return (
-    <Card as="section" aria-labelledby="featured-campaign" className="grid grid-cols-1 gap-5 p-card md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] md:items-center lg:gap-8">
+    <Card as="section" aria-labelledby="featured-campaign" className="grid grid-cols-1 gap-5 overflow-hidden p-card shadow-md md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] md:items-center lg:gap-8 lg:p-7">
       <CampaignArt campaign={campaign} aspect="16/9" />
 
-      <div className="min-w-0 space-y-4">
+      <div className="min-w-0 space-y-5">
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone="brand">Open now</Badge>
           {left ? <Badge tone={daysUntil(campaign.endsOn!, tz) <= 14 ? 'warning' : 'neutral'}>{left}</Badge> : null}
           {funded ? <Badge tone="success">Target met</Badge> : null}
         </div>
         <div className="space-y-2">
-          <h2 id="featured-campaign" className="font-display text-xl font-semibold">
+          <h2 id="featured-campaign" className="font-display text-xl font-semibold tracking-tight">
             <Link href={`/giving/${campaign.slug}`} className="link-quiet">
               {campaign.title}
             </Link>
@@ -337,14 +337,19 @@ function FeaturedCampaign({ campaign, tz }: { campaign: DonationCampaign; tz: st
         {first ? (
           <p className="font-display text-lg font-semibold">Be the first to give</p>
         ) : (
-          <div className="space-y-2">
-            <p className="flex flex-wrap items-baseline gap-x-2 text-sm text-secondary">
-              <span className="font-display text-xl font-bold tabular text-primary">{formatCompactINR(campaign.raised)}</span>
+          <div className="space-y-2.5">
+            <p className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 text-sm text-secondary">
+              <span className="font-display text-display-sm font-bold leading-none tabular text-primary">
+                {formatCompactINR(campaign.raised)}
+              </span>
               {campaign.target ? <span>of {formatCompactINR(campaign.target)}</span> : <span>raised</span>}
-              {pct !== null ? <span className="tabular">· {formatPercent(pct)}</span> : null}
+              {pct !== null ? (
+                <span className="tabular font-semibold text-brand-fg">· {formatPercent(pct)}</span>
+              ) : null}
             </p>
             {campaign.target ? (
               <Progress
+                className="h-3"
                 value={campaign.raised}
                 max={campaign.target}
                 tone={funded ? 'success' : 'brand'}
@@ -383,7 +388,7 @@ function OpenCampaignCard({ campaign, tz }: { campaign: DonationCampaign; tz: st
         ) : (
           <>
             <p className="flex flex-wrap items-baseline gap-x-2 text-sm text-secondary">
-              <span className="font-semibold tabular text-primary">{formatCompactINR(campaign.raised)}</span>
+              <span className="font-display text-xl font-bold tabular text-primary">{formatCompactINR(campaign.raised)}</span>
               {campaign.target ? <span>of {formatCompactINR(campaign.target)}</span> : <span>raised</span>}
               {pct !== null ? <span className="tabular">· {formatPercent(pct)}</span> : null}
             </p>
@@ -420,11 +425,11 @@ function OutcomeCard({
       <dl className="mt-auto grid grid-cols-3 gap-3 border-t border-line pt-3 text-sm">
         <div className="min-w-0">
           <dt className="text-secondary">Raised</dt>
-          <dd className="font-semibold tabular">{formatCompactINR(campaign.raised)}</dd>
+          <dd className="font-display text-md font-bold tabular">{formatCompactINR(campaign.raised)}</dd>
         </div>
         <div className="min-w-0">
           <dt className="text-secondary">Donors</dt>
-          <dd className="font-semibold tabular">{formatNumber(campaign.donorCount)}</dd>
+          <dd className="font-display text-md font-bold tabular">{formatNumber(campaign.donorCount)}</dd>
         </div>
         <div className="min-w-0">
           <dt className="text-secondary">Closed</dt>

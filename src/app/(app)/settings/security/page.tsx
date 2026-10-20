@@ -88,7 +88,7 @@ export default async function SecuritySettingsPage() {
   const email = profile.contact?.email ?? null;
 
   return (
-    <div className="grid grid-cols-1 items-start gap-gutter xl:grid-cols-2">
+    <div className="max-w-3xl space-y-gutter">
       {/* ---- 1. This device -------------------------------------------- */}
 
       <Card>
@@ -158,7 +158,7 @@ export default async function SecuritySettingsPage() {
 
       {/* ---- 3. If something looks wrong --------------------------------- */}
 
-      <Card className="xl:col-span-2">
+      <Card>
         <CardBody className="space-y-4">
           <div className="flex items-center gap-2">
             <ShieldAlert className="size-5 shrink-0 text-muted" aria-hidden="true" />
@@ -199,7 +199,7 @@ export default async function SecuritySettingsPage() {
 
       {/* ---- Technical details --------------------------------------------- */}
 
-      <Disclosure id="technical" summary="Technical details for your IT team" className="xl:col-span-2">
+      <Disclosure id="technical" summary="Technical details for your IT team">
         <dl className="divide-y divide-line">
           <Tech label="Session">
             A signed cookie holding a member id, a college id and the time it was issued. HttpOnly,

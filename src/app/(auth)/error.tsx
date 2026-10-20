@@ -1,16 +1,9 @@
 'use client';
 
 import * as React from 'react';
-import { ArrowLeft, KeyRound, LifeBuoy, RotateCw, TriangleAlert } from 'lucide-react';
-import {
-  Alert,
-  Badge,
-  Button,
-  ButtonLink,
-  Card,
-  CardBody,
-  DetailRow,
-} from '@/components/ui';
+import { ArrowLeft, KeyRound, RotateCw } from 'lucide-react';
+import { Badge, Button, ButtonLink } from '@/components/ui';
+import { DetailLine, TechnicalDetails } from '@/components/status/StatusPanel';
 
 /**
  * The sign-in group's error boundary.
@@ -25,6 +18,11 @@ import {
  * So: retry first, and say plainly that the code they already have still
  * works. It renders inside the sign-in frame, so the college's identity,
  * the privacy notice and the support address are all still on screen.
+ *
+ * That frame already carries the band (the brand panel on desktop, the
+ * identity strip on a phone), so this screen does not light a second one:
+ * it is a raised card on the form column, with the college's colour in the
+ * wash behind it and the key icon. One lit surface per screen.
  */
 export default function AuthError({
   error,
@@ -38,69 +36,63 @@ export default function AuthError({
   }, [error]);
 
   return (
-    <div className="space-y-8">
-      <header className="space-y-3">
-        <Badge tone="warning" dot>
-          Sign-in interrupted
-        </Badge>
-        <h1 className="font-display text-display-sm font-bold">
-          This step did not load — your place is not lost
-        </h1>
-        <p className="text-secondary">
-          Something failed on the server while drawing the sign-in screen. Your account is fine and
-          nothing about it has changed.
-        </p>
-      </header>
-
-      <Alert
-        tone="info"
-        title="A code you have already been sent is still valid"
-        icon={<KeyRound className="size-4" />}
+    <div className="space-y-6">
+      <section
+        aria-labelledby="auth-error-title"
+        className="ring-hairline stagger rounded-xl border border-line bg-surface-raised p-6 shadow-lg sm:p-8"
       >
-        <p>
-          One-time codes last ten minutes and are not cancelled by this. If one is already in your
-          inbox, retry below and type it in — asking for a second code invalidates the first and
-          counts against the limit on how often you may request one.
+        <div style={{ '--i': 0 } as React.CSSProperties}>
+          <Badge tone="warning" dot>
+            Sign-in interrupted
+          </Badge>
+        </div>
+        <h1
+          id="auth-error-title"
+          className="mt-4 font-display text-display-sm font-bold tracking-tight"
+          style={{ '--i': 1 } as React.CSSProperties}
+        >
+          This step did not load, and your place is not lost
+        </h1>
+        <p className="mt-3 text-secondary" style={{ '--i': 2 } as React.CSSProperties}>
+          The server failed while drawing the sign-in screen. Your account is fine, nothing about it
+          has changed, and nothing was submitted, so this has not used one of your attempts.
         </p>
-      </Alert>
 
-      <div className="flex flex-wrap gap-2">
-        <Button onClick={reset} size="lg">
-          <RotateCw className="size-4" aria-hidden="true" />
-          Try again
-        </Button>
-        <ButtonLink href="/login" variant="secondary" size="lg">
-          <ArrowLeft className="size-4" aria-hidden="true" />
-          Back to sign in
-        </ButtonLink>
-      </div>
+        <p
+          className="mt-5 flex items-start gap-3 rounded-lg bg-brand-soft p-4 text-sm text-brand-soft-fg"
+          style={{ '--i': 3 } as React.CSSProperties}
+        >
+          <KeyRound className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          <span>
+            <span className="font-semibold">A code you have already been sent still works.</span> It
+            lasts ten minutes and this does not cancel it. Try again and type it in. Asking for a
+            second code cancels the first and counts against the limit on how often you can ask.
+          </span>
+        </p>
 
-      <Card>
-        <CardBody className="space-y-4">
-          <div className="flex gap-3">
-            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-            <p className="text-sm text-secondary">
-              Nothing was submitted, so this has not used one of your attempts. Attempts are counted
-              when a code is checked, and no code was checked on this request.
-            </p>
-          </div>
+        <div
+          className="mt-6 flex flex-wrap gap-3 [&>*]:min-h-12"
+          style={{ '--i': 4 } as React.CSSProperties}
+        >
+          <Button onClick={reset} size="lg">
+            <RotateCw className="size-4" aria-hidden="true" />
+            Try again
+          </Button>
+          <ButtonLink href="/login" variant="secondary" size="lg">
+            <ArrowLeft className="size-4" aria-hidden="true" />
+            Back to sign in
+          </ButtonLink>
+        </div>
+      </section>
 
-          <dl className="divide-y divide-line border-t border-line pt-1">
-            <DetailRow label="Reference">
-              <span className="font-mono text-sm">{error.digest ?? 'not recorded'}</span>
-            </DetailRow>
-          </dl>
-
-          <p className="flex items-start gap-2 border-t border-line pt-4 text-sm text-secondary">
-            <LifeBuoy className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            <span>
-              If retrying does not clear it, the support address in the footer below reaches the
-              alumni cell. Quote the reference and the email address you were signing in with — not
-              the code itself, which is a credential and should never be sent to anyone.
-            </span>
-          </p>
-        </CardBody>
-      </Card>
+      <TechnicalDetails>
+        <DetailLine label="Reference">{error.digest ?? 'not recorded'}</DetailLine>
+        <p>
+          If trying again does not clear it, the support address in the footer reaches the alumni
+          cell. Quote this reference and the email address you were signing in with. Never send the
+          code itself: it is a credential.
+        </p>
+      </TechnicalDetails>
     </div>
   );
 }

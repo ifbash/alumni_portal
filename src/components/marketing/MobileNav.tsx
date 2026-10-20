@@ -84,7 +84,7 @@ export function MobileNav({
       </summary>
 
       <div
-        className="absolute inset-x-0 top-full border-b border-line bg-surface-raised shadow-lg"
+        className="animate-slide-down absolute inset-x-0 top-full border-b border-line bg-surface-raised shadow-lg"
         onClick={onPanelClick}
       >
         <nav aria-label="Main">
@@ -96,7 +96,7 @@ export function MobileNav({
                   <Link
                     href={row.href}
                     aria-current={current ? 'page' : undefined}
-                    className="flex min-h-12 items-center border-b border-line px-4 text-base font-medium transition-colors duration-fast ease-brand hover:bg-surface-sunken aria-[current=page]:text-brand-fg"
+                    className="flex min-h-14 items-center border-b border-line px-4 font-display text-lg font-semibold transition-colors duration-fast ease-brand hover:bg-surface-sunken aria-[current=page]:text-brand-fg"
                   >
                     {row.label}
                   </Link>
@@ -108,9 +108,14 @@ export function MobileNav({
 
         <div className="space-y-3 px-4 py-4">
           {!signedIn ? (
-            <ButtonLink href="/claim" variant="secondary" size="lg" className="w-full min-h-11">
-              Register
-            </ButtonLink>
+            <div className="grid grid-cols-2 gap-3">
+              <ButtonLink href="/claim" size="lg" className="min-h-12">
+                Register
+              </ButtonLink>
+              <ButtonLink href="/login" variant="secondary" size="lg" className="min-h-12">
+                Sign in
+              </ButtonLink>
+            </div>
           ) : null}
 
           {websiteUrl ? (

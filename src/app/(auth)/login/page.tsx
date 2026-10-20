@@ -6,6 +6,7 @@ import { getTenantBrand } from '@/lib/tenant';
 import { getDemoAccounts } from '@/lib/data/repo';
 import { IS_FIXTURE, OTP_TTL_SECONDS } from '@/lib/config';
 import { inSentence } from '@/lib/branding/copy';
+import { AuthHeader } from '../_components/AuthHeader';
 import { LoginForm, type DemoAccountView } from './LoginForm';
 
 export const metadata: Metadata = {
@@ -50,13 +51,12 @@ export default async function LoginPage({
     : [];
 
   return (
-    <div className="mx-auto w-full max-w-md space-y-8">
-      <header className="space-y-2">
-        <h1 className="font-display text-display-sm font-bold">Sign in</h1>
-        <p className="text-secondary">
+    <div className="stagger mx-auto w-full max-w-md space-y-8">
+      <AuthHeader title="Sign in">
+        <p>
           Welcome back. We will email you a six-digit code — there is no password to remember.
         </p>
-      </header>
+      </AuthHeader>
 
       <LoginForm
         demoAccounts={demoAccounts}

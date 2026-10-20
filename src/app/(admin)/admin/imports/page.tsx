@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { FileUp, ShieldCheck } from 'lucide-react';
 
-import { Breadcrumbs, ButtonLink, CopyButton, EmptyState, PageHeader, Section } from '@/components/ui';
+import { Breadcrumbs, ButtonLink, CopyButton, EmptyState, PageHeader, Section, SummaryLine } from '@/components/ui';
 import { getSession } from '@/lib/auth/session';
 import { can, require as requireCap } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
@@ -43,6 +43,7 @@ export default async function ImportsPage() {
   const throughYear = yearIn(pack.locale.timeZone, displayNow());
   const missing = missingRegisterFiles({ sourceFiles, branches: codes, throughYear });
   const years = registerYears(sourceFiles, throughYear);
+  const fileCount = new Set(sourceFiles.filter(Boolean)).size;
 
   // Committed files, newest first, from the audit log: both the seeded
   // action name and the one the import endpoint writes.
@@ -78,6 +79,14 @@ export default async function ImportsPage() {
         }
       />
 
+      <SummaryLine
+        items={[
+          { value: stats.total, label: 'rows loaded' },
+          { value: fileCount, label: fileCount === 1 ? 'file' : 'files' },
+          { value: missing.length, label: missing.length === 1 ? 'file still to come' : 'files still to come', tone: 'attention' },
+        ]}
+      />
+
       <Section
         title="Register files"
         description={`${formatNumber(stats.total)} rows, ${years[0] ?? throughYear}–${throughYear}.`}
@@ -109,9 +118,12 @@ export default async function ImportsPage() {
                   href={`/admin/audit/${e.id}`}
                   className="flex min-h-11 flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 px-4 py-2.5 text-sm transition-colors duration-fast ease-brand hover:bg-surface-sunken"
                 >
-                  <span className="min-w-0 font-medium text-primary">{e.reason ?? 'A register file'}</span>
-                  <span className="text-secondary">
-                    {e.actorName} · {formatDate(e.createdAt, fmt)}
+                  <span className="flex min-w-0 items-baseline gap-3">
+                    <span aria-hidden="true" className="mt-1.5 size-2 shrink-0 self-start rounded-full bg-success" />
+                    <span className="min-w-0 font-medium text-primary">{e.reason ?? 'A register file'}</span>
+                  </span>
+                  <span className="pl-5 text-secondary sm:pl-0">
+                    {e.actorName} · <span className="tabular">{formatDate(e.createdAt, fmt)}</span>
                   </span>
                 </Link>
               </li>

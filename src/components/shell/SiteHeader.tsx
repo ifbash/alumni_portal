@@ -12,8 +12,8 @@ import type { BrandPack, FeatureSpec } from '@/lib/branding/pack';
  * Two tiers, the way a university's own site frames its alumni office
  * (Harvard, Oxford): a thin strip in the college's colour carrying the
  * full institution name and a way back to the college's own site, then a
- * plain white bar with the portal's nav and the two doors, Register and
- * Sign in.
+ * frosted bar (`.glass`, pure CSS) with the portal's nav and the two doors,
+ * Register first and Sign in beside it.
  *
  * Returned as two siblings, not one wrapper, so only the bar is sticky:
  * the strip scrolls away, and the marketing layout needs no change.
@@ -80,10 +80,10 @@ export function SiteHeader({ pack, signedIn = false }: { pack: BrandPack; signed
       </div>
 
       {/* Tier 2: the bar. */}
-      <header className="sticky top-0 z-40 border-b border-line bg-surface-raised">
-        <div className="page-shell flex h-14 items-center gap-4 lg:h-16">
+      <header className="glass sticky top-0 z-40 border-x-0 border-t-0">
+        <div className="page-shell flex h-14 items-center gap-4 lg:h-[4.5rem]">
           <Link href="/" aria-label={`${copy.portalName} — home`} className="shrink-0">
-            <Logo pack={pack} height={28} />
+            <Logo pack={pack} height={30} />
           </Link>
 
           <nav aria-label="Main" className="ml-4 hidden items-center gap-1 lg:flex">
@@ -106,11 +106,15 @@ export function SiteHeader({ pack, signedIn = false }: { pack: BrandPack; signed
               </ButtonLink>
             ) : (
               <>
-                <ButtonLink href="/claim" variant="secondary" size="md" className="hidden min-h-11 sm:inline-flex">
-                  Register
-                </ButtonLink>
-                <ButtonLink href="/login" size="md" className="min-h-11">
+                {/* One door on a phone (Sign in; Register is in the hero and the menu), two from sm: Register leads, Sign in steps back. */}
+                <ButtonLink href="/login" size="md" className="min-h-11 sm:hidden">
                   Sign in
+                </ButtonLink>
+                <ButtonLink href="/login" variant="ghost" size="md" className="hidden min-h-11 sm:inline-flex">
+                  Sign in
+                </ButtonLink>
+                <ButtonLink href="/claim" size="md" className="hidden min-h-11 shadow sm:inline-flex">
+                  Register
                 </ButtonLink>
               </>
             )}

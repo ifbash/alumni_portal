@@ -2,17 +2,9 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { BookOpen, Home, LogIn, RotateCw, ShieldCheck } from 'lucide-react';
-import {
-  Alert,
-  Button,
-  ButtonLink,
-  Card,
-  CardBody,
-  CardDescription,
-  CardTitle,
-  DetailRow,
-} from '@/components/ui';
+import { Home, RotateCw, TriangleAlert } from 'lucide-react';
+import { Button, ButtonLink } from '@/components/ui';
+import { DetailLine, StatusPanel, TechnicalDetails } from '@/components/status/StatusPanel';
 
 /**
  * The public site's error boundary.
@@ -22,6 +14,10 @@ import {
  * safe" to offer — nothing of theirs is involved. What there is instead is
  * a route onward, and one guarantee worth making explicitly: the privacy
  * notice is a public document and does not depend on this page working.
+ *
+ * It sits in the marketing layout's `<main>`, under the site header, so it
+ * runs edge to edge like the other public heroes and does not add a second
+ * landmark.
  */
 export default function MarketingError({
   error,
@@ -35,66 +31,59 @@ export default function MarketingError({
   }, [error]);
 
   return (
-    <div className="page-shell max-w-prose space-y-6 py-section">
-      <div className="space-y-3">
-        <p className="text-xs font-semibold uppercase tracking-wider text-brand-fg">
-          Something broke
-        </p>
-        <h1 className="font-display text-display-xs font-bold">This page did not load</h1>
-        <p className="text-sm text-secondary">
-          The server failed while building it. Nothing was submitted and nothing was recorded — this
-          is a public page, and you had not given it anything.
-        </p>
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        <Button onClick={reset}>
-          <RotateCw className="size-4" aria-hidden="true" />
-          Try again
-        </Button>
-        <ButtonLink href="/" variant="secondary">
-          <Home className="size-4" aria-hidden="true" />
-          Home
-        </ButtonLink>
-        <ButtonLink href="/login" variant="ghost">
-          <LogIn className="size-4" aria-hidden="true" />
-          Sign in
-        </ButtonLink>
-      </div>
-
-      <Alert tone="neutral" title="The privacy notice is still reachable" icon={<ShieldCheck className="size-4" />}>
+    <>
+      <StatusPanel
+        variant="bleed"
+        icon={<TriangleAlert aria-hidden="true" />}
+        eyebrow="Something went wrong"
+        title="This page did not load"
+        actions={
+          <>
+            <Button variant="band" size="lg" onClick={reset}>
+              <RotateCw className="size-4" aria-hidden="true" />
+              Try again
+            </Button>
+            <ButtonLink href="/" variant="band-outline" size="lg">
+              <Home className="size-4" aria-hidden="true" />
+              Go to the home page
+            </ButtonLink>
+          </>
+        }
+      >
         <p>
-          It is linked from the consent box on the registration form, so it is served as its own
-          page and does not depend on this one.{' '}
-          <Link href="/privacy">Read the privacy notice</Link> or{' '}
-          <Link href="/terms">the terms of use</Link>.
+          The server failed while building this page. Nothing was submitted and nothing was
+          recorded, because this is a public page and you had not given it anything.
         </p>
-      </Alert>
+      </StatusPanel>
 
-      <Card>
-        <CardBody className="space-y-4">
-          <div className="space-y-1">
-            <CardTitle as="h2">If you were trying to sign in</CardTitle>
-            <CardDescription>
-              The sign-in screen is a separate page and is usually unaffected by a failure here.
-            </CardDescription>
-          </div>
+      <div className="page-shell py-10 lg:py-14">
+        <div className="max-w-prose space-y-6">
+          <ul className="space-y-2 text-sm text-secondary">
+            <li>
+              Signing in? The sign-in page is separate and is usually unaffected by a failure here.{' '}
+              <Link href="/login" className="link">
+                Go to sign in
+              </Link>
+            </li>
+            <li>
+              The privacy notice and the terms are their own pages and stay readable:{' '}
+              <Link href="/privacy" className="link">
+                privacy notice
+              </Link>
+              ,{' '}
+              <Link href="/terms" className="link">
+                terms of use
+              </Link>
+              .
+            </li>
+          </ul>
 
-          <p className="flex items-start gap-2 text-sm text-secondary">
-            <BookOpen className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            <span>
-              Alumni sign in with the email address the college holds for them; a six-digit code
-              arrives by email and works once. There is no password to have forgotten.
-            </span>
-          </p>
-
-          <dl className="divide-y divide-line border-t border-line pt-1">
-            <DetailRow label="Reference">
-              <span className="font-mono text-sm">{error.digest ?? 'not recorded'}</span>
-            </DetailRow>
-          </dl>
-        </CardBody>
-      </Card>
-    </div>
+          <TechnicalDetails>
+            <DetailLine label="Reference">{error.digest ?? 'not recorded'}</DetailLine>
+            <p>Quote this reference if you write to the college about the problem.</p>
+          </TechnicalDetails>
+        </div>
+      </div>
+    </>
   );
 }

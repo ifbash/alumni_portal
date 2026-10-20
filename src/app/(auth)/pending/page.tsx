@@ -8,6 +8,10 @@ import { inSentence } from '@/lib/branding/copy';
 import { siteOrigin, whatsappShareUrl } from '@/lib/share';
 import { Alert, Badge, ButtonLink, Card, CardBody } from '@/components/ui';
 import { cn } from '@/lib/cn';
+import { AuthHeader } from '../_components/AuthHeader';
+
+/** Stagger index for the entrance; see `.stagger` in globals.css. */
+const at = (n: number) => ({ '--i': n }) as React.CSSProperties;
 
 export const metadata: Metadata = {
   title: 'Your registration is being checked',
@@ -87,20 +91,22 @@ export default async function PendingPage({
   ];
 
   return (
-    <div className="space-y-8">
-      <header className="space-y-3">
-        <Badge tone="warning" dot>
-          Awaiting verification
-        </Badge>
-        <h1 className="font-display text-display-sm font-bold">
-          Your registration is with the {office}
-        </h1>
-        <p className="text-secondary">
+    <div className="stagger space-y-8">
+      <AuthHeader
+        icon={
+          <>
+            {/* A slow ripple behind the hourglass: it is being looked at. */}
+            <span className="absolute inset-0 rounded-full bg-brand-soft opacity-70 motion-safe:animate-ping" />
+            <Hourglass className="relative size-5" />
+          </>
+        }
+        title={`Your registration is with the ${office}`}
+      >
+        <p>
           {email ? (
             <>
-              We will write to{' '}
-              <span className="font-medium text-primary break-all">{email}</span> as soon as it has
-              been looked at. There is nothing else for you to do.
+              We will write to <span className="break-all font-medium text-primary">{email}</span> as
+              soon as it has been looked at. There is nothing else for you to do.
             </>
           ) : (
             <>
@@ -109,11 +115,31 @@ export default async function PendingPage({
             </>
           )}
         </p>
-      </header>
+      </AuthHeader>
 
-      <Card>
+      <Card style={at(1)} className="overflow-hidden">
         <CardBody>
-          <h2 className="mb-5 font-display text-base font-semibold">Where your registration is</h2>
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+            <h2 className="font-display text-lg font-semibold">Where your registration is</h2>
+            <Badge tone="warning" dot>
+              Awaiting verification
+            </Badge>
+          </div>
+
+          {/* Progress at a glance: one segment per step, filled as it is done. */}
+          <div aria-hidden="true" className="mb-6 flex gap-1.5">
+            {steps.map((step) => (
+              <span
+                key={step.title}
+                className={cn(
+                  'h-1.5 flex-1 rounded-full',
+                  step.state === 'done' && 'bg-success',
+                  step.state === 'current' && 'bg-brand-500 motion-safe:animate-pulse',
+                  step.state === 'waiting' && 'bg-line',
+                )}
+              />
+            ))}
+          </div>
 
           <ol>
             {steps.map((step, i) => {
@@ -125,7 +151,7 @@ export default async function PendingPage({
                       className={cn(
                         'grid size-7 shrink-0 place-items-center rounded-full',
                         step.state === 'done' && 'bg-success-soft text-success-fg',
-                        step.state === 'current' && 'bg-brand-soft text-brand-soft-fg',
+                        step.state === 'current' && 'bg-brand-soft text-brand-soft-fg ring-4 ring-[color-mix(in_srgb,var(--brand-500)_20%,transparent)]',
                         step.state === 'waiting' && 'border border-line bg-surface-sunken text-muted',
                       )}
                       aria-hidden="true"
@@ -162,6 +188,7 @@ export default async function PendingPage({
       </Card>
 
       <Alert
+        style={at(2)}
         tone="neutral"
         title="Do not submit the form again"
         icon={<Info className="size-4 text-brand-fg" />}
@@ -172,7 +199,7 @@ export default async function PendingPage({
         </p>
       </Alert>
 
-      <Card>
+      <Card style={at(3)}>
         <CardBody className="space-y-3">
           <h2 className="font-display text-base font-semibold">
             {copy.reviewTurnaround
@@ -195,7 +222,7 @@ export default async function PendingPage({
         </CardBody>
       </Card>
 
-      <div className="flex flex-wrap items-center gap-3 border-t border-line pt-6">
+      <div style={at(4)} className="flex flex-wrap items-center gap-3 border-t border-line pt-6">
         <ButtonLink href="/" variant="secondary">
           Back to {copy.portalName}
         </ButtonLink>
@@ -211,7 +238,11 @@ export default async function PendingPage({
         </p>
       </div>
 
-      <section aria-labelledby="share-title" className="space-y-2">
+      <section
+        style={at(5)}
+        aria-labelledby="share-title"
+        className="space-y-2 rounded-lg bg-surface-sunken p-5"
+      >
         <h2 id="share-title" className="font-display text-base font-semibold">
           Bring your batch along
         </h2>

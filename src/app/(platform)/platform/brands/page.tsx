@@ -1,13 +1,13 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { ArrowRight, ArrowUpRight, Camera, CircleCheck, Globe, Plus } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, Camera, Globe, Plus } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap } from '@/lib/auth/guard';
 import { getTenants } from '@/lib/data/repo';
 import { listPacks, getPack, HOUSE_PACK_ID, DEMO_PACK_IDS } from '@/lib/branding/registry';
 import { OVERRIDABLE_TOKENS, type BrandPack } from '@/lib/branding/pack';
-import { contrastReport } from '@/lib/branding/tokens';
+import { readableTextOn } from '@/lib/branding/color';
 import type { TenantSummary } from '@/lib/data/types';
 import { cn } from '@/lib/cn';
 import {
@@ -17,14 +17,13 @@ import {
   CardBody,
   CardFooter,
   Disclosure,
-  PageHeader,
-  Section,
-  SummaryLine,
 } from '@/components/ui';
 
+import { brandVerdict } from '../_shared/brand-check';
 import { CollegeMark } from '../_shared/CollegeMark';
-import { MediaReadiness } from '../_shared/MediaReadiness';
+import { MediaReadiness, mediaSummary } from '../_shared/MediaReadiness';
 import { MiniPortal, SeedSwatches } from '../_shared/MiniPortal';
+import { ConsoleBand, LABEL, Meter, SectionHeading, VerdictText } from '../_shared/parts';
 import { portalAddress, type PortalAddress } from '../_shared/portal-address';
 import { VendorTrustChip } from '../_shared/VendorTrustChip';
 
@@ -84,18 +83,6 @@ const STEPS = [
   { title: 'Preview, then set up', body: 'Open it on its own address to check it, then set the college up with it.' },
 ];
 
-type Verdict = { label: string; tone: 'success' | 'warning' | 'danger'; summary: string };
-
-function verdictFor(pack: BrandPack): Verdict {
-  const report = contrastReport(pack);
-  if (!report.passes) return { label: 'Blocked', tone: 'danger', summary: report.summary };
-  if (report.warnings.length) {
-    const n = report.warnings.length;
-    return { label: `${n} ${n === 1 ? 'warning' : 'warnings'}`, tone: 'warning', summary: report.summary };
-  }
-  return { label: 'Publishable', tone: 'success', summary: report.summary };
-}
-
 export default async function BrandPacksPage() {
   const session = await getSession();
   if (!session) redirect('/login');
@@ -116,12 +103,17 @@ export default async function BrandPacksPage() {
     await Promise.all(all.map(async (p) => [p.id, await portalAddress(p.id)] as const)),
   );
 
+  const verdicts = new Map(all.map((p) => [p.id, brandVerdict(p)] as const));
+  const blocked = [...verdicts.values()].filter((v) => v.blocked).length;
+  const withWarnings = [...verdicts.values()].filter((v) => !v.blocked && v.warnings > 0).length;
+
   // A lone card in a group takes the full row, laid out wide rather than leaving half the row empty.
   const card = (pack: BrandPack, _i: number, group: BrandPack[]) => (
     <li key={pack.id} id={pack.id} className={group.length === 1 ? 'min-w-0 scroll-mt-20 xl:col-span-2' : 'min-w-0 scroll-mt-20'}>
       <PackCard
         wide={group.length === 1}
         pack={pack}
+        verdict={verdicts.get(pack.id)!}
         house={pack.id === HOUSE_PACK_ID}
         demo={isDemo(pack.id)}
         users={tenants.filter((t) => t.packId === pack.id)}
@@ -133,71 +125,101 @@ export default async function BrandPacksPage() {
   const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
   return (
-    <div className="space-y-8">
-      <PageHeader
+    <div className="space-y-10">
+      <ConsoleBand
+        eyebrow="Platform / Brand packs"
         title="Brand packs"
-        description="Each college’s look — colours, crest, type, photos and wording — lives in one file. This is how each one renders."
-        meta={<VendorTrustChip />}
+        lead="Each college’s look — colours, crest, type, photos and wording — lives in one file. This is how each one renders."
         actions={
-          <ButtonLink href="/platform/new">
+          <ButtonLink href="/platform/new" variant="band" className="min-h-11">
             <Plus className="size-4" aria-hidden="true" />
             Set up a college
           </ButtonLink>
         }
-      />
-
-      <SummaryLine
-        className="-mt-4"
-        items={[
-          { value: all.length, label: plural(all.length, 'pack', 'packs') },
-          { value: colleges.length, label: plural(colleges.length, 'college', 'colleges'), href: '#colleges' },
-          { value: templates.length - 1, label: plural(templates.length - 1, 'template', 'templates'), href: '#templates' },
-          { value: 1, label: 'house' },
+        figures={[
+          { value: all.length, label: plural(all.length, 'Pack', 'Packs') },
+          { value: colleges.length, label: plural(colleges.length, 'College', 'Colleges') },
+          { value: blocked, label: 'Blocked' },
+          { value: withWarnings, label: plural(withWarnings, 'Warning', 'Warnings') },
         ]}
       />
 
+      <div className="-mt-4">
+        <VendorTrustChip />
+      </div>
+
+      {/* The gallery's index: each pack as its own band colour, set from pack data like the college marks. */}
+      <nav aria-label="Jump to a pack">
+        <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          {[...colleges, ...templates].map((p) => {
+            const v = verdicts.get(p.id)!;
+            return (
+              <li key={p.id} className="min-w-0">
+                <a
+                  href={`#${p.id}`}
+                  className="group relative flex h-24 min-h-11 flex-col justify-between overflow-hidden rounded border border-line p-3 transition-transform duration-fast ease-brand hover:-translate-y-0.5"
+                  style={{ backgroundColor: p.color.primary, color: readableTextOn(p.color.primary) }}
+                >
+                  <span className="block truncate font-display text-sm font-bold leading-tight">{p.copy.portalName}</span>
+                  <span className="flex items-end justify-between gap-2 font-mono text-xs uppercase tracking-[0.12em]">
+                    <span className="truncate">{v.label}</span>
+                    {p.color.accent ? (
+                      <span
+                        aria-hidden="true"
+                        className="size-3 shrink-0 rounded-full border border-[color-mix(in_srgb,currentColor_40%,transparent)]"
+                        style={{ backgroundColor: p.color.accent }}
+                      />
+                    ) : null}
+                  </span>
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+
       {colleges.length ? (
-        <Section id="colleges" title="Colleges" description="Packs written for a college from its own crest, colours and wording.">
+        <section id="colleges" aria-labelledby="colleges-title" className="scroll-mt-20 space-y-5">
+          <SectionHeading id="colleges-title" eyebrow="Colleges" title="Written for a college">
+            Packs built from a college’s own crest, colours and wording.
+          </SectionHeading>
           <ul className="grid grid-cols-1 gap-6 xl:grid-cols-2">{colleges.map(card)}</ul>
-        </Section>
+        </section>
       ) : null}
 
-      <Section
-        id="templates"
-        title="Starting templates"
-        description="The platform’s own look and two illustrative packs, for a college whose own is not written yet."
-      >
+      <section id="templates" aria-labelledby="templates-title" className="scroll-mt-20 space-y-5">
+        <SectionHeading id="templates-title" eyebrow="Templates" title="Starting templates">
+          The platform’s own look and two illustrative packs, for a college whose own is not written yet.
+        </SectionHeading>
         <ul className="grid grid-cols-1 gap-6 xl:grid-cols-2">{templates.map(card)}</ul>
-      </Section>
+      </section>
 
-      <Section title="Adding a college’s brand" description="Three steps, and no component or stylesheet change.">
-        <Card>
-          <CardBody className="space-y-6">
-            <ol className="grid gap-5 md:grid-cols-3">
-              {STEPS.map((s, i) => (
-                <li key={s.title} className="flex gap-3">
-                  <span
-                    aria-hidden="true"
-                    className="grid size-7 shrink-0 place-items-center rounded-full bg-brand-soft text-sm font-semibold text-brand-soft-fg"
-                  >
-                    {i + 1}
-                  </span>
-                  <div className="min-w-0 space-y-1">
-                    <p className="text-sm font-semibold text-primary">{s.title}</p>
-                    <p className="text-sm text-secondary">{s.body}</p>
-                  </div>
-                </li>
-              ))}
-            </ol>
-            <div className="flex flex-wrap items-center gap-3 border-t border-line pt-5">
-              <ButtonLink href="/platform/new">
-                Set up a college
-                <ArrowRight className="size-4" aria-hidden="true" />
-              </ButtonLink>
-              <p className="text-sm text-secondary">Pick a starting template there if the college’s own pack is not ready.</p>
-            </div>
-          </CardBody>
-        </Card>
+      <section aria-labelledby="adding-title" className="space-y-5">
+        <SectionHeading id="adding-title" eyebrow="Add one" title="Adding a college’s brand">
+          Three steps, and no component or stylesheet change.
+        </SectionHeading>
+
+        <ol className="grid border-t border-line md:grid-cols-3 md:gap-x-8">
+          {STEPS.map((s, i) => (
+            <li key={s.title} className="grid grid-cols-[2.25rem_minmax(0,1fr)] gap-x-3 border-b border-line py-5 md:border-b-0">
+              <span className="font-mono text-xs tabular text-accent-fg" aria-hidden="true">
+                {String(i + 1).padStart(2, '0')}
+              </span>
+              <div className="min-w-0 space-y-1">
+                <p className="text-sm font-semibold text-primary">{s.title}</p>
+                <p className="text-sm text-secondary">{s.body}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <ButtonLink href="/platform/new">
+            Set up a college
+            <ArrowRight className="size-4" aria-hidden="true" />
+          </ButtonLink>
+          <p className="text-sm text-secondary">Pick a starting template there if the college’s own pack is not ready.</p>
+        </div>
 
         <Disclosure summary="How to add a college’s brand (vendor staff)" id="how-to">
           <div className="space-y-5">
@@ -244,13 +266,14 @@ export default async function BrandPacksPage() {
             </div>
           </div>
         </Disclosure>
-      </Section>
+      </section>
     </div>
   );
 }
 
 function PackCard({
   pack,
+  verdict,
   house,
   demo,
   users,
@@ -258,6 +281,7 @@ function PackCard({
   wide = false,
 }: {
   pack: BrandPack;
+  verdict: ReturnType<typeof brandVerdict>;
   house: boolean;
   demo: boolean;
   users: TenantSummary[];
@@ -265,31 +289,32 @@ function PackCard({
   /** At xl: the preview on the left, colours and media on the right. */
   wide?: boolean;
 }) {
-  const verdict = verdictFor(pack);
+  const media = mediaSummary(pack);
 
   const details = (
     <div className={cn('grid gap-5', wide ? 'sm:grid-cols-2 xl:grid-cols-1' : 'sm:grid-cols-2')}>
       <div className="space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-wider text-secondary">Colours</p>
+        <p className={LABEL}>Colours</p>
         <SeedSwatches pack={pack} />
       </div>
       <div className="space-y-2">
-        <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-secondary">
+        <p className={cn(LABEL, 'flex items-center gap-1.5')}>
           <Camera className="size-3.5" aria-hidden="true" />
           Media
         </p>
+        <Meter value={media.present} total={media.total} label={`${media.present} of ${media.total} filled`} />
         <MediaReadiness pack={pack} variant="row" />
       </div>
     </div>
   );
 
   return (
-    <Card className="flex h-full flex-col">
+    <Card className="ring-hairline flex h-full flex-col">
       <CardBody className="flex-1 space-y-5">
         <div className="flex items-start gap-3">
           <CollegeMark pack={pack} name={pack.copy.shortName} size={44} />
           <div className="min-w-0 flex-1">
-            <h3 className="font-display text-lg font-semibold leading-snug">{pack.copy.portalName}</h3>
+            <h3 className="font-display text-lg font-bold leading-snug tracking-tight">{pack.copy.portalName}</h3>
             <p className="text-sm text-secondary">{pack.copy.institutionName}</p>
             {house || demo ? (
               <div className="mt-2 flex flex-wrap gap-1.5">
@@ -298,18 +323,13 @@ function PackCard({
               </div>
             ) : null}
           </div>
+          <VerdictText verdict={verdict} className="shrink-0" />
         </div>
 
         <div className={cn(wide && 'grid gap-6 xl:grid-cols-[minmax(0,1fr)_18rem]')}>
           <div className="min-w-0 space-y-3">
             <MiniPortal pack={pack} />
-            <p className="flex flex-wrap items-center gap-2 text-xs text-secondary">
-              <Badge tone={verdict.tone}>
-                {verdict.tone === 'success' ? <CircleCheck className="size-3" aria-hidden="true" /> : null}
-                {verdict.label}
-              </Badge>
-              {verdict.summary}
-            </p>
+            <p className="text-xs text-secondary">{verdict.summary}</p>
           </div>
           {wide ? <div className="mt-5 min-w-0 xl:mt-0">{details}</div> : null}
         </div>
@@ -350,4 +370,3 @@ function PackCard({
     </Card>
   );
 }
-

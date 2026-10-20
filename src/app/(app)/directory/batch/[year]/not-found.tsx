@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { CalendarX2 } from 'lucide-react';
-import { ButtonLink, EmptyState } from '@/components/ui';
+import { ButtonLink } from '@/components/ui';
+import { NotFoundPanel } from '../../../_components/NotFoundPanel';
 
 /**
  * The address is not a graduating year.
@@ -19,21 +20,16 @@ export const metadata: Metadata = { title: 'Batch not found' };
 
 export default function BatchNotFound() {
   return (
-    <div className="space-y-6">
-      {/* `EmptyState`'s title is a paragraph by design — the document still
-          owes itself exactly one h1. */}
-      <h1 className="sr-only">Batch not found</h1>
-
-      <EmptyState
-        icon={<CalendarX2 className="size-5" />}
-        title="That is not a graduating year"
-        description="A batch page takes one four-digit year of passing. The link may have been cut short when it was forwarded."
-        action={
-          <ButtonLink href="/directory" className="min-h-11 sm:min-h-0">
-            Browse batches in the directory
-          </ButtonLink>
-        }
-      />
-    </div>
+    <NotFoundPanel
+      eyebrow="Batch not found"
+      icon={<CalendarX2 />}
+      title="That is not a graduating year"
+      description="A batch page takes one four-digit year of passing. The link may have been cut short when it was forwarded."
+      action={
+        <ButtonLink href="/directory" className="min-h-11 sm:min-h-0">
+          Browse batches in the directory
+        </ButtonLink>
+      }
+    />
   );
 }

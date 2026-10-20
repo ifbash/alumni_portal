@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { CheckCircle2, CircleAlert, Eye, Info, TriangleAlert, Users } from 'lucide-react';
+import { Eye, Users } from 'lucide-react';
 
 import { getSession } from '@/lib/auth/session';
 import { can, require as requireCap } from '@/lib/auth/guard';
@@ -22,8 +22,8 @@ import {
 } from '@/components/ui';
 import { JobSummary, closesLabel } from '@/components/content';
 import { formatDate, formatRelative, memberLine, yearsOut } from '@/lib/format';
-import { cn } from '@/lib/cn';
 import { ModerationActions } from '../ModerationActions';
+import { CheckList, buildJobChecks, hostOf } from '../checks';
 
 /**
  * One posting, in front of the moderator who has to decide about it.
@@ -43,30 +43,6 @@ const STATE_META: Record<JobPosting['state'], { label: string; tone: Tone }> = {
   rejected: { label: 'Rejected', tone: 'danger' },
   closed: { label: 'Closed', tone: 'neutral' },
 };
-
-/**
- * What an apply link points at, for the moderator to check: the host of a
- * web address, or the address of a `mailto:` link. Null when it is neither.
- *
- * Never lets a malformed URL from a poster take the page down. A `mailto:`
- * link has no hostname - `new URL('mailto:a@b.co').hostname` is `''` - and
- * the API accepts them, so treating the empty string as "no host" reported
- * every valid email apply link as broken.
- */
-function hostOf(url: string): string | null {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol === 'mailto:') return parsed.pathname || null;
-    return parsed.hostname || null;
-  } catch {
-    return null;
-  }
-}
-
-/** Words that stand in for an employer's name. */
-const UNNAMED = /\b(leading|reputed|reputable|top|mnc|confidential|our client|a client|well[- ]known)\b/i;
-/** Words that suggest a candidate is asked for money. */
-const FEE = /\b(fee|fees|deposit|registration charge|pay(?:ment)? of|refundable)\b/i;
 
 export async function generateMetadata({
   params,
@@ -123,10 +99,6 @@ export default async function AdminJobDetailPage({
     before: theirs.filter((j) => j.id !== job.id && j.createdAt < job.createdAt).length,
   };
 
-  const employerMatch =
-    Boolean(poster.currentCompany) &&
-    poster.currentCompany?.toLowerCase() === job.company.toLowerCase();
-
   // The wording a rejection on this board actually used, shown inside the
   // Reject dialog so two moderators reach the same answer.
   const rejections = getJobs(session, { state: 'rejected' }).filter((j) => j.moderationNote);
@@ -151,24 +123,7 @@ export default async function AdminJobDetailPage({
   const posterHref = can(session, 'profile.read.any') ? `/admin/members/${poster.id}` : `/directory/${poster.slug}`;
   const host = job.applyUrl ? hostOf(job.applyUrl) : null;
 
-  const checks: Array<{ tone: 'ok' | 'note' | 'warn' | 'bad'; text: string }> = [
-    poster.currentCompany
-      ? employerMatch
-        ? { tone: 'ok', text: `Works at ${job.company}, the employer on the posting.` }
-        : { tone: 'note', text: `Works at ${poster.currentCompany} · posting is for ${job.company}.` }
-      : { tone: 'warn', text: 'No employer on their profile, so there is nothing to check against.' },
-    job.applyUrl
-      ? host
-        ? { tone: 'ok', text: `The apply link opens ${host}.` }
-        : { tone: 'bad', text: 'The apply link is not a working address.' }
-      : { tone: 'ok', text: 'Students apply through the portal.' },
-    FEE.test(job.description ?? '')
-      ? { tone: 'warn', text: 'The description mentions a fee or payment. Read it closely.' }
-      : { tone: 'ok', text: 'No fee is mentioned.' },
-    UNNAMED.test(job.company) || job.company.trim().length < 2
-      ? { tone: 'warn', text: 'The employer may not be named.' }
-      : { tone: 'ok', text: `The employer is named: ${job.company}.` },
-  ];
+  const checks = buildJobChecks(job);
 
   return (
     <div className="space-y-6">
@@ -314,16 +269,7 @@ export default async function AdminJobDetailPage({
               </CardTitle>
             </CardHeader>
             <CardBody className="pt-3">
-              <ul className="space-y-3">
-                {checks.map((c) => (
-                  <li key={c.text} className="flex gap-2.5 text-sm">
-                    <CheckIcon tone={c.tone} />
-                    <span className={cn(c.tone === 'warn' ? 'text-warning-fg' : c.tone === 'bad' ? 'text-danger-fg' : 'text-primary')}>
-                      {c.text}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <CheckList checks={checks} />
             </CardBody>
           </Card>
 
@@ -379,12 +325,4 @@ export default async function AdminJobDetailPage({
       </div>
     </div>
   );
-}
-
-function CheckIcon({ tone }: { tone: 'ok' | 'note' | 'warn' | 'bad' }) {
-  const cls = 'mt-0.5 size-4 shrink-0';
-  if (tone === 'ok') return <CheckCircle2 className={cn(cls, 'text-success-fg')} aria-label="Passes" />;
-  if (tone === 'note') return <Info className={cn(cls, 'text-muted')} aria-label="Worth a look" />;
-  if (tone === 'warn') return <TriangleAlert className={cn(cls, 'text-warning-fg')} aria-label="Check this" />;
-  return <CircleAlert className={cn(cls, 'text-danger-fg')} aria-label="Fails" />;
 }

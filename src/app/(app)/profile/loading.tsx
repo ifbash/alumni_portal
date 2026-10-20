@@ -2,8 +2,8 @@ import { Card, CardBody, Skeleton } from '@/components/ui';
 
 /**
  * Your own profile, mid-load, in the shape of the real page: the header
- * card with its cover strip and overlapping avatar, the slim completeness
- * bar, then About beside the rail, with experience, education and the
+ * card with its cover strip and the avatar in its completeness ring, the
+ * "to finish" line, then About beside the rail, with experience, education and the
  * college record under About.
  */
 export default function ProfileLoading() {
@@ -12,10 +12,10 @@ export default function ProfileLoading() {
       <span className="sr-only">Loading your profile</span>
 
       <Card className="overflow-hidden">
-        <div className="band-surface h-20 sm:h-24" aria-hidden="true" />
+        <div className="band-surface h-28 sm:h-36" aria-hidden="true" />
         <CardBody className="space-y-4 pt-0">
           <div className="flex flex-wrap items-end justify-between gap-4">
-            <Skeleton className="-mt-12 size-24 rounded-full ring-4 ring-[var(--surface-raised)]" />
+            <Skeleton className="-mt-14 size-28 rounded-full ring-4 ring-[var(--surface-raised)]" />
             <div className="hidden gap-2 sm:flex">
               <Skeleton className="h-11 w-36 rounded" />
               <Skeleton className="h-11 w-32 rounded" />
@@ -34,8 +34,7 @@ export default function ProfileLoading() {
       </Card>
 
       <div className="flex items-center gap-4 rounded-lg border border-line bg-surface-raised px-4 py-3">
-        <Skeleton className="h-5 w-10" />
-        <Skeleton className="h-2 w-32 rounded-full" />
+        <Skeleton className="h-5 w-24" />
         <Skeleton className="hidden h-4 w-64 sm:block" />
       </div>
 

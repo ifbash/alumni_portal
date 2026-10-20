@@ -1,5 +1,6 @@
 import { ShowcaseHeader } from '@/components/showcase/ShowcaseHeader';
 import { ShowcaseFooter } from '@/components/showcase/ShowcaseFooter';
+import { ShowcaseStyles } from '@/components/showcase/ShowcaseStyles';
 import { showcaseLinks } from '@/components/showcase/links';
 import type { BrandPack } from '@/lib/branding/pack';
 
@@ -17,6 +18,7 @@ export async function ShowcaseChrome({ pack, children }: { pack: BrandPack; chil
 
   return (
     <div className="flex min-h-dvh flex-col bg-surface">
+      <ShowcaseStyles />
       <ShowcaseHeader pack={pack} links={links} />
       <main id="main" className="flex-1">
         {children}

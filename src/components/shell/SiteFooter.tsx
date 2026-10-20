@@ -18,8 +18,9 @@ import type { BrandPack } from '@/lib/branding/pack';
  * alumni data stored" is the first question the management asks and the
  * last thing most portals answer.
  *
- * It sits on the band so the page ends in the college's colour, the way
- * it began. The vendor credit is the last, smallest line on it.
+ * It sits on the band (with the aurora and grain of the hero, and the
+ * portal name as an outlined wordmark) so the page ends in the college's
+ * colour, the way it began. The vendor credit is the last, smallest line.
  *
  * On the band, text uses band-* tokens only (see `.band-surface`).
  *
@@ -33,7 +34,7 @@ import type { BrandPack } from '@/lib/branding/pack';
  */
 
 // font-body: the base layer sets h2 in the display face, and a 12px uppercase serif reads as a mistake.
-const HEADING = 'font-body text-xs font-semibold uppercase tracking-wider text-band-accent';
+const HEADING = 'font-body text-xs font-semibold uppercase tracking-[0.14em] text-band-accent';
 const LINK =
   'inline-flex min-h-11 items-center text-sm text-band-muted hover:text-band-fg hover:underline underline-offset-4';
 
@@ -111,14 +112,15 @@ export function SiteFooter({ pack }: { pack: BrandPack }) {
   ];
 
   return (
-    <footer className="band-surface mt-auto">
-      <div className="page-shell py-12">
+    <footer className="band-surface grain relative isolate mt-auto overflow-hidden border-t border-band-rule">
+      <div className="aurora" aria-hidden="true" />
+      <div className="page-shell relative z-10 pb-6 pt-10 lg:pb-8 lg:pt-20">
         <div className="grid grid-cols-2 gap-x-6 gap-y-10 lg:grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,1fr))]">
           {/* Identity */}
           <div className="col-span-2 space-y-4 lg:col-span-1">
             <div className="flex items-center gap-3">
-              <Crest pack={pack} size={48} />
-              <Logo pack={pack} variant="band" height={28} />
+              <Crest pack={pack} size={56} />
+              <Logo pack={pack} variant="band" height={36} />
             </div>
 
             {copy.institutionName !== copy.portalName ? (
@@ -174,7 +176,7 @@ export function SiteFooter({ pack }: { pack: BrandPack }) {
             <h2 id="footer-alumni" className={HEADING}>
               Alumni
             </h2>
-            <ul className="mt-2">
+            <ul className="mt-3">
               {alumni.map((l) => (
                 <li key={l.href}>
                   <Link href={l.href} className={LINK}>
@@ -218,7 +220,19 @@ export function SiteFooter({ pack }: { pack: BrandPack }) {
           </nav>
         </div>
 
-        <div className="mt-8 flex flex-col gap-3 border-t border-band-rule pt-6 sm:flex-row sm:items-center sm:justify-between md:mt-10">
+        {/*
+          The wordmark moment: the portal's name as outlined display type, one
+          line, cropped by its own box so a long name clips rather than wraps.
+          Decoration (aria-hidden); the Logo above is the accessible name.
+        */}
+        <p
+          aria-hidden="true"
+          className="mt-8 hidden select-none overflow-hidden sm:block whitespace-nowrap font-display text-[clamp(2rem,10vw,7rem)] font-bold leading-[0.95] tracking-tight text-transparent [-webkit-text-stroke:1.5px_color-mix(in_srgb,var(--band-fg)_30%,transparent)] md:mt-16"
+        >
+          {copy.portalName}
+        </p>
+
+        <div className="mt-6 flex flex-col gap-3 border-t border-band-rule pt-6 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-band-muted">
             © {year} {copy.institutionName}. Portal run by the {office}.
           </p>

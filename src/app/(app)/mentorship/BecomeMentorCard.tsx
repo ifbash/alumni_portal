@@ -125,7 +125,7 @@ export function BecomeMentorCard({
   return (
     <Card as="section" id="availability" aria-labelledby="availability-title" className="scroll-mt-20">
       <CardHeader variant="stack">
-        <CardTitle as="h2" id="availability-title">
+        <CardTitle as="h2" id="availability-title" className="font-display text-xl tracking-tight">
           What you are open to
         </CardTitle>
         <CardDescription>Your email and phone stay with your privacy setting, whatever you switch on here.</CardDescription>
@@ -145,8 +145,10 @@ export function BecomeMentorCard({
               <div
                 key={c.key}
                 className={cn(
-                  'rounded-lg border p-3.5 transition-colors duration-fast ease-brand',
-                  on ? 'border-[var(--button-primary-bg)] bg-surface-sunken' : 'border-line hover:bg-surface-sunken',
+                  'rounded-lg border p-4 transition-colors duration-fast ease-brand',
+                  on
+                    ? 'border-[var(--button-primary-bg)] bg-[color-mix(in_srgb,var(--brand-soft)_55%,var(--surface-raised))]'
+                    : 'border-line hover:bg-surface-sunken',
                 )}
               >
                 <Switch
@@ -156,7 +158,13 @@ export function BecomeMentorCard({
                   onChange={(e) => setValue((cur) => ({ ...cur, [c.key]: e.target.checked }))}
                   label={
                     <span className="flex items-center gap-2">
-                      <span className="text-muted" aria-hidden="true">
+                      <span
+                        className={cn(
+                          'grid size-8 shrink-0 place-items-center rounded-full transition-colors duration-fast ease-brand',
+                          on ? 'bg-brand-soft text-brand-soft-fg' : 'bg-surface-sunken text-secondary',
+                        )}
+                        aria-hidden="true"
+                      >
                         {ICON[c.key]}
                       </span>
                       {c.label}

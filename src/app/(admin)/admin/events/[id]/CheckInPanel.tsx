@@ -4,6 +4,7 @@ import * as React from 'react';
 import { useParams } from 'next/navigation';
 import {
   AlertTriangle,
+  CheckCircle2,
   ClipboardList,
   Copy,
   Eye,
@@ -28,6 +29,7 @@ import {
   Field,
   Input,
   MenuItem,
+  Progress,
   TableWrap,
   Table,
   THead,
@@ -132,6 +134,9 @@ export function CheckInPanel({
   const [notice, setNotice] = React.useState<string | null>(null);
   const [, setUnstored] = React.useState(false);
 
+  /** The last arrival this desk recorded, held until the next one: whoever is scanning is looking at the person, not the table. */
+  const [lastIn, setLastIn] = React.useState<{ id: string; name: string; guests: number } | null>(null);
+
   const [undoing, setUndoing] = React.useState<CheckInRow | null>(null);
   const [undoReason, setUndoReason] = React.useState('');
 
@@ -215,6 +220,9 @@ export function CheckInPanel({
         else delete next[r.id];
         return next;
       });
+      setLastIn((cur) =>
+        action === 'check_in' ? { id: r.id, name: r.memberName, guests: r.guests } : cur?.id === r.id ? null : cur,
+      );
 
       // A desk confirms out loud even though the row has already flipped:
       // whoever is scanning is looking at the person, not at the table.
@@ -293,9 +301,18 @@ export function CheckInPanel({
       {visible.map((r) => {
         const inNow = isIn(r);
         return (
-          <li key={r.id} className="flex min-h-14 items-center gap-3 py-2">
+          <li
+            key={r.id}
+            className={cn(
+              'flex items-center gap-3',
+              door ? 'min-h-[4.5rem] py-3' : 'min-h-14 py-2',
+              // An arrival is tinted, not only labelled: from a metre away
+              // the queue reads as done and waiting.
+              inNow && canCheckIn && '-mx-card bg-success-soft px-card',
+            )}
+          >
             <div className="min-w-0 flex-1">
-              <p className="truncate font-medium text-primary">{r.memberName}</p>
+              <p className={cn('truncate font-medium text-primary', door && 'text-md')}>{r.memberName}</p>
               {meta(r) ? <p className="truncate text-sm text-secondary">{meta(r)}</p> : null}
               {duplicateNames.has(r.memberName) ? (
                 <p className="flex items-center gap-1 text-xs text-warning-fg">
@@ -307,7 +324,10 @@ export function CheckInPanel({
             {canCheckIn ? (
               inNow ? (
                 <span className="flex shrink-0 items-center gap-1 text-sm">
-                  <span className="font-semibold text-success-fg">In</span>
+                  <span className="inline-flex items-center gap-1 font-semibold text-success-fg">
+                    <CheckCircle2 className="size-4" aria-hidden="true" />
+                    In
+                  </span>
                   <span aria-hidden="true" className="text-muted">
                     ·
                   </span>
@@ -324,7 +344,7 @@ export function CheckInPanel({
                 </span>
               ) : (
                 <Button
-                  className="h-12 shrink-0 px-5"
+                  className={cn('shrink-0 px-5', door ? '!h-14 min-w-32 !text-base' : 'h-12')}
                   loading={Boolean(busy[r.id])}
                   onClick={() => toggle(r)}
                   aria-label={`Check in ${r.memberName}`}
@@ -465,7 +485,8 @@ export function CheckInPanel({
               placeholder={showRoll ? 'Name, roll number, batch or pass code' : 'Name, batch or pass code'}
               leading={<Search className="size-4" />}
               autoComplete="off"
-              className="h-12 text-base sm:h-control sm:text-sm"
+              // Important modifiers: the console's compact density sets control heights at lg+.
+              className={door ? '!h-14 !text-lg' : 'h-12 text-base sm:h-control sm:text-sm'}
             />
             {filters.length ? (
             <div role="group" aria-label="Show" className="flex gap-2">
@@ -595,6 +616,8 @@ export function CheckInPanel({
     );
   }
 
+  const liveDesk = canCheckIn && !isPast && rows.length > 0;
+
   return (
     <Card>
       <CardHeader className="flex-wrap items-center">
@@ -605,7 +628,7 @@ export function CheckInPanel({
               `${rows.length.toLocaleString('en-IN')} registration${rows.length === 1 ? '' : 's'}`}
           </CardDescription>
         </div>
-        {rows.length > 0 ? (
+        {rows.length > 0 && !liveDesk ? (
           <p className="text-sm text-secondary" aria-live="polite">
             {arrived > 0 ? (
               <>
@@ -620,9 +643,71 @@ export function CheckInPanel({
           </p>
         ) : null}
       </CardHeader>
+      {liveDesk ? <DeskTally arrived={arrived} total={rows.length} big={door} lastIn={lastIn} /> : null}
       <CardBody>{body}</CardBody>
       {undoDialog}
     </Card>
+  );
+}
+
+/**
+ * The running count, in display numerals, with the last arrival confirmed
+ * underneath. The count is the thing a volunteer glances at from a metre
+ * away; the strip beneath it is the success state, and it stays until the
+ * next person is in so a slow glance still catches it.
+ */
+function DeskTally({
+  arrived,
+  total,
+  big,
+  lastIn,
+}: {
+  arrived: number;
+  total: number;
+  big: boolean;
+  lastIn: { id: string; name: string; guests: number } | null;
+}) {
+  const waiting = total - arrived;
+  return (
+    <div className="space-y-3 border-b border-line px-card pb-4 pt-4">
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+        <p className="flex items-baseline gap-2" aria-live="polite">
+          <span
+            className={`font-display font-bold leading-none tabular text-primary ${big ? 'text-display-lg' : 'text-display-sm'}`}
+          >
+            {arrived.toLocaleString('en-IN')}
+          </span>
+          <span className="text-md text-secondary">
+            of <span className="tabular">{total.toLocaleString('en-IN')}</span> arrived
+          </span>
+        </p>
+        <p className="text-sm text-secondary">
+          {waiting > 0 ? (
+            <>
+              <span className="font-semibold tabular text-primary">{waiting.toLocaleString('en-IN')}</span> still
+              expected
+            </>
+          ) : (
+            'Everyone on the roster is in.'
+          )}
+        </p>
+      </div>
+      <Progress value={arrived} max={total} tone="success" label="Arrived against registered" className={big ? 'h-3' : undefined} />
+      {lastIn ? (
+        <div
+          role="status"
+          className="flex items-center gap-3 rounded-lg border border-line bg-success-soft px-3 py-2.5 text-success-fg animate-fade-in"
+        >
+          <CheckCircle2 className="size-5 shrink-0" aria-hidden="true" />
+          <p className="min-w-0 text-sm">
+            <span className="font-semibold">{lastIn.name} is in.</span>
+            {lastIn.guests > 0
+              ? ` Plus ${lastIn.guests} guest${lastIn.guests === 1 ? '' : 's'}, ${1 + lastIn.guests} seats.`
+              : ''}
+          </p>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

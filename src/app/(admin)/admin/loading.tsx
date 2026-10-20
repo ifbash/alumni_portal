@@ -34,6 +34,15 @@ export default function AdminOverviewLoading() {
         </div>
       </div>
 
+      {/* Up next */}
+      <div className="space-y-3">
+        <Skeleton className="h-4 w-20" />
+        <Card className="flex items-center gap-4 p-4">
+          <Skeleton className="h-[4.5rem] w-14 shrink-0 rounded" />
+          <Skeleton className="h-6 w-2/3 max-w-md" />
+        </Card>
+      </div>
+
       {/* Reach */}
       <Card>
         <CardBody className="space-y-4">

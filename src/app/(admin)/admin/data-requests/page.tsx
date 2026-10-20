@@ -25,6 +25,7 @@ import {
   TR,
 } from '@/components/ui';
 
+import { ClockBar } from './ClockBar';
 import { KIND_LABEL, RESPONSE_WINDOW_DAYS, STATE_LABEL, STATE_TONE, dueStatus, type DueStatus } from './dpdp';
 
 export const metadata = { title: 'Data requests · Staff console' };
@@ -211,6 +212,7 @@ export default async function DataRequestsPage({
                     <TR key={request.id} interactive>
                       <TD className={cn('whitespace-nowrap', due.overdue && 'border-l-4 border-l-danger')}>
                         <Countdown due={due} />
+                        <ClockBar due={due} className="my-1.5 w-32" />
                         <span className="block text-xs tabular text-secondary">{formatDate(request.dueAt, fmt)}</span>
                       </TD>
                       <TD>
@@ -269,6 +271,7 @@ export default async function DataRequestsPage({
                         {STATE_LABEL[request.state]}
                       </Badge>
                     </span>
+                    <ClockBar due={due} />
                     <span className="block font-semibold">{request.memberName}</span>
                     <span className="flex items-center gap-1.5 text-sm text-secondary">
                       <Icon className="size-4 shrink-0" aria-hidden="true" />

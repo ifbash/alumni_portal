@@ -113,19 +113,21 @@ export function JobSummary({
   return (
     <article
       className={cn(
-        'relative flex h-full flex-col gap-3 rounded-lg border border-line bg-surface-raised p-4 shadow-sm',
-        'transition-colors duration-fast ease-brand hover:border-line-strong',
+        'lift relative flex h-full flex-col gap-4 rounded-lg border border-line bg-surface-raised p-5 shadow-sm',
+        'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-[var(--surface)]',
         className,
       )}
     >
-      <div className="flex items-start gap-3">
-        <Avatar name={job.company} size="lg" shape="square" />
-        <div className="min-w-0 flex-1 space-y-0.5">
-          <h3 className="line-clamp-2 font-display text-md font-semibold leading-snug">{title}</h3>
-          <p className="truncate text-sm text-secondary">{where}</p>
-          {terms ? <p className="truncate text-sm text-secondary">{terms}</p> : null}
+      <div className="flex items-start gap-4">
+        <Avatar name={job.company} size="lg" shape="square" className="size-14 rounded-lg text-lg" />
+        <div className="min-w-0 flex-1 space-y-1">
+          <h3 className="line-clamp-2 font-display text-lg font-semibold leading-snug">{title}</h3>
+          <p className="truncate text-sm font-medium text-primary">{where}</p>
         </div>
       </div>
+      {terms ? (
+        <p className="truncate rounded-lg bg-surface-sunken px-3 py-1.5 text-sm tabular text-secondary">{terms}</p>
+      ) : null}
       {badges}
       {poster}
       {footer ? <div className="relative z-10">{footer}</div> : null}

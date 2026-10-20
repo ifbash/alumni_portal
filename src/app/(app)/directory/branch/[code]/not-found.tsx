@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Compass, PencilLine, ShieldCheck, SignpostBig } from 'lucide-react';
-import { ButtonLink, Card, CardBody, EmptyState } from '@/components/ui';
+import { ButtonLink, Card, CardBody } from '@/components/ui';
+import { NotFoundPanel } from '../../../_components/NotFoundPanel';
 
 /**
  * The address is not a branch code.
@@ -36,25 +37,24 @@ export default function BranchNotFound() {
 
   return (
     <div className="space-y-6">
-      {/* `EmptyState`'s title is a paragraph by design — the document still
-          owes itself exactly one h1. */}
-      <h1 className="sr-only">Branch not found</h1>
-
-      <EmptyState
-        icon={<Compass className="size-5" />}
+      <NotFoundPanel
+        eyebrow="Branch not found"
+        icon={<Compass />}
         title="There is no branch at this address"
         description="A branch page answers to a department code from the college’s own register, like CSE or ECE. Whatever came after /directory/branch was not one of them."
         action={
-          <div className="flex flex-wrap justify-center gap-2">
-            <ButtonLink href="/directory">Browse by branch</ButtonLink>
-            <ButtonLink href="/directory?mentoring=1" variant="secondary">
+          <>
+            <ButtonLink href="/directory" className="min-h-11">
+              Browse by branch
+            </ButtonLink>
+            <ButtonLink href="/directory?mentoring=1" variant="secondary" className="min-h-11">
               Everyone open to mentoring
             </ButtonLink>
-          </div>
+          </>
         }
       />
 
-      <Card className="mx-auto max-w-prose">
+      <Card className="max-w-prose">
         <CardBody>
           <ul className="space-y-4 text-sm">
             {reasons.map((r) => (

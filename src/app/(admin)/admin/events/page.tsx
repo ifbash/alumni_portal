@@ -18,6 +18,7 @@ import {
   EmptyState,
   MediaFrame,
   PageHeader,
+  SummaryLine,
   Tabs,
   TrustChip,
 } from '@/components/ui';
@@ -165,6 +166,18 @@ export default async function AdminEventsPage({
             New event
           </ButtonLink>
         }
+      />
+
+      <SummaryLine
+        items={[
+          { value: upcoming.length, label: 'upcoming', href: '/admin/events' },
+          {
+            value: upcoming.reduce((n, e) => n + e.registeredCount, 0).toLocaleString('en-IN'),
+            label: 'registered across them',
+          },
+          { value: drafts.length, label: drafts.length === 1 ? 'draft waiting' : 'drafts waiting', href: '/admin/events?view=drafts' },
+          { value: attention.length, label: 'to look at', tone: 'attention' },
+        ]}
       />
 
       {view === 'upcoming' && next ? (

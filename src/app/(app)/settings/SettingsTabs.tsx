@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { Bell, Database, KeyRound, ShieldCheck, UserRound, type LucideIcon } from 'lucide-react';
 import { Tabs, type TabItem } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -16,38 +17,41 @@ import { cn } from '@/lib/cn';
 export function SettingsTabs({ openDataRequests }: { openDataRequests: number }) {
   const pathname = usePathname();
 
-  const items: TabItem[] = [
-    { label: 'Account', href: '/settings' },
-    { label: 'Privacy', href: '/settings/privacy' },
-    { label: 'Notifications', href: '/settings/notifications' },
-    { label: 'Security', href: '/settings/security' },
+  const sections: Array<TabItem & { icon: LucideIcon }> = [
+    { label: 'Account', href: '/settings', icon: UserRound },
+    { label: 'Privacy', href: '/settings/privacy', icon: ShieldCheck },
+    { label: 'Notifications', href: '/settings/notifications', icon: Bell },
+    { label: 'Security', href: '/settings/security', icon: KeyRound },
     {
       label: 'Your data',
       href: '/settings/data',
+      icon: Database,
       count: openDataRequests > 0 ? openDataRequests : undefined,
     },
-  ].map((item) => ({ ...item, active: pathname === item.href }));
+  ];
+  const items = sections.map((item) => ({ ...item, active: pathname === item.href }));
 
   return (
     <>
       <Tabs items={items} ariaLabel="Settings sections" className="min-w-0 lg:hidden" />
 
       <nav aria-label="Settings sections" className="hidden lg:block">
-        <ul className="sticky top-20 space-y-0.5">
+        <ul className="sticky top-20 space-y-1">
           {items.map((item) => (
             <li key={item.href}>
               <Link
                 href={item.href}
                 aria-current={item.active ? 'page' : undefined}
                 className={cn(
-                  'flex min-h-11 items-center justify-between gap-2 border-l-2 px-3 text-sm font-medium',
+                  'flex min-h-11 items-center gap-2.5 rounded-lg px-3 text-sm font-medium',
                   'transition-colors duration-fast ease-brand',
                   item.active
-                    ? 'border-[var(--button-primary-bg)] text-brand-fg'
-                    : 'border-line text-secondary hover:border-line-strong hover:text-primary',
+                    ? 'bg-brand-soft text-brand-soft-fg'
+                    : 'text-secondary hover:bg-surface-sunken hover:text-primary',
                 )}
               >
-                {item.label}
+                <item.icon className="size-4 shrink-0" aria-hidden="true" />
+                <span className="min-w-0 flex-1">{item.label}</span>
                 {item.count ? (
                   <span className="rounded-full bg-brand-soft px-1.5 py-0.5 text-xs font-semibold tabular text-brand-soft-fg">
                     {item.count}

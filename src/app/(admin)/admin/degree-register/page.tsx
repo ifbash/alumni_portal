@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { AlertTriangle, ChevronRight, FileUp, ScrollText, Search } from 'lucide-react';
 
 import {
+  Badge,
   Breadcrumbs,
   Button,
   ButtonLink,
@@ -14,6 +15,7 @@ import {
   PageHeader,
   Pagination,
   Select,
+  SummaryLine,
   Table,
   TableWrap,
   TBody,
@@ -29,7 +31,7 @@ import { canOpen } from '@/lib/navigation';
 import { getDegreeRegisterStats, getDepartments, getMembersForAdmin, searchDegreeRegister } from '@/lib/data/repo';
 import { displayNow, formatNumber, memberLine, yearIn } from '@/lib/format';
 import {
-  CoverageChips,
+  CoverageHeatmap,
   CoverageLegend,
   WeakestBatches,
   batchCommsHref,
@@ -103,13 +105,14 @@ export default async function DegreeRegisterPage({
   };
 
   const filtered = Boolean(q || department || year);
+  const under20 = stats.byYear.filter((y) => y.total && y.claimed / y.total < 0.2);
 
   const claimState = (roll: string, linkable: boolean) => {
     const account = accounts.get(roll.toUpperCase());
     if (!account) return <span className="text-secondary">Not joined yet</span>;
     return (
-      <span>
-        Joined —{' '}
+      <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Badge tone="success">Joined</Badge>
         {linkable && openMembers ? (
           <Link href={`/admin/members/${account.id}`} className="relative z-10 link-quiet font-medium">
             {account.fullName}
@@ -136,6 +139,19 @@ export default async function DegreeRegisterPage({
             Load a register file
           </ButtonLink>
         }
+      />
+
+      <SummaryLine
+        items={[
+          { value: under20.length, label: under20.length === 1 ? 'batch under 20% joined' : 'batches under 20% joined', tone: 'attention' },
+          {
+            value: missingYears.length,
+            label: missingYears.length === 1 ? 'year with no file' : 'years with no file',
+            href: '/admin/imports',
+            tone: 'attention',
+          },
+          ...(filtered ? [{ value: results.total, label: 'rows match' }] : []),
+        ]}
       />
 
       <form action="/admin/degree-register" role="search" className="flex flex-wrap items-center gap-2">
@@ -193,12 +209,19 @@ export default async function DegreeRegisterPage({
         <CardBody className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
           <div className="min-w-0 space-y-3">
             <h2 className="text-sm font-semibold text-secondary">Share of each batch that has joined</h2>
-            <CoverageChips
+            <CoverageHeatmap
               ariaLabel="Share of each batch that has joined, by year of passing"
               batches={stats.byYear}
-              activeYear={year}
               hrefFor={(y) => (y === year ? buildHref({ year: null }) : buildHref({ year: y }))}
             />
+            {year ? (
+              <p className="text-sm text-secondary">
+                Showing the {year} batch.{' '}
+                <Link href={buildHref({ year: null })} className="link">
+                  Show every batch
+                </Link>
+              </p>
+            ) : null}
             {missingYears.length > 0 ? (
               <ul className="flex flex-wrap gap-2" aria-label="Years with no register file">
                 {missingYears.map((y) => (

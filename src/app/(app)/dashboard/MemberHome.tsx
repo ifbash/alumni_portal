@@ -10,7 +10,6 @@ import {
   UserRoundPen,
 } from 'lucide-react';
 import {
-  Avatar,
   ButtonLink,
   Card,
   CardBody,
@@ -18,7 +17,7 @@ import {
   CardHeader,
   CardTitle,
   NeedsYou,
-  ShareActions,
+  Progress,
   type TaskItem,
 } from '@/components/ui';
 import { EventSummary, JobSummary } from '@/components/content';
@@ -50,8 +49,9 @@ import { hasStaffConsole } from '@/lib/navigation';
 import { CONNECTION_LIMITS } from '@/lib/config';
 import { profileChecks, completenessScore } from '../profile/completeness';
 import { AvailabilityCard } from './AvailabilityCard';
+import { ActivityTimeline, InviteCard, PeoplePanel, RailLink } from './Panels';
 import { HomeBand, type BandAction } from './HomeBand';
-import { BlockHead, HappeningAt, SNAP_ITEM, SNAP_ROW } from './HappeningAt';
+import { HappeningAt, SNAP_ITEM, SNAP_ROW } from './HappeningAt';
 import type { BrandPack } from '@/lib/branding/pack';
 import type { EventItem } from '@/lib/data/types';
 
@@ -293,74 +293,12 @@ export async function MemberHome({ session, pack }: { session: Session; pack: Br
     ) : null;
 
   // ---- Render -------------------------------------------------------
+  // The side column's cards after the people panel and the invitation.
   const rail: React.ReactNode[] = [];
 
   if (consoleCard) rail.push(<div key="console" className="hidden lg:block">{consoleCard}</div>);
 
-  // Your people sits in the main column, after what the college is
-  // running: on a phone that is its place in the order, and on a desktop
-  // it keeps the main column the longer of the two.
-  const people =
-    canSearch && (batch || activeNow.length) ? (
-      <section aria-labelledby="people-title" className="space-y-4">
-        <h2 id="people-title" className="font-display text-xl font-semibold">
-          Your people
-        </h2>
-
-        <Card className="grid grid-cols-1 divide-y divide-line md:grid-cols-2 md:divide-x md:divide-y-0">
-          {batch && batchYear ? (
-            <div className="min-w-0 space-y-1 p-4">
-              <div className="flex items-center gap-3">
-                {batchmates.length ? (
-                  <ul className="flex shrink-0 -space-x-2" aria-label={`Some of the ${batchYear} batch`}>
-                    {batchmates.map((m) => (
-                      <li key={m.id}>
-                        <Avatar name={m.fullName} src={m.photoUrl} size="sm" className="ring-2 ring-[var(--surface-raised)]" />
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-                <p className="min-w-0 text-sm text-secondary">
-                  <span className="font-semibold tabular text-primary">{batch.total.toLocaleString('en-IN')}</span> of
-                  the {batchYear} batch {batch.total === 1 ? 'is' : 'are'} here
-                </p>
-              </div>
-              <RailLink href={`/directory/batch/${batchYear}`}>See your batch</RailLink>
-            </div>
-          ) : null}
-
-          <div className={cn('min-w-0 space-y-2 p-4', !(batch && batchYear) && 'md:col-span-2')}>
-            <h3 className="text-sm font-semibold text-primary">
-              {batchYear ? 'Invite your batch on WhatsApp' : 'Invite graduates on WhatsApp'}
-            </h3>
-            <ShareActions
-              url={shareUrl}
-              whatsappHref={whatsappShareUrl(shareText, shareUrl)}
-              title={batchYear ? `Batch of ${batchYear} on ${copy.portalName}` : copy.portalName}
-              size="sm"
-            />
-          </div>
-        </Card>
-
-        {activeNow.length ? (
-          <div className="space-y-3">
-            <BlockHead
-              title={deptCode ? `Active in ${deptCode}` : 'Recently active'}
-              href={deptCode ? `/directory?department=${deptCode}` : '/directory'}
-              linkLabel="Search the directory"
-            />
-            {/* Compact rows: one per swipe on a phone, stacked from sm. */}
-            <ul className={cn(SNAP_ROW, 'sm:grid-cols-1 sm:gap-3 xl:grid-cols-1')}>
-              {activeNow.map((m) => (
-                <li key={m.id} className={SNAP_ITEM}>
-                  <MemberCard member={m} variant="row" className="h-full" />
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-      </section>
-    ) : null;
+  const showPeople = canSearch && Boolean(batch || activeNow.length);
 
   if (moderator && toReview.length) {
     rail.push(
@@ -504,61 +442,46 @@ export async function MemberHome({ session, pack }: { session: Session; pack: Br
     );
   }
 
-  if (memberShaped && notifications.length) {
-    rail.push(
-      <Card key="activity" as="section" aria-labelledby="activity-title">
+  const activity =
+    memberShaped && notifications.length ? (
+      <Card as="section" aria-labelledby="activity-title" className="min-w-0">
         <CardHeader className="items-center">
           <CardTitle as="h2" id="activity-title" className="text-md">
             Recent activity
           </CardTitle>
           <Link
             href="/notifications"
-            className="-my-2 inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-brand-fg hover:underline"
+            className="group -my-2 inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-brand-fg hover:underline"
           >
             See all
             <span className="sr-only"> notifications</span>
-            <ArrowRight className="size-4" aria-hidden="true" />
+            <ArrowRight
+              className="size-4 transition-transform duration-fast ease-brand group-hover:translate-x-0.5"
+              aria-hidden="true"
+            />
           </Link>
         </CardHeader>
-        <CardBody className="pt-1">
-          <ul className="divide-y divide-line">
-            {notifications.map((n) => {
+        <CardBody className="pt-2">
+          <ActivityTimeline
+            entries={notifications.map((n) => {
               const verb = notificationAction(n);
-              return (
-                <li key={n.id} className="flex items-center gap-3 py-1.5">
-                  <span
-                    className={
-                      n.readAt
-                        ? 'size-2 shrink-0 rounded-full bg-line-strong'
-                        : 'size-2 shrink-0 rounded-full bg-[var(--button-primary-bg)]'
-                    }
-                    aria-hidden="true"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="line-clamp-1 text-sm font-medium text-primary lg:line-clamp-2">
-                      {n.title}
-                      {!n.readAt ? <span className="sr-only"> (new)</span> : null}
-                    </p>
-                    <p className="text-xs text-secondary">{formatRelative(n.createdAt, fmt)}</p>
-                  </div>
-                  {verb && n.href ? (
-                    <Link
-                      href={n.href}
-                      className="inline-flex min-h-11 shrink-0 items-center text-sm font-semibold text-brand-fg hover:underline"
-                    >
-                      {verb}
-                      <span className="sr-only">: {n.title}</span>
-                    </Link>
-                  ) : null}
-                </li>
-              );
+              return {
+                id: n.id,
+                title: n.title,
+                unread: !n.readAt,
+                ago: formatRelative(n.createdAt, fmt),
+                action: verb && n.href ? { href: n.href, label: verb } : null,
+              };
             })}
-          </ul>
+          />
         </CardBody>
-      </Card>,
-    );
-  }
+      </Card>
+    ) : null;
 
+  // On a phone everything is one column, in the order given by `order-*`;
+  // from lg the two wrappers become real columns (`contents` dissolves
+  // them below lg), so the lead content and the activity timeline share the
+  // wide column and the people, the invitation and the offers the narrow one.
   return (
     <div className="space-y-6 lg:space-y-8">
       <HomeBand
@@ -569,47 +492,86 @@ export async function MemberHome({ session, pack }: { session: Session; pack: Br
         actions={actions}
       />
 
-      <div className={rail.length ? 'grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-8' : 'space-y-6'}>
-        <div className="min-w-0 space-y-6 lg:space-y-8">
-          {/* The band already carries the lead task. What is left is a
-              list, a single slim row, or, when the band took the only task,
-              nothing: "all caught up" under "3 people are waiting" would
-              contradict it. */}
-          {needs.length > 1 || (needs.length === 0 && !bandTask) ? (
-            <NeedsYou items={needs} />
-          ) : needs.length === 1 ? (
-            <TaskRow task={needs[0]!} />
+      {/* The band already carries the lead task. What is left is a list, a
+          single slim row, or, when the band took the only task, nothing:
+          "all caught up" under "3 people are waiting" would contradict it. */}
+      {needs.length > 1 || (needs.length === 0 && !bandTask) ? (
+        <NeedsYou items={needs} />
+      ) : needs.length === 1 ? (
+        <TaskRow task={needs[0]!} />
+      ) : null}
+
+      {consoleCard ? <div className="lg:hidden">{consoleCard}</div> : null}
+
+      {showNudge ? (
+        <section
+          aria-label="Finish setting up"
+          className="ring-hairline relative flex flex-wrap items-center gap-x-4 gap-y-3 rounded-xl border border-line bg-surface-raised p-4 shadow-sm"
+        >
+          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-brand-soft text-brand-soft-fg" aria-hidden="true">
+            <UserRoundPen className="size-5" />
+          </span>
+          <div className="min-w-0 flex-1 space-y-2">
+            <p className="text-sm font-semibold text-primary">
+              Finish setting up — {stepsLeft} short {stepsLeft === 1 ? 'step' : 'steps'}
+            </p>
+            <Progress value={score} label="Profile complete" className="h-1.5 max-w-xs" />
+          </div>
+          <ButtonLink href="/welcome" variant="secondary" size="sm" className="min-h-11">
+            Continue
+          </ButtonLink>
+        </section>
+      ) : null}
+
+      <div
+        className={
+          showPeople || canSearch || rail.length || activity
+            ? 'flex flex-col gap-6 lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-8 xl:grid-cols-[minmax(0,1fr)_22rem]'
+            : 'space-y-6'
+        }
+      >
+        <div className="stagger contents lg:flex lg:min-w-0 lg:flex-col lg:gap-8">
+          <div className="order-1 min-w-0 lg:order-none" style={{ '--i': 0 } as React.CSSProperties}>
+            <HappeningAt pack={pack} events={canRegister ? events : null} showPhotos={isActive(session)} />
+          </div>
+          {activity ? (
+            <div className="order-4 min-w-0 lg:order-none" style={{ '--i': 3 } as React.CSSProperties}>
+              {activity}
+            </div>
           ) : null}
-
-          {consoleCard ? <div className="lg:hidden">{consoleCard}</div> : null}
-
-          {showNudge ? (
-            <section
-              aria-label="Finish setting up"
-              className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-lg border border-line bg-surface-raised p-4 shadow-sm"
-            >
-              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-brand-soft text-brand-soft-fg" aria-hidden="true">
-                <UserRoundPen className="size-5" />
-              </span>
-              <p className="min-w-0 flex-1 text-sm font-medium text-primary">
-                Finish setting up — {stepsLeft} short {stepsLeft === 1 ? 'step' : 'steps'}
-              </p>
-              <ButtonLink href="/welcome" variant="secondary" size="sm" className="min-h-11">
-                Continue
-              </ButtonLink>
-            </section>
-          ) : null}
-
-          <HappeningAt pack={pack} events={canRegister ? events : null} showPhotos={isActive(session)} />
-
-          {people}
         </div>
 
-        {rail.length ? (
-          <aside aria-label="What you can do" className="min-w-0 space-y-6">
-            {rail}
-          </aside>
-        ) : null}
+        <aside aria-label="What you can do" className="stagger contents lg:flex lg:min-w-0 lg:flex-col lg:gap-6">
+          {showPeople ? (
+            <div className="order-2 min-w-0 lg:order-none" style={{ '--i': 1 } as React.CSSProperties}>
+              <PeoplePanel
+                batchYear={batch && batchYear ? batchYear : null}
+                batchTotal={batch && batchYear ? batch.total : null}
+                batchmates={batchmates}
+                activeTitle={deptCode ? `Active in ${deptCode}` : 'Recently active'}
+                activeHref={deptCode ? `/directory?department=${deptCode}` : '/directory'}
+                active={activeNow}
+              />
+            </div>
+          ) : null}
+
+          {canSearch ? (
+            <div className="order-3 min-w-0 lg:order-none" style={{ '--i': 2 } as React.CSSProperties}>
+              <InviteCard
+                title={batchYear ? 'Invite your batch on WhatsApp' : 'Invite graduates on WhatsApp'}
+                shareTitle={batchYear ? `Batch of ${batchYear} on ${copy.portalName}` : copy.portalName}
+                url={shareUrl}
+                whatsappHref={whatsappShareUrl(shareText, shareUrl)}
+              />
+            </div>
+          ) : null}
+
+          {rail.map((card, i) => (
+            <div key={i} className="order-5 min-w-0 lg:order-none" style={{ '--i': 4 + i } as React.CSSProperties}>
+              {card}
+            </div>
+          ))}
+        </aside>
       </div>
     </div>
   );
@@ -623,18 +585,21 @@ function TaskRow({ task }: { task: TaskItem }) {
       <Link
         href={task.href}
         className={cn(
-          'group flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-surface-raised px-4 py-3 shadow-sm',
-          'transition-colors duration-fast ease-brand hover:border-line-strong',
-          attention && 'border-l-4 border-l-warning',
+          'group lift ring-hairline relative flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1 overflow-hidden rounded-lg border border-line bg-surface-raised px-4 py-3 shadow-sm',
+          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]',
+          attention && "after:absolute after:inset-y-0 after:left-0 after:w-1 after:bg-warning after:content-['']",
         )}
       >
         {task.icon ? (
-          <span className="text-muted [&>svg]:size-5" aria-hidden="true">
+          <span
+            className="grid size-9 shrink-0 place-items-center rounded-full bg-brand-soft text-brand-soft-fg [&>svg]:size-[18px]"
+            aria-hidden="true"
+          >
             {task.icon}
           </span>
         ) : null}
         <span className="min-w-0 flex-1 text-sm">
-          <span className="font-semibold tabular text-primary">{task.count.toLocaleString('en-IN')}</span>{' '}
+          <span className="font-display text-lg font-bold tabular text-primary">{task.count.toLocaleString('en-IN')}</span>{' '}
           <span className="font-medium text-primary">{task.label}</span>
           {task.detail ? (
             <span className={attention ? 'text-warning-fg' : 'text-secondary'}> · {task.detail}</span>
@@ -643,24 +608,12 @@ function TaskRow({ task }: { task: TaskItem }) {
         <span className="inline-flex items-center gap-1 text-sm font-semibold text-brand-fg">
           {task.action}
           <ArrowRight
-            className="size-4 transition-transform duration-fast ease-brand group-hover:translate-x-0.5"
+            className="size-4 transition-transform duration-fast ease-brand group-hover:translate-x-1"
             aria-hidden="true"
           />
         </span>
       </Link>
     </section>
-  );
-}
-
-function RailLink({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <Link
-      href={href}
-      className="inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-brand-fg hover:underline"
-    >
-      {children}
-      <ArrowRight className="size-4" aria-hidden="true" />
-    </Link>
   );
 }
 

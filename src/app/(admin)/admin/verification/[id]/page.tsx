@@ -6,8 +6,11 @@ import {
   ArrowRight,
   CheckCircle2,
   CircleSlash,
+  BookMarked,
+  ChevronLeft,
   MinusCircle,
   ScanSearch,
+  UserRound,
   XCircle,
 } from 'lucide-react';
 
@@ -42,12 +45,12 @@ import {
 import { daysUntil, formatDate, formatDateTime, formatRelative, memberLine } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import {
-  evidenceWords,
   reasonLabel,
   reasonTone,
   rescoredCandidates,
   sourceFileLabel,
 } from '../../_shared/verification-labels';
+import { MatchMeter } from '../MatchMeter';
 import { ReviewActions, type ReviewCandidate } from '../ReviewActions';
 
 export const metadata = { title: 'Review a registration · Staff console' };
@@ -192,20 +195,41 @@ function verdictSummary(rows: FieldComparison[], roll: string): string {
 // Comparison views
 // ---------------------------------------------------------------
 
+/** A differing cell is tinted, so the eye lands on what disagrees before reading a word. */
+const CELL_TINT: Record<Verdict, string | undefined> = {
+  match: undefined,
+  near: 'bg-[color-mix(in_srgb,var(--warning)_12%,transparent)]',
+  differs: 'bg-[color-mix(in_srgb,var(--danger)_11%,transparent)]',
+  unknown: undefined,
+};
+
 function ComparisonTable({ rows, roll }: { rows: FieldComparison[]; roll: string }) {
   return (
     <>
-      {/* sm and up: side by side. */}
+      {/* sm and up: the two records side by side, differences tinted. */}
       <div className="hidden overflow-x-auto rounded-lg border border-line sm:block">
         <table className="w-full border-collapse text-sm">
           <caption className="sr-only">The registration compared with register row {roll}, field by field</caption>
           <thead className="border-b border-line bg-surface-sunken">
             <tr>
-              {['Field', 'Applicant said', 'Degree register', 'Verdict'].map((h) => (
-                <th key={h} scope="col" className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-secondary">
-                  {h}
-                </th>
-              ))}
+              <th scope="col" className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-secondary">
+                Field
+              </th>
+              <th scope="col" className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-secondary">
+                <span className="inline-flex items-center gap-1.5">
+                  <UserRound className="size-3.5" aria-hidden="true" />
+                  Applicant said
+                </span>
+              </th>
+              <th scope="col" className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-secondary">
+                <span className="inline-flex items-center gap-1.5">
+                  <BookMarked className="size-3.5" aria-hidden="true" />
+                  Degree register
+                </span>
+              </th>
+              <th scope="col" className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-secondary">
+                Verdict
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
@@ -217,8 +241,8 @@ function ComparisonTable({ rows, roll }: { rows: FieldComparison[]; roll: string
                     <span className="mt-0.5 block text-xs font-semibold text-warning-fg">Separates the two rows</span>
                   ) : null}
                 </th>
-                <td className={cn('px-3 py-2.5 align-top', r.mono && 'font-mono')}>{r.claimed}</td>
-                <td className="px-3 py-2.5 align-top">
+                <td className={cn('px-3 py-2.5 align-top', CELL_TINT[r.verdict], r.mono && 'font-mono')}>{r.claimed}</td>
+                <td className={cn('px-3 py-2.5 align-top', CELL_TINT[r.verdict])}>
                   <span className={cn(r.mono && 'font-mono')}>{r.register}</span>
                   {r.note ? <span className="mt-0.5 block text-xs text-secondary">{r.note}</span> : null}
                 </td>
@@ -247,7 +271,7 @@ function ComparisonTable({ rows, roll }: { rows: FieldComparison[]; roll: string
               </span>
               <VerdictBadge verdict={r.verdict} />
             </dt>
-            <dd className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-sm">
+            <dd className={cn('-mx-1 grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-3 gap-y-0.5 rounded px-1 py-1 text-sm', CELL_TINT[r.verdict])}>
               <span className="text-secondary">Applicant said</span>
               <span className={cn('break-words', r.mono && 'font-mono')}>{r.claimed}</span>
               <span className="text-secondary">Register</span>
@@ -260,21 +284,6 @@ function ComparisonTable({ rows, roll }: { rows: FieldComparison[]; roll: string
         ))}
       </dl>
     </>
-  );
-}
-
-function ScoreMeter({ confidence }: { confidence: number }) {
-  const pct = Math.round(confidence * 100);
-  return (
-    <span className="block w-36 shrink-0 space-y-1">
-      <span className="flex items-baseline justify-between gap-2 text-sm">
-        <span className="font-medium">{evidenceWords(confidence)}</span>
-        <span className="tabular text-secondary">{pct}%</span>
-      </span>
-      <span className="block h-1.5 overflow-hidden rounded-full bg-chart-track" aria-hidden="true">
-        <span className="block h-full rounded-full bg-chart-bar" style={{ width: `${pct}%` }} />
-      </span>
-    </span>
   );
 }
 
@@ -434,6 +443,8 @@ export default async function VerificationClaimPage({ params }: { params: Promis
   const at = queue.findIndex((c) => c.id === claim.id);
   const next = at >= 0 ? (queue[at + 1] ?? null) : (queue[0] ?? null);
   const nextHref = next ? `/admin/verification/${next.id}` : null;
+  const prev = at > 0 ? queue[at - 1]! : null;
+  const prevHref = prev ? `/admin/verification/${prev.id}` : null;
 
   const waited = -daysUntil(claim.submittedAt, tz);
   const late = claim.status === 'queued' && waited > 14;
@@ -488,12 +499,27 @@ export default async function VerificationClaimPage({ params }: { params: Promis
           </>
         }
         actions={
-          nextHref ? (
-            <ButtonLink href={nextHref} variant="secondary">
-              Next registration
-              <ArrowRight className="size-4" aria-hidden="true" />
-            </ButtonLink>
-          ) : null
+          // Position in the queue, then the two neighbours: the screen is a
+          // detail pane, and the reviewer should never need the list to move on.
+          <>
+            {at >= 0 ? (
+              <span className="tabular text-sm text-secondary">
+                {at + 1} of {queue.length} waiting
+              </span>
+            ) : null}
+            {prevHref ? (
+              <ButtonLink href={prevHref} variant="ghost" aria-label="Previous registration">
+                <ChevronLeft className="size-4" aria-hidden="true" />
+                <span className="hidden sm:inline">Previous</span>
+              </ButtonLink>
+            ) : null}
+            {nextHref ? (
+              <ButtonLink href={nextHref} variant="secondary">
+                Next registration
+                <ArrowRight className="size-4" aria-hidden="true" />
+              </ButtonLink>
+            ) : null}
+          </>
         }
       />
 
@@ -648,7 +674,7 @@ export default async function VerificationClaimPage({ params }: { params: Promis
                         {memberLine([record.name, record.departmentCode, record.yearOfPassing ? `passed ${record.yearOfPassing}` : null])}
                       </p>
                     </div>
-                    <ScoreMeter confidence={candidate.confidence} />
+                    <MatchMeter confidence={candidate.confidence} size="lg" />
                   </CardHeader>
                   <CardBody>{body}</CardBody>
                 </Card>
@@ -691,6 +717,7 @@ export default async function VerificationClaimPage({ params }: { params: Promis
               signature={`— ${office}, ${pack.copy.shortName}`}
               whatsapp={pack.features.whatsapp}
               nextHref={nextHref}
+              prevHref={prevHref}
               auditHref={can(session, 'audit.read') ? '/admin/audit' : null}
             />
           </div>

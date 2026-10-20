@@ -149,14 +149,18 @@ export default async function ReportsConsolePage() {
 
             return (
               <li key={framework} className="min-w-0">
-                <Card className="flex h-full flex-col">
+                <Card className="flex h-full flex-col overflow-hidden">
+                  {/* The edge says ready or blocked before a word is read; the line below says it in words. */}
+                  <div aria-hidden="true" className={`h-1 shrink-0 ${status.ready ? 'bg-success' : 'bg-warning'}`} />
                   <CardBody className="flex flex-1 flex-col gap-4">
-                    <div className="min-w-0 space-y-1">
-                      <h3 className="font-display text-lg font-semibold">
-                        <span>{meta.name}</span>
-                        <span className="sr-only"> — {meta.full}</span>
-                      </h3>
-                      <p className="text-sm text-secondary">For the {inSentence(meta.owner)}</p>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 space-y-1">
+                        <h3 className="font-display text-display-xs font-bold">
+                          <span>{meta.name}</span>
+                          <span className="sr-only"> — {meta.full}</span>
+                        </h3>
+                        <p className="text-sm text-secondary">For the {inSentence(meta.owner)}</p>
+                      </div>
                     </div>
 
                     <p

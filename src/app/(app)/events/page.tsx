@@ -10,6 +10,7 @@ import { getAlbumPhotos, getAlbums } from '@/lib/data/content';
 import { ButtonLink, ChipNav, EmptyState, PageHeader, Tabs, type TabItem } from '@/components/ui';
 import { isContributed } from '@/components/content';
 import { isOnlineVenue } from '@/lib/event-status';
+import { displayNow } from '@/lib/format';
 import { viewerBatchYear, viewerBranch } from '@/lib/identity';
 import { mailto } from '@/lib/mailto';
 import type { EventItem } from '@/lib/data/types';
@@ -51,6 +52,26 @@ function leadEvent(list: EventItem[]): EventItem | null {
   const weight = (e: EventItem) => (e.capacity ?? 0) + (e.ticketPrice > 0 ? 1 : 0);
   const top = Math.max(...candidates.map(weight));
   return candidates.find((e) => weight(e) === top) ?? candidates[0] ?? null;
+}
+
+/**
+ * Events grouped by the month they start in, in the college's time zone,
+ * in the order the list already has. The month is the unit people plan in
+ * ("is anything on in October?"), so it is the heading; the group holding
+ * the current month reads "This month".
+ */
+function byMonth(list: EventItem[], locale: string, timeZone: string) {
+  const key = (iso: string) => new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', timeZone }).format(new Date(iso));
+  const label = (iso: string) => new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric', timeZone }).format(new Date(iso));
+  const thisMonth = key(displayNow().toISOString());
+  const groups: Array<{ key: string; label: string; current: boolean; events: EventItem[] }> = [];
+  for (const e of list) {
+    const k = key(e.startsAt);
+    let g = groups.find((x) => x.key === k);
+    if (!g) groups.push((g = { key: k, label: label(e.startsAt), current: k === thisMonth, events: [] }));
+    g.events.push(e);
+  }
+  return groups;
 }
 
 export default async function EventsPage({
@@ -234,7 +255,7 @@ export default async function EventsPage({
           />
         )
       ) : when === 'past' ? (
-        <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {list.map((event) => (
             <li key={event.id} className="min-w-0">
               <PastEventCard event={event} locale={locale} album={albumFor(event)} />
@@ -242,25 +263,33 @@ export default async function EventsPage({
           ))}
         </ul>
       ) : rest.length > 0 ? (
-        <section aria-labelledby="more-events" className="space-y-3">
-          <h2 id="more-events" className="sr-only">
-            {lead ? 'More events' : 'Upcoming events'}
-          </h2>
-          <ul className="hidden grid-cols-1 gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-3">
-            {rest.map((event) => (
-              <li key={event.id} className="min-w-0">
-                <EventCard event={event} locale={locale} flags={flags} layout="card" />
-              </li>
-            ))}
-          </ul>
-          <ul className="divide-y divide-line sm:hidden">
-            {rest.map((event) => (
-              <li key={event.id} className="min-w-0">
-                <EventCard event={event} locale={locale} flags={flags} layout="row" />
-              </li>
-            ))}
-          </ul>
-        </section>
+        <div className="space-y-10">
+          {byMonth(rest, locale.locale, locale.timeZone).map((group) => (
+            <section key={group.key} aria-labelledby={`month-${group.key}`} className="space-y-4">
+              <div className="flex items-center gap-4">
+                <h2 id={`month-${group.key}`} className="font-display text-xl font-semibold">
+                  {group.current ? 'This month' : group.label}
+                  {group.current ? <span className="ml-2 text-md font-medium text-secondary">{group.label}</span> : null}
+                </h2>
+                <span aria-hidden="true" className="h-px flex-1 bg-line" />
+              </div>
+              <ul className="hidden grid-cols-1 gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-3">
+                {group.events.map((event) => (
+                  <li key={event.id} className="min-w-0">
+                    <EventCard event={event} locale={locale} flags={flags} layout="card" />
+                  </li>
+                ))}
+              </ul>
+              <ul className="divide-y divide-line sm:hidden">
+                {group.events.map((event) => (
+                  <li key={event.id} className="min-w-0">
+                    <EventCard event={event} locale={locale} flags={flags} layout="row" />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
       ) : null}
     </div>
   );

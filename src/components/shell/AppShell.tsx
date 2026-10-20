@@ -248,20 +248,25 @@ export async function AppShell({
       <aside
         aria-label="Sidebar"
         data-print-hide=""
-        className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-line bg-surface-raised lg:flex"
+        className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-line bg-surface-raised shadow-[1px_0_0_var(--surface),4px_0_24px_-12px_var(--shadow-color)] lg:flex"
       >
-        <div className="band-surface px-5 py-4">
-          <ShellIdentity
-            href={homeHref}
-            label={homeLabel}
-            crest={<Crest pack={identityPack} size={36} />}
-            logo={<Logo pack={identityPack} variant="band" height={22} />}
-            line2={line2}
-            tone={tone}
-          />
+        {/* The identity block: the one band in the shell. Aurora and grain
+            sit behind it; the content is lifted above both. */}
+        <div className="band-surface grain relative isolate overflow-hidden px-5 pb-6 pt-6">
+          <div className="aurora" aria-hidden="true" />
+          <div className="relative z-[2]">
+            <ShellIdentity
+              href={homeHref}
+              label={homeLabel}
+              crest={<Crest pack={identityPack} size={44} />}
+              logo={<Logo pack={identityPack} variant="band" height={28} />}
+              line2={line2}
+              tone={tone}
+            />
+          </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-3 pt-5">
+        <div className="flex-1 overflow-y-auto px-3 pt-6">
           <SidebarNav groups={groups} badges={badges} compact={variant === 'admin'} />
           {/* A fade at the foot of the list says it scrolls. It sits in the
               list's own bottom padding, so at the end it covers nothing. */}
@@ -271,7 +276,7 @@ export async function AppShell({
           />
         </div>
 
-        <div className="space-y-2 border-t border-line px-5 py-4">
+        <div className="space-y-2 border-t border-line bg-surface px-5 py-4">
           {foot}
           {poweredBy}
         </div>

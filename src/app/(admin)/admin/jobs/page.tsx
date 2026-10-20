@@ -21,6 +21,7 @@ import {
 import { JobSummary } from '@/components/content';
 import { formatDate, formatRelative, memberLine } from '@/lib/format';
 import { ModerationActions, ModerationPolicy } from './ModerationActions';
+import { ReviewDesk } from './ReviewDesk';
 
 export const metadata = { title: 'Jobs · Staff console' };
 
@@ -66,7 +67,9 @@ export default async function AdminJobsPage({
 
   const pack = resolved.brand.pack;
   const timing = { locale: pack.locale.locale, timeZone: pack.locale.timeZone };
-  const oldest = [...pending].sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0] ?? null;
+  // Oldest first: the desk works the queue in the order people were told to expect.
+  const queue = [...pending].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const oldest = queue[0] ?? null;
   const rejectionNote = rejected.find((j) => j.moderationNote)?.moderationNote ?? null;
 
   const posterHref = (p: JobPosting['postedBy']) =>
@@ -101,25 +104,46 @@ export default async function AdminJobsPage({
 
       <Section title="Waiting for a decision">
         {pending.length === 0 ? (
-          <p className="flex items-center gap-2 text-sm text-secondary">
-            <CheckCircle2 className="size-4 shrink-0 text-success-fg" aria-hidden="true" />
-            Nothing is waiting. New postings appear here first.
-          </p>
+          <Card>
+            <div className="flex items-start gap-3 p-card">
+              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-success-soft text-success-fg">
+                <CheckCircle2 className="size-5" aria-hidden="true" />
+              </span>
+              <div className="space-y-1">
+                <p className="font-medium text-primary">The queue is clear.</p>
+                <p className="text-sm text-secondary">
+                  A posting from an alumnus lands here first, and students see it only after you approve it.
+                </p>
+              </div>
+            </div>
+          </Card>
         ) : (
-          <ul className="grid gap-4 xl:grid-cols-2">
-            {pending.map((job) => (
-              <li key={job.id} className="min-w-0">
-                <QueueCard
-                  job={job}
-                  locale={pack.locale}
-                  timing={timing}
-                  livePostings={livePerPoster.get(job.postedBy.id) ?? 0}
-                  posterHref={posterHref(job.postedBy)}
-                  precedent={rejectionNote}
-                />
-              </li>
-            ))}
-          </ul>
+          <>
+            {/* Desk: queue and preview side by side. */}
+            <ReviewDesk
+              jobs={queue}
+              selectedId={one(params.review) ?? queue[0]!.id}
+              timing={timing}
+              posterHref={posterHref}
+              precedent={rejectionNote}
+              livePerPoster={livePerPoster}
+            />
+            {/* Phones and tablets: one card per posting, decision in the card. */}
+            <ul className="grid gap-4 sm:grid-cols-2 lg:hidden">
+              {queue.map((job) => (
+                <li key={job.id} className="min-w-0">
+                  <QueueCard
+                    job={job}
+                    locale={pack.locale}
+                    timing={timing}
+                    livePostings={livePerPoster.get(job.postedBy.id) ?? 0}
+                    posterHref={posterHref(job.postedBy)}
+                    precedent={rejectionNote}
+                  />
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </Section>
 

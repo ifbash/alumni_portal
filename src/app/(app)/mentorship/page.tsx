@@ -120,13 +120,23 @@ export default async function MentorshipPage() {
     null,
   );
 
+  // The question with the most graduates behind it leads at double width on
+  // a wide screen, and the rest keep their order. Nothing is dropped.
+  const ranked = busiest && busiest.mentorCount > 0 ? [busiest, ...topics.filter((t) => t.id !== busiest.id)] : topics;
   const grid = (
-    <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      {topics.map((topic) => (
-        <li key={topic.id} className="relative min-w-0">
-          <TopicCard topic={topic} faces={faces.get(topic.id) ?? []} fallback={busiest} />
-        </li>
-      ))}
+    <ul className="stagger grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {ranked.map((topic, i) => {
+        const lead = i === 0 && busiest?.id === topic.id && topic.mentorCount > 0;
+        return (
+          <li
+            key={topic.id}
+            style={{ '--i': i } as React.CSSProperties}
+            className={cn('relative min-w-0', lead && 'xl:col-span-2')}
+          >
+            <TopicCard topic={topic} faces={faces.get(topic.id) ?? []} fallback={busiest} lead={lead} />
+          </li>
+        );
+      })}
     </ul>
   );
 
@@ -227,9 +237,17 @@ export default async function MentorshipPage() {
             <CardBody className="space-y-3">
               {waiting.length > 0 ? (
                 <>
-                  <p className="flex items-center gap-2 font-display text-lg font-semibold">
-                    <Inbox className="size-5 shrink-0 text-brand-fg" aria-hidden="true" />
-                    {waiting.length} {waiting.length === 1 ? 'request' : 'requests'} waiting
+                  <p className="flex items-center gap-3">
+                    <span
+                      className="grid size-11 shrink-0 place-items-center rounded-full bg-brand-soft text-brand-soft-fg"
+                      aria-hidden="true"
+                    >
+                      <Inbox className="size-5" />
+                    </span>
+                    <span className="font-display text-display-sm font-bold leading-none tabular">{waiting.length}</span>
+                    <span className="font-display text-lg font-semibold leading-tight">
+                      {waiting.length === 1 ? 'request' : 'requests'} waiting
+                    </span>
                   </p>
                   {oldest ? (
                     <p className="text-sm text-secondary">The oldest arrived {formatRelative(oldest.createdAt, timing)}.</p>
@@ -304,10 +322,12 @@ function TopicCard({
   topic,
   faces,
   fallback,
+  lead = false,
 }: {
   topic: MentorTopic;
   faces: MemberSummary[];
   fallback: MentorTopic | null;
+  lead?: boolean;
 }) {
   const Icon = TOPIC_ICON[topic.id] ?? Compass;
   const empty = topic.mentorCount === 0;
@@ -317,33 +337,59 @@ function TopicCard({
     fallback && fallback.id !== topic.id && fallback.mentorCount > 0 ? fallback : null;
 
   return (
-    <Card as="article" interactive={!empty} className="flex h-full flex-col p-card">
-      <div className="flex items-start gap-3">
+    <Card
+      as="article"
+      interactive={!empty}
+      className={cn('relative isolate flex h-full flex-col overflow-hidden p-card', lead && 'xl:p-7')}
+    >
+      <div className="flex items-start justify-between gap-3">
         <span
           className={cn(
-            'grid size-10 shrink-0 place-items-center rounded',
-            empty ? 'bg-surface-sunken text-secondary' : 'bg-brand-soft text-brand-soft-fg',
+            'grid shrink-0 place-items-center rounded-full',
+            lead ? 'size-14' : 'size-11',
+            empty
+              ? 'bg-surface-sunken text-secondary'
+              : 'bg-brand-soft text-brand-soft-fg shadow-[0_0_0_5px_color-mix(in_srgb,var(--brand-soft)_45%,transparent)]',
           )}
           aria-hidden="true"
         >
-          <Icon className="size-5" />
+          <Icon className={lead ? 'size-6' : 'size-5'} />
         </span>
-
-        <div className="min-w-0 flex-1">
-          <h3 className="font-display text-md font-semibold leading-snug">
-            {empty ? (
-              topic.label
-            ) : (
-              <Link href={`/mentorship/${topic.id}`} className="link-quiet after:absolute after:inset-0 after:rounded-lg">
-                {topic.label}
-              </Link>
-            )}
-          </h3>
-          <p className="mt-1 text-sm text-secondary">{topic.description}</p>
-        </div>
+        {empty ? null : (
+          <p className="text-right leading-none">
+            <span
+              className={`block font-display ${lead ? 'text-display-sm' : 'text-display-xs'} font-bold tabular text-primary`}
+            >
+              {topic.mentorCount.toLocaleString('en-IN')}
+            </span>
+            <span className="mt-1 block text-xs font-medium text-secondary">
+              {topic.mentorCount === 1 ? 'graduate' : 'graduates'}
+            </span>
+          </p>
+        )}
       </div>
 
-      <div className="mt-auto pt-4">
+      <div className="mt-4 min-w-0 flex-1">
+        <h3
+          className={cn(
+            'font-display font-semibold leading-snug tracking-tight',
+            lead ? 'text-xl' : 'text-md',
+          )}
+        >
+          {empty ? (
+            topic.label
+          ) : (
+            <Link href={`/mentorship/${topic.id}`} className="link-quiet after:absolute after:inset-0 after:rounded-lg">
+              {topic.label}
+            </Link>
+          )}
+        </h3>
+        <p className={cn('mt-1.5 text-sm text-secondary', lead ? 'max-w-prose' : 'line-clamp-3')}>
+          {topic.description}
+        </p>
+      </div>
+
+      <div className="mt-5">
         {empty ? (
           <p className="relative z-10 text-sm text-secondary">
             No graduate matches this one yet.{' '}
@@ -354,18 +400,17 @@ function TopicCard({
             ) : null}
           </p>
         ) : (
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center justify-between gap-3 border-t border-line pt-4">
             <span className="flex -space-x-2" aria-hidden="true">
               {faces.map((m) => (
                 <span key={m.id} className="rounded-full ring-2 ring-surface-raised">
-                  <Avatar name={m.fullName} src={m.photoUrl} size="sm" />
+                  <Avatar name={m.fullName} src={m.photoUrl} size={lead ? 'md' : 'sm'} />
                 </span>
               ))}
             </span>
-            <span className="flex items-center gap-1.5 text-sm text-secondary">
-              <span className="font-semibold tabular text-primary">{topic.mentorCount.toLocaleString('en-IN')}</span>
-              {topic.mentorCount === 1 ? 'graduate' : 'graduates'}
-              <ArrowRight className="size-4 shrink-0 text-muted" aria-hidden="true" />
+            <span className="flex items-center gap-1.5 text-sm font-semibold text-brand-fg">
+              See who
+              <ArrowRight className="size-4 shrink-0" aria-hidden="true" />
             </span>
           </div>
         )}

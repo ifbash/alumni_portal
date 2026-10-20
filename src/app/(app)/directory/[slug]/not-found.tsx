@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { UserX } from 'lucide-react';
-import { ButtonLink, EmptyState } from '@/components/ui';
+import { ButtonLink } from '@/components/ui';
+import { NotFoundPanel } from '../../_components/NotFoundPanel';
 
 export const metadata: Metadata = {
   title: 'Profile not found',
@@ -17,21 +18,16 @@ export const metadata: Metadata = {
  */
 export default function MemberNotFound() {
   return (
-    <div className="space-y-6">
-      {/* `EmptyState`'s title is a paragraph by design — the document still
-          owes itself exactly one h1. */}
-      <h1 className="sr-only">Profile not found</h1>
-
-      <EmptyState
-        icon={<UserX className="size-5" />}
-        title="That profile is not available"
-        description="The link may be old, or the member may have left the network. Some profiles are visible only to certain members of the college."
-        action={
-          <ButtonLink href="/directory" className="min-h-11 sm:min-h-0">
-            Back to the directory
-          </ButtonLink>
-        }
-      />
-    </div>
+    <NotFoundPanel
+      eyebrow="Profile not found"
+      icon={<UserX />}
+      title="That profile is not available"
+      description="The link may be old, or the member may have left the network. Some profiles are visible only to certain members of the college."
+      action={
+        <ButtonLink href="/directory" className="min-h-11 sm:min-h-0">
+          Back to the directory
+        </ButtonLink>
+      }
+    />
   );
 }

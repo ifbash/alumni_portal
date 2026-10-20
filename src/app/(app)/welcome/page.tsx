@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound, redirect } from 'next/navigation';
-import { CheckCircle2 } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { Avatar, ButtonLink, Card, CardBody } from '@/components/ui';
 import { BandChip, PageBand } from '@/components/brand/PageBand';
 import { EventSummary } from '@/components/content';
@@ -132,22 +132,26 @@ export default async function WelcomePage() {
   );
 
   const done = (
-    <Card as="section" aria-labelledby="welcome-done-title">
-      <CardBody className="space-y-6">
-        <div className="flex items-start gap-3">
+    <Card as="section" aria-labelledby="welcome-done-title" className="overflow-hidden">
+      {/* The one celebration: the band's own colour with its aurora, a
+          single tick that scales in, and nothing else. Restraint is the
+          point; the next thing on the screen is the batch. */}
+      <div className="band-surface grain relative isolate overflow-hidden px-6 py-9 text-center">
+        <div className="aurora" aria-hidden="true" />
+        <div className="relative z-[2] mx-auto flex max-w-sm flex-col items-center gap-3">
           <span
-            className="grid size-10 shrink-0 place-items-center rounded-full bg-success-soft text-success-fg"
+            className="grid size-14 animate-scale-in place-items-center rounded-full bg-band-fg text-band shadow-[0_0_0_8px_color-mix(in_srgb,var(--band-fg)_16%,transparent)]"
             aria-hidden="true"
           >
-            <CheckCircle2 className="size-5" />
+            <Check className="size-7" strokeWidth={2.5} />
           </span>
-          <div className="min-w-0 space-y-1">
-            <h2 id="welcome-done-title" className="font-display text-xl font-semibold">
-              You are in.
-            </h2>
-            <p className="text-sm text-secondary">Anything you set here can be changed from your profile.</p>
-          </div>
+          <h2 id="welcome-done-title" className="mt-2 font-display text-display-xs font-bold tracking-tight text-band-fg">
+            You are in.
+          </h2>
+          <p className="text-sm text-band-muted">Anything you set here can be changed from your profile.</p>
         </div>
+      </div>
+      <CardBody className="space-y-6">
 
         {batch && batchYear && batch.total > 0 ? (
           <div className="flex flex-wrap items-center gap-3">

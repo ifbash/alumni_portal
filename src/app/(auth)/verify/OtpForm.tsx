@@ -28,6 +28,9 @@ import { cn } from '@/lib/cn';
  */
 
 const LENGTH = 6;
+
+/** Stagger index for the entrance; see `.stagger` in globals.css. */
+const at = (n: number) => ({ '--i': n }) as React.CSSProperties;
 const RESEND_SECONDS = 45;
 
 type Reason = 'expired' | 'invalid' | 'too_many_attempts' | 'unknown_email' | 'rate_limited' | 'unknown';
@@ -296,9 +299,10 @@ export function OtpForm({
   // ---------------------------------------------------------------- view
 
   return (
-    <div className="space-y-6">
+    <>
       {devCode ? (
         <Alert
+          style={at(1)}
           tone="warning"
           title="Development mode — no email was sent"
           icon={<TriangleAlert className="size-4" />}
@@ -326,7 +330,7 @@ export function OtpForm({
       ) : null}
 
       {resent ? (
-        <Alert tone="success" title="A new code is on its way">
+        <Alert tone="success" title="A new code is on its way" className="animate-fade-up">
           <p>The previous code stopped working the moment this one was issued.</p>
         </Alert>
       ) : null}
@@ -338,48 +342,63 @@ export function OtpForm({
         }}
         noValidate
         className="space-y-5"
+        style={at(2)}
       >
         <Fieldset
           legend="Six-digit code"
           hint={`Sent to ${email}. It is valid for ${ttlMinutes} minutes and works once.`}
         >
-          <div className="grid grid-cols-6 gap-2 sm:gap-3">
+          <div
+            className={cn(
+              'flex items-center gap-2 sm:gap-3',
+              pending && 'animate-pulse',
+              invalid && 'animate-[auth-shake_var(--dur-slow)_var(--ease)_both]',
+            )}
+          >
             {digits.map((d, i) => (
-              <input
-                key={i}
-                ref={(el) => {
-                  boxes.current[i] = el;
-                }}
-                value={d}
-                onChange={(e) => onChange(i, e.target.value)}
-                onKeyDown={(e) => onKeyDown(i, e)}
-                onPaste={(e) => onPaste(i, e)}
-                onFocus={(e) => e.currentTarget.select()}
-                type="text"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                maxLength={1}
-                autoComplete={i === 0 ? 'one-time-code' : 'off'}
-                autoFocus={i === 0}
-                aria-label={`Digit ${i + 1} of ${LENGTH}`}
-                aria-invalid={invalid || undefined}
-                aria-describedby={invalid ? 'otp-error' : undefined}
-                disabled={pending}
-                className={cn(
-                  'h-control-lg w-full rounded-lg border border-line bg-surface-raised text-center',
-                  'font-mono text-xl font-semibold text-primary tabular',
-                  'transition-colors duration-fast ease-brand hover:border-line-strong',
-                  'focus:border-[var(--focus-ring)] focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)]',
-                  'disabled:cursor-not-allowed disabled:bg-surface-sunken disabled:text-muted',
-                  'aria-[invalid=true]:border-danger',
-                )}
-              />
+              <React.Fragment key={i}>
+                <input
+                  ref={(el) => {
+                    boxes.current[i] = el;
+                  }}
+                  value={d}
+                  onChange={(e) => onChange(i, e.target.value)}
+                  onKeyDown={(e) => onKeyDown(i, e)}
+                  onPaste={(e) => onPaste(i, e)}
+                  onFocus={(e) => e.currentTarget.select()}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={1}
+                  autoComplete={i === 0 ? 'one-time-code' : 'off'}
+                  autoFocus={i === 0}
+                  aria-label={`Digit ${i + 1} of ${LENGTH}`}
+                  aria-invalid={invalid || undefined}
+                  aria-describedby={invalid ? 'otp-error' : undefined}
+                  disabled={pending}
+                  className={cn(
+                    'h-14 w-0 min-w-0 flex-1 rounded-lg border border-line bg-surface-raised text-center shadow-sm sm:h-16',
+                    'font-mono text-2xl font-semibold text-primary tabular',
+                    'transition-[border-color,background-color,box-shadow] duration-fast ease-brand hover:border-line-strong',
+                    'focus:border-[var(--focus-ring)] focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)]',
+                    'focus:shadow-[0_0_0_4px_color-mix(in_srgb,var(--focus-ring)_16%,transparent)]',
+                    'disabled:cursor-not-allowed disabled:bg-surface-sunken disabled:text-muted',
+                    'aria-[invalid=true]:border-danger aria-[invalid=true]:ring-danger',
+                    // A digit that has landed gets the tint and a small pop.
+                    d && 'animate-scale-in border-line-strong bg-brand-soft text-brand-soft-fg',
+                  )}
+                />
+                {/* The dash splits the code into 482 913, the way it is read aloud. */}
+                {i === 2 ? (
+                  <span aria-hidden="true" className="h-0.5 w-2 shrink-0 rounded-full bg-line-strong sm:w-3" />
+                ) : null}
+              </React.Fragment>
             ))}
           </div>
         </Fieldset>
 
         {message ? (
-          <div id="otp-error">
+          <div id="otp-error" className="animate-fade-up">
             <Alert
               tone={reason === 'unknown_email' ? 'warning' : 'danger'}
               title={
@@ -413,7 +432,7 @@ export function OtpForm({
       {/* The otp route answers an unknown address exactly as it answers a
           known one, so a code that never comes is the only signal a person
           without an account gets. This says so. */}
-      <p className="text-sm text-secondary">
+      <p style={at(3)} className="text-sm text-secondary">
         Nothing after two minutes? Check your spam folder. No code is sent to an address that is
         not registered —{' '}
         <Link className="link" href="/claim">
@@ -422,7 +441,7 @@ export function OtpForm({
         .
       </p>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5">
+      <div style={at(4)} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface-sunken p-4">
         <p className="text-sm text-secondary">
           {secondsLeft > 0 ? (
             <>
@@ -450,7 +469,7 @@ export function OtpForm({
       </div>
 
       {supportEmail ? (
-        <p className="text-sm text-secondary">
+        <p style={at(5)} className="text-sm text-secondary">
           Still stuck? Write to{' '}
           <a href={`mailto:${supportEmail}`} className="link">
             {supportEmail}
@@ -458,6 +477,6 @@ export function OtpForm({
           with your roll number and the address you are trying to use.
         </p>
       ) : null}
-    </div>
+    </>
   );
 }

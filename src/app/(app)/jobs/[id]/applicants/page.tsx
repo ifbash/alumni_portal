@@ -200,20 +200,33 @@ export default async function JobApplicantsPage({
             <>
               <Card>
                 <CardBody className="space-y-4">
-                  <p className="text-sm text-secondary">
-                    <span className="font-semibold tabular text-primary">{total.toLocaleString('en-IN')}</span> applied
-                    <span aria-hidden="true"> · </span>
-                    <span className="sr-only">, </span>
-                    <span className="font-semibold tabular text-primary">{withNote.toLocaleString('en-IN')}</span> wrote a note
-                    {total > 0 ? <span className="tabular"> ({Math.round((withNote / total) * 100)}%)</span> : null}
-                    {latest ? (
-                      <>
-                        <span aria-hidden="true"> · </span>
-                        <span className="sr-only">, </span>
-                        most recent {formatRelative(latest.createdAt, timing)}
-                      </>
+                  <dl className="flex divide-x divide-line">
+                    <div className="min-w-0 flex-1 pr-4">
+                      <dt className="text-xs font-semibold uppercase tracking-[0.12em] text-secondary">Applied</dt>
+                      <dd className="mt-1 font-display text-display-xs font-bold leading-none tabular">
+                        {total.toLocaleString('en-IN')}
+                      </dd>
+                    </div>
+                    {withNote > 0 ? (
+                      <div className="min-w-0 flex-1 px-4">
+                        <dt className="text-xs font-semibold uppercase tracking-[0.12em] text-secondary">Wrote a note</dt>
+                        <dd className="mt-1 font-display text-display-xs font-bold leading-none tabular">
+                          {withNote.toLocaleString('en-IN')}
+                          <span className="ml-1.5 font-sans text-sm font-normal text-secondary">
+                            ({Math.round((withNote / total) * 100)}%)
+                          </span>
+                        </dd>
+                      </div>
                     ) : null}
-                  </p>
+                    {latest ? (
+                      <div className="min-w-0 flex-1 pl-4">
+                        <dt className="text-xs font-semibold uppercase tracking-[0.12em] text-secondary">Most recent</dt>
+                        <dd className="mt-1 text-md font-semibold leading-tight">
+                          {formatRelative(latest.createdAt, timing)}
+                        </dd>
+                      </div>
+                    ) : null}
+                  </dl>
                   <BranchMix branches={branches} />
                 </CardBody>
               </Card>

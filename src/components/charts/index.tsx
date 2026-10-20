@@ -23,6 +23,22 @@ import { cn } from '@/lib/cn';
  * who can see it is not a dashboard.
  */
 
+/**
+ * Entrance motion for marks: bars grow from their baseline, staggered by
+ * `--i`. Transform only; reduced motion collapses it in globals.css. React
+ * hoists and dedupes the element, so every chart can render it.
+ */
+function ChartMotion() {
+  return (
+    <style href="chart-motion" precedence="default">{`
+.chart-grow-x{transform-origin:left center;animation:chart-grow-x calc(var(--dur-slow) * 2) var(--ease) both;animation-delay:calc(var(--i,0) * 45ms)}
+.chart-grow-y{transform-origin:center bottom;animation:chart-grow-y calc(var(--dur-slow) * 2) var(--ease) both;animation-delay:calc(var(--i,0) * 30ms)}
+@keyframes chart-grow-x{from{transform:scaleX(0)}to{transform:none}}
+@keyframes chart-grow-y{from{transform:scaleY(0)}to{transform:none}}
+`}</style>
+  );
+}
+
 export interface Point {
   label: string;
   value: number;
@@ -43,43 +59,56 @@ export function Sparkline({
   label: string;
   height?: number;
 }) {
+  const gradient = React.useId();
   if (data.length < 2) return null;
 
   const max = Math.max(...data.map((d) => d.value), 1);
   const w = 100;
   const h = height;
 
-  const points = data.map((d, i) => {
+  const coords = data.map((d, i) => {
     const x = (i / (data.length - 1)) * w;
-    // 2px of headroom top and bottom so the stroke is never clipped.
-    const y = h - 2 - (d.value / max) * (h - 4);
-    return `${x.toFixed(2)},${y.toFixed(2)}`;
+    // 3px of headroom top and bottom so the stroke and the end dot are never clipped.
+    const y = h - 3 - (d.value / max) * (h - 6);
+    return { x, y };
   });
+  const points = coords.map((c) => `${c.x.toFixed(2)},${c.y.toFixed(2)}`);
+  const last = coords[coords.length - 1]!;
 
   return (
-    <svg
-      viewBox={`0 0 ${w} ${h}`}
-      preserveAspectRatio="none"
-      role="img"
-      aria-label={`${label}. ${data.map((d) => `${d.label}: ${d.value}`).join(', ')}`}
-      className={cn('w-full', className)}
-      style={{ height }}
-    >
-      <polyline
-        points={`0,${h} ${points.join(' ')} ${w},${h}`}
-        fill="var(--brand-soft)"
-        stroke="none"
+    <div className={cn('relative w-full', className)} style={{ height }}>
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        preserveAspectRatio="none"
+        role="img"
+        aria-label={`${label}. ${data.map((d) => `${d.label}: ${d.value}`).join(', ')}`}
+        className="block size-full overflow-visible"
+      >
+        <defs>
+          <linearGradient id={gradient} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" style={{ stopColor: 'var(--brand-fg)', stopOpacity: 0.28 }} />
+            <stop offset="1" style={{ stopColor: 'var(--brand-fg)', stopOpacity: 0 }} />
+          </linearGradient>
+        </defs>
+        <polyline points={`0,${h} ${points.join(' ')} ${w},${h}`} fill={`url(#${gradient})`} stroke="none" />
+        <polyline
+          points={points.join(' ')}
+          fill="none"
+          stroke="var(--brand-fg)"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      {/* An HTML dot, not an SVG circle: the viewBox is stretched, so a
+          circle would draw as an ellipse. */}
+      <span
+        aria-hidden="true"
+        className="absolute size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--brand-fg)] ring-2 ring-[var(--surface-raised)]"
+        style={{ left: `${(last.x / w) * 100}%`, top: `${(last.y / h) * 100}%` }}
       />
-      <polyline
-        points={points.join(' ')}
-        fill="none"
-        stroke="var(--brand-fg)"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        vectorEffect="non-scaling-stroke"
-      />
-    </svg>
+    </div>
   );
 }
 
@@ -125,17 +154,18 @@ export function BarList({
 
   return (
     <ul className={cn('space-y-1', className)} aria-label={label}>
-      {data.map((d) => {
+      <ChartMotion />
+      {data.map((d, i) => {
         const row = (
           <>
             <span className="flex items-baseline justify-between gap-3 text-sm">
               <span className="min-w-0 truncate">{d.label}</span>
               <span className="shrink-0 font-semibold tabular">{formatValue(d.value)}</span>
             </span>
-            <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-chart-track" aria-hidden="true">
+            <span className="mt-1.5 block h-1.5 overflow-hidden rounded-full bg-chart-track" aria-hidden="true">
               <span
-                className={cn('block h-full rounded-full', fill)}
-                style={{ width: `${Math.max(2, Math.min(100, (d.value / max) * 100))}%` }}
+                className={cn('chart-grow-x block h-full rounded-full', fill)}
+                style={{ width: `${Math.max(2, Math.min(100, (d.value / max) * 100))}%`, '--i': i } as React.CSSProperties}
               />
             </span>
           </>
@@ -146,7 +176,7 @@ export function BarList({
             {d.href ? (
               <Link
                 href={d.href}
-                className="-mx-2 flex min-h-11 flex-col justify-center rounded px-2 py-1.5 transition-colors duration-fast ease-brand hover:bg-surface-sunken"
+                className="-mx-2 flex min-h-11 flex-col justify-center rounded px-2 py-1.5 transition-colors duration-fast ease-brand hover:bg-surface-sunken focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-[var(--focus-ring)]"
               >
                 {row}
               </Link>
@@ -163,6 +193,11 @@ export function BarList({
 // ---------------------------------------------------------------
 // Column chart
 // ---------------------------------------------------------------
+
+/** Hovering or focusing one column quiets the rest, so the one under the pointer reads. */
+const COLUMN_CELL =
+  'group/col flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1 rounded-sm transition-opacity duration-fast ' +
+  'group-hover/chart:opacity-50 hover:!opacity-100 focus-visible:!opacity-100';
 
 /**
  * Vertical columns, one per period or category.
@@ -201,29 +236,32 @@ export function ColumnChart({
   const summary = `${label}. ${data.map((d) => `${d.label}: ${d.value}`).join(', ')}`;
 
   return (
-    <figure className={cn('space-y-2', className)}>
+    <figure className={cn('group/chart space-y-2', className)}>
+      <ChartMotion />
       <div
-        className="flex items-end gap-1"
+        className="flex items-end gap-1 border-b border-line"
         style={{ height }}
         {...(linked ? { role: 'group', 'aria-label': label } : { role: 'img', 'aria-label': summary })}
       >
-        {data.map((d) => {
+        {data.map((d, i) => {
           const column = (
             <>
               {values ? (
-                <span className="text-xs font-semibold tabular text-secondary" aria-hidden={linked ? true : undefined}>
+                <span
+                  className="text-xs font-semibold tabular text-secondary transition-colors duration-fast group-hover/col:text-primary"
+                  aria-hidden={linked ? true : undefined}
+                >
                   {d.value.toLocaleString('en-IN')}
                 </span>
               ) : null}
               <span
                 className={cn(
-                  'block w-full rounded-sm transition-opacity duration-fast',
+                  'chart-grow-y block w-full rounded-t-sm',
                   picked.has(d.label) ? 'bg-chart-highlight' : 'bg-chart-bar',
-                  d.href && 'group-hover:opacity-80',
                 )}
                 // A zero-height bar and a missing bar look identical; 3px
                 // keeps "we measured this and it was nought" visible.
-                style={{ height: `${Math.max(3, (d.value / max) * (height - 20))}px` }}
+                style={{ height: `${Math.max(3, (d.value / max) * (height - 20))}px`, '--i': i } as React.CSSProperties}
               />
             </>
           );
@@ -233,12 +271,12 @@ export function ColumnChart({
               key={d.label}
               href={d.href}
               aria-label={`${d.label}: ${d.value}`}
-              className="group flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1 rounded-sm"
+              className={`${COLUMN_CELL} focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--focus-ring)]`}
             >
               {column}
             </Link>
           ) : (
-            <div key={d.label} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1">
+            <div key={d.label} className={COLUMN_CELL}>
               {column}
             </div>
           );
@@ -298,12 +336,12 @@ export function DonutChart({
     <figure className={cn('flex flex-col items-center gap-2', className)}>
       <div className="relative" style={{ width: size, height: size }}>
         <svg viewBox="0 0 100 100" className="size-full -rotate-90" role="img" aria-label={`${label}: ${Math.round(pct * 100)}%`}>
-          <circle cx="50" cy="50" r={r} fill="none" stroke="var(--chart-track)" strokeWidth="10" />
+          <circle cx="50" cy="50" r={r} fill="none" stroke="var(--chart-track)" strokeWidth="9" />
           <circle
             cx="50" cy="50" r={r}
             fill="none"
             stroke={stroke}
-            strokeWidth="10"
+            strokeWidth="9"
             strokeLinecap="round"
             strokeDasharray={circumference}
             strokeDashoffset={circumference * (1 - pct)}
@@ -352,7 +390,7 @@ export function ProportionBar({
   return (
     <div className={cn('space-y-2.5', className)}>
       <div
-        className="flex h-2.5 overflow-hidden rounded-full bg-surface-sunken"
+        className="flex h-2.5 gap-0.5 overflow-hidden rounded-full bg-surface-sunken"
         role="img"
         aria-label={`${label}. ${segments.map((s) => `${s.label}: ${s.value}`).join(', ')}`}
       >

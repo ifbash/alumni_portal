@@ -190,7 +190,9 @@ test.describe('public landing page', () => {
     await expect.poll(isOpen).toBe(true);
 
     // A tap outside closes it.
-    await page.mouse.click(200, 700);
+    // The picker's heading is plain text below the open panel; a fixed
+    // coordinate drifts onto a year link whenever the hero is reshaped.
+    await page.getByRole('heading', { name: /which year did you pass out/i }).click();
     await expect.poll(isOpen).toBe(false);
 
     // A link inside closes it — including a hash link that keeps the pathname.

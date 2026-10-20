@@ -24,7 +24,7 @@ import { isOnlineVenue, seatStatus } from '@/lib/event-status';
 import { directionsUrl } from '@/lib/maps';
 import { eventShareText } from '@/lib/share-text';
 import { siteOrigin, whatsappShareUrl } from '@/lib/share';
-import { BandDate } from '../EventCard';
+import { OutlineNumeral } from '@/app/(app)/directory/batch/OutlineNumeral';
 import { calendarLinks, whenLine } from '../calendar';
 import { RegisterForm, type GuestOption } from './RegisterForm';
 
@@ -169,48 +169,76 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
     </>
   );
 
-  const hero = heroImage ? (
-    <section aria-labelledby="event-title" className="band-surface -mx-4 overflow-hidden sm:mx-0 sm:rounded-xl">
-      <MediaFrame
-        src={heroImage}
-        alt=""
-        aspect="16/9"
-        loading="eager"
-        rounded={false}
-        className="[&>div]:border-0 lg:[&>div]:aspect-[21/9]"
-        overlay={
-          <div className="space-y-1">
-            <p className="text-sm font-semibold">{eyebrow}</p>
-            <h1 id="event-title" className="font-display text-display-sm font-bold text-band-fg">
-              {event.title}
-            </h1>
-          </div>
-        }
-      />
-      <div className="space-y-3 px-5 py-4 sm:px-8">
-        <p className="text-md text-band-muted">
-          {when} · {where}
-        </p>
-        <div className="flex flex-wrap gap-2">{chips}</div>
-      </div>
-    </section>
-  ) : (
+  // A cover photo shows at lg behind the scrim, text held to its solid
+  // zone, and as a plain strip above the text on phones: the same contract
+  // as `PageBand`. Without one the band carries the aurora and a large date
+  // leaf, which is the main case; no tenant is promised a photo.
+  const onPhoto = heroImage ? 'lg:text-band-fg' : '';
+  const hero = (
     <section
       aria-labelledby="event-title"
-      className="band-surface -mx-4 px-5 py-6 sm:mx-0 sm:rounded-xl sm:px-8 lg:py-8"
+      className="band-surface grain relative isolate -mx-4 overflow-hidden sm:mx-0 sm:rounded-xl sm:shadow-lg"
     >
-      <div className="flex items-start gap-4 sm:gap-5">
-        <BandDate iso={event.startsAt} locale={locale} timeZone={timeZone} />
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-band-accent">{eyebrow}</p>
-          <h1 id="event-title" className="mt-1 font-display text-display-sm font-bold text-band-fg">
+      {heroImage ? null : <div className="aurora" aria-hidden="true" />}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 z-[1] hidden rounded-[inherit] ring-1 ring-inset ring-[color-mix(in_srgb,var(--band-fg)_16%,transparent)] sm:block"
+      />
+      {heroImage ? (
+        <>
+          {/* Tenant-supplied URLs; see next.config.ts. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={heroImage}
+            alt=""
+            decoding="async"
+            className="absolute inset-0 -z-10 hidden size-full object-cover lg:block"
+          />
+          <div aria-hidden="true" className="scrim-hero absolute inset-0 -z-10 hidden lg:block" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={heroImage} alt="" decoding="async" className="block aspect-[16/9] w-full object-cover lg:hidden" />
+        </>
+      ) : null}
+
+      <div
+        className={`relative z-[2] flex flex-col gap-5 px-5 py-6 sm:px-8 lg:flex-row lg:gap-8 lg:py-10 ${
+          heroImage ? 'lg:min-h-[22rem] lg:items-end' : 'lg:items-center'
+        }`}
+      >
+        <HeroDate iso={event.startsAt} locale={locale} timeZone={timeZone} />
+        <div className={`min-w-0 flex-1 ${heroImage ? 'lg:max-w-[60%]' : 'lg:max-w-3xl'}`}>
+          <p className={`eyebrow max-w-full text-xs text-band-accent ${onPhoto}`}>{eyebrow}</p>
+          {/* Plain string: tailwind-merge would drop the display size beside a colour. */}
+          <h1
+            id="event-title"
+            className="mt-2 font-display text-display-md font-bold tracking-tight text-band-fg [text-wrap:balance]"
+          >
             {event.title}
           </h1>
-          <p className="mt-2 text-md text-band-muted">
-            {when} · {where}
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">{chips}</div>
+          <ul className={`mt-4 space-y-1.5 text-md text-band-muted ${onPhoto}`}>
+            <li className="flex items-start gap-2.5">
+              <Clock className="mt-1 size-4 shrink-0" aria-hidden="true" />
+              <span className="min-w-0">{when}</span>
+            </li>
+            <li className="flex items-start gap-2.5">
+              {online ? (
+                <Video className="mt-1 size-4 shrink-0" aria-hidden="true" />
+              ) : (
+                <MapPin className="mt-1 size-4 shrink-0" aria-hidden="true" />
+              )}
+              <span className="min-w-0">{where}</span>
+            </li>
+          </ul>
+          <div className="mt-4 flex flex-wrap gap-2">{chips}</div>
         </div>
+        {/* The month, outlined, fills the empty right of a band with no photo. */}
+        {heroImage ? null : (
+          <div className="min-w-0 lg:ml-auto">
+            <OutlineNumeral>
+              {new Intl.DateTimeFormat(locale, { month: 'short', timeZone }).format(new Date(event.startsAt)).toUpperCase()}
+            </OutlineNumeral>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -229,7 +257,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
   };
 
   const actionCard = (
-    <Card id="register" className="scroll-mt-20">
+    <Card id="register" className="ring-hairline scroll-mt-20 shadow-lg">
       <CardBody className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-display text-lg font-semibold">{cardTitle[state]}</h2>
@@ -237,13 +265,25 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
           {state === 'organiser' || state === 'draft' ? <SeatBadge event={event} audience="organiser" /> : null}
         </div>
 
+        {/* The bar repeats what the badge says in words, so it is decoration. */}
+        {seats.capped && (state === 'open' || state === 'full' || state === 'organiser') ? (
+          <div aria-hidden="true" className="h-1.5 overflow-hidden rounded-full bg-chart-track">
+            <div
+              className={`h-full rounded-full ${seats.ratio >= 0.9 ? 'bg-warning' : 'bg-chart-bar'}`}
+              style={{ width: `${Math.min(100, Math.max(4, Math.round(seats.ratio * 100)))}%` }}
+            />
+          </div>
+        ) : null}
+
         {state === 'open' ? (
-          <p className="text-sm text-secondary">
-            <span className="font-semibold tabular text-primary">
+          <div className="flex items-baseline gap-2">
+            <p className="font-display text-display-xs font-bold tabular">
               {event.ticketPrice > 0 ? money(event.ticketPrice) : 'Free'}
-            </span>
-            {event.ticketPrice > 0 ? ' per person. Guests pay the same ticket price.' : '. Guests are welcome.'}
-          </p>
+            </p>
+            <p className="min-w-0 text-sm text-secondary">
+              {event.ticketPrice > 0 ? 'per person. Guests pay the same ticket price.' : 'Guests are welcome.'}
+            </p>
+          </div>
         ) : null}
 
         {state === 'past' ? (
@@ -350,9 +390,11 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
         <div className="min-w-0 space-y-8 lg:col-start-1 lg:row-start-1">
           {paragraphs.length ? (
             <Section title="About this event">
-              <div className="max-w-prose space-y-3 text-md leading-relaxed text-secondary">
+              <div className="max-w-prose space-y-4 text-md leading-relaxed text-secondary">
                 {paragraphs.map((p, i) => (
-                  <p key={i}>{p}</p>
+                  <p key={i} className={i === 0 ? 'text-lg leading-relaxed text-primary' : undefined}>
+                    {p}
+                  </p>
                 ))}
               </div>
             </Section>
@@ -446,3 +488,27 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
   );
 }
 
+
+/**
+ * The date as a large leaf on the band. Decorative: the line beside the
+ * title states it in words. Set in the band's own colours, which are the
+ * same in both themes, so it needs no dark variant.
+ */
+function HeroDate({ iso, locale, timeZone }: { iso: string; locale: string; timeZone: string }) {
+  const d = new Date(iso);
+  const part = (opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat(locale, { ...opts, timeZone }).format(d);
+  return (
+    <span
+      aria-hidden="true"
+      className="block w-24 shrink-0 self-start rounded-xl border border-band-rule px-1 py-3 text-center sm:w-28 lg:self-auto"
+    >
+      <span className="block text-xs font-semibold uppercase tracking-[0.16em] text-band-accent">
+        {part({ month: 'short' })}
+      </span>
+      <span className="block font-display text-6xl font-bold leading-none tabular text-band-fg sm:text-7xl">
+        {part({ day: 'numeric' })}
+      </span>
+      <span className="mt-1 block text-xs text-band-muted">{part({ weekday: 'short' })}</span>
+    </span>
+  );
+}

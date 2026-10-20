@@ -14,6 +14,7 @@ import {
   ConfirmDialog,
   Dialog,
   Field,
+  Kbd,
   Radio,
   StickyActionBar,
   Textarea,
@@ -81,6 +82,15 @@ interface Outcome {
 /** The server refuses anything shorter; matching it avoids a pointless 422. */
 const MIN_REASON = 10;
 
+/** A shortcut hint on a button; phones have no keyboard, so it hides below lg. */
+function KeyHint({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="ml-auto hidden opacity-80 lg:inline-flex" aria-hidden="true">
+      <Kbd>{children}</Kbd>
+    </span>
+  );
+}
+
 export function ReviewActions({
   claimId,
   claimName,
@@ -96,6 +106,7 @@ export function ReviewActions({
   signature,
   whatsapp,
   nextHref,
+  prevHref = null,
   auditHref,
 }: {
   claimId: string;
@@ -115,6 +126,7 @@ export function ReviewActions({
   /** Whether the college runs WhatsApp; the send line only offers it when it does. */
   whatsapp: boolean;
   nextHref: string | null;
+  prevHref?: string | null;
   /** The audit log, when this viewer can read it. */
   auditHref: string | null;
 }) {
@@ -153,6 +165,36 @@ export function ReviewActions({
       outcomeRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
   }, [outcome]);
+
+  // Keyboard-first review: A approves, R rejects, D asks for a document,
+  // J and K move through the queue. Never while typing, with a modifier
+  // held, or with a dialog open; Approve still waits for a chosen row and
+  // still goes through its confirmation, so a stray key decides nothing.
+  const deciding = !outcome && !(decided && !reopened);
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || dialog || submitting) return;
+      const el = e.target as HTMLElement | null;
+      // A focused radio is how a row gets chosen; the shortcut should still work from there.
+      const typing =
+        el &&
+        (el.isContentEditable ||
+          el.tagName === 'TEXTAREA' ||
+          el.tagName === 'SELECT' ||
+          (el.tagName === 'INPUT' && !/^(radio|checkbox|button)$/.test((el as HTMLInputElement).type)));
+      if (typing) return;
+      const key = e.key.toLowerCase();
+      if (key === 'j' && nextHref) router.push(nextHref);
+      else if (key === 'k' && prevHref) router.push(prevHref);
+      else if (deciding && key === 'a' && selected) setDialog('approve');
+      else if (deciding && key === 'r') setDialog('reject');
+      else if (deciding && key === 'd') setDialog('info');
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [dialog, submitting, deciding, selected, nextHref, prevHref, router]);
 
   const closeDialog = () => {
     setDialog(null);
@@ -397,10 +439,12 @@ export function ReviewActions({
             <Button onClick={() => setDialog('approve')} disabled={!selected || submitting !== null} className="w-full">
               <CheckCircle2 className="size-4" aria-hidden="true" />
               Approve
+              <KeyHint>A</KeyHint>
             </Button>
             <Button variant="secondary" onClick={() => setDialog('info')} disabled={submitting !== null} className="w-full">
               <MessageSquareText className="size-4" aria-hidden="true" />
               Ask for a document
+              <KeyHint>D</KeyHint>
             </Button>
             <Button
               variant="secondary"
@@ -410,9 +454,17 @@ export function ReviewActions({
             >
               <XCircle className="size-4" aria-hidden="true" />
               Reject
+              <KeyHint>R</KeyHint>
             </Button>
           </div>
-          <p className="text-xs text-secondary">Asking for a document keeps it in the queue.</p>
+          <p className="text-xs text-secondary">
+            Asking for a document keeps it in the queue.
+            {nextHref ? (
+              <span className="mt-1 hidden items-center gap-1.5 lg:flex">
+                <Kbd>J</Kbd> next <Kbd>K</Kbd> previous
+              </span>
+            ) : null}
+          </p>
         </CardBody>
       </Card>
 

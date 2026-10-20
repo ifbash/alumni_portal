@@ -1,17 +1,9 @@
 'use client';
 
 import * as React from 'react';
-import { RotateCw, TriangleAlert, LifeBuoy, Home } from 'lucide-react';
-import {
-  Alert,
-  Button,
-  ButtonLink,
-  Card,
-  CardBody,
-  CardDescription,
-  CardTitle,
-  DetailRow,
-} from '@/components/ui';
+import { Home, RotateCw, TriangleAlert } from 'lucide-react';
+import { Button, ButtonLink } from '@/components/ui';
+import { DetailLine, StatusPanel, TechnicalDetails } from '@/components/status/StatusPanel';
 
 /**
  * The application error boundary.
@@ -25,15 +17,16 @@ import {
  *     error page is the one that stops someone re-submitting a form four
  *     times. Every mutation in this app validates before it writes, so
  *     "nothing was saved" is a claim we can actually make.
- *  3. **Carry the reference.** `error.digest` is the id in the server
- *     logs. Without it on screen, every support conversation starts with
- *     "roughly when was that?".
+ *  3. **Carry the reference, out of the way.** `error.digest` is the id in
+ *     the server logs. It lives under "Technical details": without it,
+ *     every support conversation starts with "roughly when was that?", but
+ *     it is not what a person came here to read.
  *
  * It is a client component — boundaries must be — so it cannot read the
- * tenant's brand pack. It does not need to: every colour, radius and font
- * here resolves through the tokens the root layout has already put in the
- * document head, so it is branded correctly for whichever college this is
- * without knowing which college this is.
+ * tenant's brand pack. It does not need to: the band, the type and the
+ * buttons all resolve through the tokens the root layout has already put
+ * in the document head, so it is branded correctly for whichever college
+ * this is without knowing which college this is.
  */
 
 export default function AppError({
@@ -50,73 +43,43 @@ export default function AppError({
   }, [error]);
 
   return (
-    <main id="main" className="mx-auto flex min-h-dvh max-w-page items-center px-4 py-section sm:px-8">
-      <div className="mx-auto w-full max-w-prose space-y-6 animate-fade-up">
-        <div className="space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-wider text-brand-fg">
-            Something broke
-          </p>
-          <h1 className="font-display text-display-xs font-bold">
-            This page did not finish loading
-          </h1>
-          <p className="text-sm text-secondary">
-            A request to the portal failed on the server. It is not something you did, and it is not
-            a permissions problem — those say so explicitly.
-          </p>
-        </div>
-
-        <Alert
-          tone="warning"
-          title="Nothing you were working on was saved"
-          icon={<TriangleAlert className="size-4" />}
+    <main id="main" className="mx-auto flex min-h-dvh max-w-page items-center px-4 py-10 sm:px-8">
+      <div className="mx-auto w-full max-w-3xl space-y-4">
+        <StatusPanel
+          icon={<TriangleAlert aria-hidden="true" />}
+          eyebrow="Something went wrong"
+          title="This page did not finish loading"
+          actions={
+            <>
+              <Button variant="band" size="lg" onClick={reset}>
+                <RotateCw className="size-4" aria-hidden="true" />
+                Try again
+              </Button>
+              <ButtonLink href="/dashboard" variant="band-outline" size="lg">
+                <Home className="size-4" aria-hidden="true" />
+                Back to the portal
+              </ButtonLink>
+            </>
+          }
         >
-          Every change in the portal is validated before it is written, so a failure at this point
-          means the write never started. If you were part-way through a form, reload and enter it
-          again rather than assuming half of it went through.
-        </Alert>
+          <p>
+            The portal failed on its own side while building this page. It is not something you did,
+            and your session is untouched.
+          </p>
+          <p>
+            Nothing you were working on was saved. Every change is checked before it is written, so
+            a failure here means the write never started. If you were part-way through a form, try
+            again and enter it once more.
+          </p>
+        </StatusPanel>
 
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={reset}>
-            <RotateCw className="size-4" />
-            Try again
-          </Button>
-          <ButtonLink href="/dashboard" variant="secondary">
-            <Home className="size-4" />
-            Back to the portal
-          </ButtonLink>
-        </div>
-
-        <Card>
-          <CardBody className="space-y-4">
-            <div className="space-y-1">
-              <CardTitle as="h2">If it keeps happening</CardTitle>
-              <CardDescription>
-                Send the alumni cell the reference below and what you were doing. It is the
-                fastest thing they can search the server logs on.
-              </CardDescription>
-            </div>
-
-            <dl className="divide-y divide-line">
-              <DetailRow label="Reference">
-                <span className="font-mono text-sm">{error.digest ?? 'not recorded'}</span>
-              </DetailRow>
-              <DetailRow label="What to include">
-                <span className="text-sm text-secondary">
-                  The page you were on, the roll number or record you were looking at, and roughly
-                  when.
-                </span>
-              </DetailRow>
-            </dl>
-
-            <p className="flex items-start gap-2 text-sm text-secondary">
-              <LifeBuoy className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              <span>
-                Your session is untouched — you are still signed in, and nothing about your profile
-                or your connections has changed.
-              </span>
-            </p>
-          </CardBody>
-        </Card>
+        <TechnicalDetails>
+          <DetailLine label="Reference">{error.digest ?? 'not recorded'}</DetailLine>
+          <p>
+            If this keeps happening, send the alumni cell this reference, the page you were on and
+            roughly when it happened. It is what they search the server logs on.
+          </p>
+        </TechnicalDetails>
       </div>
     </main>
   );

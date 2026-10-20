@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
@@ -159,7 +160,8 @@ export default async function DirectoryPage({
 
       <div className="grid grid-cols-1 gap-gutter lg:grid-cols-[18rem_minmax(0,1fr)]">
         <div className="hidden min-w-0 lg:block">
-          <div className="lg:sticky lg:top-20">
+          {/* Sticky, and scrolls inside itself when the facets outgrow the viewport. */}
+          <div className="lg:sticky lg:top-20 lg:max-h-[calc(100dvh-6rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-1 lg:[scrollbar-width:thin]">
             <FilterPanel
               params={params}
               facets={facets}
@@ -197,12 +199,12 @@ export default async function DirectoryPage({
 
           <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-              <h2 className="font-display text-lg font-semibold">
+              <h2 className="font-display text-xl font-semibold">
                 {total === 0 ? (
                   <>No {noun} match</>
                 ) : (
                   <>
-                    <span className="tabular">{total.toLocaleString('en-IN')}</span>{' '}
+                    <span className="tabular text-display-xs font-bold text-brand-fg">{total.toLocaleString('en-IN')}</span>{' '}
                     {total === 1 ? 'person' : 'people'}
                   </>
                 )}
@@ -254,11 +256,11 @@ export default async function DirectoryPage({
               </ul>
               {/* Two across beside the filter rail: three left each card
                   about 260px, which wrapped names and broke the chips. */}
-              <ul className="hidden gap-4 sm:grid sm:grid-cols-2 2xl:grid-cols-3">
-                {items.map((member) => (
+              <ul className="stagger hidden gap-4 sm:grid sm:grid-cols-2 2xl:grid-cols-3">
+                {items.map((member, i) => (
                   // `relative` so the card's overlay link covers the card and
                   // nothing else — the whole tile is the hit target.
-                  <li key={member.id} className="relative min-w-0">
+                  <li key={member.id} className="relative min-w-0" style={{ '--i': Math.min(i, 8) } as CSSProperties}>
                     <MemberCard member={member} className="h-full" isViewer={member.id === session.memberId} />
                   </li>
                 ))}

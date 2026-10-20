@@ -52,41 +52,45 @@ export function StartHere({
         Start here
       </h2>
 
-      <ul className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+      <ul className="grid grid-cols-2 gap-2.5 xl:grid-cols-4">
         {tiles.map((tile) => {
-          const facts = [tile.detail, tile.count != null && tile.count >= 3 ? `${tile.count.toLocaleString('en-IN')} people` : null]
-            .filter(Boolean)
-            .join(' · ');
+          const count = tile.count != null && tile.count >= 3 ? tile.count : null;
           return (
             <li key={tile.key} className="min-w-0">
               <Link
                 href={tile.href}
                 className={cn(
-                  'group flex h-full min-h-14 items-center gap-2.5 rounded-lg border border-line bg-surface-raised px-3 py-2.5 sm:gap-3',
-                  'transition-colors duration-fast ease-brand hover:border-line-strong hover:bg-surface-sunken',
+                  'group lift flex h-full min-h-[5.5rem] flex-col justify-between gap-3 rounded-lg border border-line bg-surface-raised p-3.5',
+                  'hover:bg-brand-soft',
                 )}
               >
-                <span
-                  className="hidden size-9 shrink-0 place-items-center rounded-full bg-brand-soft text-brand-soft-fg min-[420px]:grid xl:hidden 2xl:grid"
-                  aria-hidden="true"
-                >
-                  {ICONS[tile.icon]}
+                <span className="flex items-center justify-between gap-2">
+                  <span
+                    className="grid size-9 shrink-0 place-items-center rounded-full bg-brand-soft text-brand-soft-fg transition-colors duration-fast ease-brand group-hover:bg-surface-raised"
+                    aria-hidden="true"
+                  >
+                    {ICONS[tile.icon]}
+                  </span>
+                  <ArrowRight
+                    className="size-4 shrink-0 text-muted transition-transform duration-fast ease-brand group-hover:translate-x-0.5 group-hover:text-brand-fg"
+                    aria-hidden="true"
+                  />
                 </span>
-                <span className="min-w-0 flex-1">
+                <span className="min-w-0">
                   <span className="block truncate text-sm font-semibold text-primary">{tile.label}</span>
-                  {facts ? <span className="block truncate text-xs text-secondary">{facts}</span> : null}
+                  <span className="mt-0.5 flex items-baseline gap-1.5 text-xs text-secondary">
+                    {tile.detail ? <span className="truncate font-medium">{tile.detail}</span> : null}
+                    {tile.detail && count ? <span aria-hidden="true" className="text-muted">·</span> : null}
+                    {count ? <span className="shrink-0 tabular">{count.toLocaleString('en-IN')} people</span> : null}
+                  </span>
                 </span>
-                <ArrowRight
-                  className="hidden size-4 shrink-0 text-muted transition-transform duration-fast group-hover:translate-x-0.5 sm:block"
-                  aria-hidden="true"
-                />
               </Link>
             </li>
           );
         })}
 
         {employers?.length ? (
-          <li className="col-span-2 min-w-0 rounded-lg border border-line bg-surface-raised px-3 py-2.5">
+          <li className="col-span-2 min-w-0 rounded-lg border border-line bg-surface-raised p-3.5">
             <p className="flex items-center gap-2 text-sm font-semibold text-primary">
               <Building2 className="size-4 text-muted" aria-hidden="true" />
               Top employers

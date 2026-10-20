@@ -63,9 +63,13 @@ export function PendingHome({ session, pack }: { session: Session; pack: BrandPa
               </CardTitle>
             </CardHeader>
             <CardBody>
-              <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {opens.map((o) => (
-                  <li key={o.key} className="flex items-center gap-3 rounded-lg border border-line bg-surface p-3">
+              <ul className="stagger grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {opens.map((o, i) => (
+                  <li
+                    key={o.key}
+                    className="flex items-center gap-3 rounded-lg border border-line bg-surface p-3"
+                    style={{ '--i': i } as React.CSSProperties}
+                  >
                     <span
                       className="grid size-9 shrink-0 place-items-center rounded-full bg-brand-soft text-brand-soft-fg [&>svg]:size-4"
                       aria-hidden="true"

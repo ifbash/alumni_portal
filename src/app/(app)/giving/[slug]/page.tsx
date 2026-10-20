@@ -143,7 +143,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ slug:
                   <Badge tone="warning">{left === 0 ? 'Closes today' : `${left} day${left === 1 ? '' : 's'} left`}</Badge>
                 ) : null}
               </div>
-              <h1 className="font-display text-display-xs font-bold">{title}</h1>
+              <h1 className="font-display text-display-sm font-bold tracking-tight">{title}</h1>
               {description ? <p className="max-w-prose text-md text-secondary">{description}</p> : null}
               <p className="text-sm text-secondary">
                 {startsOn ? `Opened ${formatDate(startsOn, timing)}` : null}
@@ -153,8 +153,8 @@ export default async function CampaignPage({ params }: { params: Promise<{ slug:
             </header>
           </div>
 
-          <Card>
-            <CardBody className="space-y-4">
+          <Card className="shadow-md">
+            <CardBody className="space-y-5">
               {first && active ? (
                 <div className="space-y-1">
                   <p className="font-display text-xl font-semibold">Be the first to give</p>
@@ -168,7 +168,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ slug:
                 <>
                   <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                     <p className="text-sm text-secondary">
-                      <span className="font-display text-display-xs font-bold tabular text-primary">{formatCompactINR(raised)}</span>{' '}
+                      <span className="font-display text-display-sm font-bold tabular text-primary">{formatCompactINR(raised)}</span>{' '}
                       raised
                       {target ? (
                         <>
@@ -183,6 +183,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ slug:
                   </div>
                   {target ? (
                     <Progress
+                      className="h-3"
                       value={raised}
                       max={target}
                       tone={funded ? 'success' : 'brand'}
@@ -193,10 +194,10 @@ export default async function CampaignPage({ params }: { params: Promise<{ slug:
               )}
 
               {figures.length > 0 ? (
-                <dl className="grid grid-cols-2 gap-4 border-t border-line pt-4 sm:grid-cols-4">
+                <dl className="grid grid-cols-2 gap-x-4 gap-y-5 border-t border-line pt-5 sm:grid-cols-4">
                   {figures.map((f) => (
                     <div key={f.label} className="min-w-0 space-y-0.5">
-                      <dt className="text-sm text-secondary">{f.label}</dt>
+                      <dt className="text-xs font-semibold uppercase tracking-[0.12em] text-secondary">{f.label}</dt>
                       <dd className="font-display text-lg font-semibold tabular">{f.value}</dd>
                     </div>
                   ))}
@@ -254,7 +255,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ slug:
 
       {!active && otherOpen.length > 0 ? (
         <Section title="Open now">
-          <ul className="grid grid-cols-1 gap-gutter md:grid-cols-2">
+          <ul className="stagger grid grid-cols-1 gap-gutter md:grid-cols-2">
             {otherOpen.map((c) => (
               <li key={c.id} className="min-w-0">
                 <OpenCard campaign={c} />

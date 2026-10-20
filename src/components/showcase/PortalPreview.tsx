@@ -22,7 +22,7 @@ import type { BrandPack } from '@/lib/branding/pack';
  * redefining the whole token set on one element restyles everything under
  * it, Tailwind utilities included, without touching the host page.
  *
- * It is a picture of a phone screen, not a second copy of the portal:
+ * It is a picture of a phone screen in a browser window, not a second copy of the portal:
  * nothing in it is focusable, and assistive technology gets the caption
  * the showcase puts beside it rather than every word inside it.
  *
@@ -238,7 +238,13 @@ export function PortalPreview({
     <div className={cn('flex flex-col border border-line bg-surface-raised', className)}>
       {/* The frame is the showcase's own chrome, in the house tokens. */}
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
-        <Globe className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
+        {/* Window controls: three empty hairline circles. They read as a browser window and mean nothing else. */}
+        <span aria-hidden="true" className="flex shrink-0 gap-1.5">
+          <span className="size-2.5 rounded-full border border-line-strong" />
+          <span className="size-2.5 rounded-full border border-line-strong" />
+          <span className="size-2.5 rounded-full border border-line-strong" />
+        </span>
+        <Globe className="ml-1 size-3.5 shrink-0 text-muted" aria-hidden="true" />
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-secondary">{address}</span>
         {label ? (
           <span className="shrink-0 border border-line-strong px-1.5 font-mono text-xs uppercase leading-5 tracking-[0.12em] text-secondary">

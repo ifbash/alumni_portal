@@ -186,8 +186,10 @@ export default async function ProfilePreviewPage({
         <div className="min-w-0 space-y-6">
           {seen && summary ? (
             <>
-              <section aria-labelledby="seen-as" className="space-y-3">
-                <h2 id="seen-as" className="text-sm font-semibold text-secondary">
+              {/* A stage rather than another card: what is inside is the preview, what is
+                  outside is the page about it. */}
+              <section aria-labelledby="seen-as" className="space-y-4 rounded-xl bg-surface-sunken p-4 sm:p-5">
+                <h2 id="seen-as" className="eyebrow text-secondary">
                   As {viewerSpec.who} sees you
                 </h2>
                 <div className="grid grid-cols-1 items-start gap-gutter md:grid-cols-2">

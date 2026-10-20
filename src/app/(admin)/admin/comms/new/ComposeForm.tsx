@@ -1005,6 +1005,36 @@ function ChoiceCard({
   );
 }
 
+/**
+ * A phone-width chat pane: a header bar, then the conversation on a sunken
+ * ground. It is a drawing of how the text reads, never a claim about
+ * delivery, so the caption says so.
+ */
+function ChatFrame({
+  title,
+  mark,
+  caption,
+  children,
+}: {
+  title: string;
+  mark?: React.ReactNode;
+  caption: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <figure className="space-y-2">
+      <div className="mx-auto max-w-sm overflow-hidden rounded-xl border border-line-strong bg-surface-raised shadow-sm">
+        <div className="flex items-center gap-2 border-b border-line bg-surface-raised px-3 py-2">
+          {mark ? <span className="shrink-0">{mark}</span> : null}
+          <p className="min-w-0 truncate text-sm font-semibold text-primary">{title}</p>
+        </div>
+        <div className="min-h-40 space-y-2 bg-surface-sunken p-3">{children}</div>
+      </div>
+      <figcaption className="text-center text-xs text-secondary">{caption}</figcaption>
+    </figure>
+  );
+}
+
 function MessagePreview({
   mode,
   channel,
@@ -1031,35 +1061,29 @@ function MessagePreview({
   brandMark: React.ReactNode;
 }) {
   if (mode === 'draft') {
+    const text = draft.trim();
     return (
-      <div className="space-y-2">
-        <p className="text-sm text-secondary">Your post in a batch group</p>
-        <div className="rounded-lg bg-surface-sunken p-3">
-          <p className="ml-auto max-w-[92%] whitespace-pre-line break-words rounded-lg rounded-tr-none border border-line bg-surface-raised p-3 text-sm leading-relaxed text-primary shadow-sm">
-            {draft.trim() || 'The text appears here.'}
-          </p>
-        </div>
-      </div>
+      <ChatFrame title="A batch group" caption="Your post, as it reads in the group.">
+        <p className="ml-auto max-w-[92%] whitespace-pre-line break-words rounded-lg rounded-tr-none border border-line bg-surface-raised p-3 text-sm leading-relaxed text-primary shadow-sm">
+          {text || 'The text appears here.'}
+        </p>
+        {text ? <p className="text-right text-xs tabular text-secondary">{text.length.toLocaleString('en-IN')} characters</p> : null}
+      </ChatFrame>
     );
   }
 
   if (channel === 'whatsapp') {
+    const text = rendered.trim();
     return (
-      <div className="space-y-2">
-        <p className="text-sm text-secondary">To {to}</p>
-        <div className="rounded-lg bg-surface-sunken p-3">
-          <div className="flex items-start gap-2">
-            <span className="shrink-0">{brandMark}</span>
-            <div className="min-w-0 space-y-1.5 rounded-lg rounded-tl-none border border-line bg-surface-raised p-3 text-sm shadow-sm">
-              <p className="text-xs font-semibold text-brand-fg">{portalName}</p>
-              <p className="whitespace-pre-line break-words leading-relaxed text-primary">
-                {rendered.trim() || 'The message appears here, with names filled in.'}
-              </p>
-              {subject.trim() ? <p className="text-xs text-secondary">Template: {subject.trim()}</p> : null}
-            </div>
-          </div>
+      <ChatFrame title={portalName} mark={brandMark} caption={`To ${to}. A preview only: nothing is sent from here.`}>
+        <div className="min-w-0 max-w-[92%] space-y-1.5 rounded-lg rounded-tl-none border border-line bg-surface-raised p-3 text-sm shadow-sm">
+          <p className="whitespace-pre-line break-words leading-relaxed text-primary">
+            {text || 'The message appears here, with names filled in.'}
+          </p>
+          {subject.trim() ? <p className="text-xs text-secondary">Template: {subject.trim()}</p> : null}
         </div>
-      </div>
+        {text ? <p className="text-xs tabular text-secondary">{text.length.toLocaleString('en-IN')} characters</p> : null}
+      </ChatFrame>
     );
   }
 

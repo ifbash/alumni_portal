@@ -18,6 +18,8 @@ export default function AdminEventsLoading() {
         <Skeleton className="h-control w-32 shrink-0 rounded" />
       </div>
 
+      <Skeleton className="h-4 w-96 max-w-full" />
+
       <Card className="flex items-start gap-4 p-card">
         <Skeleton className="h-20 w-16 shrink-0 rounded" />
         <div className="min-w-0 flex-1 space-y-2">

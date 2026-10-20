@@ -16,7 +16,9 @@ import {
 import { getTenantBrand } from '@/lib/tenant';
 import { mailto } from '@/lib/mailto';
 import { rollNumber } from '@/lib/branding/copy';
-import { Alert, ButtonLink, Card, CardBody, Section, Separator } from '@/components/ui';
+import { Alert, ButtonLink, Card, CardBody, Separator } from '@/components/ui';
+import { PageHero } from '@/components/marketing/PageHero';
+import { EditorialSection } from '@/components/marketing/SectionHead';
 import { cn } from '@/lib/cn';
 
 /**
@@ -111,22 +113,12 @@ export default async function ContactPage() {
 
   return (
     <>
-      <section aria-labelledby="contact-title" className="band-surface">
-        <div className="page-shell py-12 lg:py-16">
-          <div className="max-w-prose space-y-3">
-            <p className="text-sm font-semibold text-band-accent">{copy.institutionName}</p>
-            <h1 id="contact-title" className="font-display text-display-md font-bold text-band-fg">
-              Contact the {office}
-            </h1>
-            <p className="text-md text-band-muted">
-              Trouble signing in, a record that needs correcting, or an offer to help: each has its own
-              route below, so your message reaches the right person first time.
-            </p>
-          </div>
-        </div>
-      </section>
+      <PageHero id="contact-title" eyebrow={copy.institutionName} title={`Contact the ${office}`} glyph={copy.shortName}>
+        Trouble signing in, a record that needs correcting, or an offer to help: each has its own route below, so
+        your message reaches the right person first time.
+      </PageHero>
 
-      <div className="page-shell grid gap-12 py-12 md:py-section lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:gap-16">
+      <div className="page-shell grid gap-12 py-14 [counter-reset:sec] md:py-section lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:gap-16">
         <div className="min-w-0 space-y-12 md:space-y-14">
           {!email ? (
             <Alert tone="warning" title="No email address is configured for this portal yet">
@@ -138,7 +130,8 @@ export default async function ContactPage() {
           ) : null}
 
           {/* ------------------------------------------------ Three routes in */}
-          <Section
+          <EditorialSection
+            eyebrow="Routes"
             title="What do you need?"
             description={`Pick the one that matches. Each opens your mail app with the details the ${office} would otherwise have to ask you for.`}
           >
@@ -302,12 +295,13 @@ export default async function ContactPage() {
                 </CardBody>
               </Card>
             </div>
-          </Section>
+          </EditorialSection>
 
           <Separator />
 
           {/* --------------------------------------------- What happens next */}
-          <Section
+          <EditorialSection
+            eyebrow="Next steps"
             title="What happens after you write"
             description={`Who handles each of these, and what the ${office} can and cannot decide.`}
           >
@@ -348,7 +342,7 @@ export default async function ContactPage() {
                 one from this portal will ever ask you for a payment to verify your account.
               </p>
             </Alert>
-          </Section>
+          </EditorialSection>
         </div>
 
         {/* ------------------------------------------------------- The details */}

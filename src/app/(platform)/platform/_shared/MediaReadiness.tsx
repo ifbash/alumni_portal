@@ -6,6 +6,9 @@ import { CircleCheck, Circle, Image as ImageIcon, Images, LogIn, Share2, Shield,
 import type { BrandPack } from '@/lib/branding/pack';
 import type { TenantSummary } from '@/lib/data/types';
 import { cn } from '@/lib/cn';
+import { DEFAULT_PACK } from '@/lib/branding/pack';
+
+import { brandVerdict } from './brand-check';
 
 /**
  * What a college has sent, and what to ask it for.
@@ -79,7 +82,7 @@ export const COLLEGE_ASKS = {
 // Set-up steps
 // ---------------------------------------------------------------
 
-export type SetupKey = 'created' | 'pack' | 'mark' | 'photos' | 'members';
+export type SetupKey = 'created' | 'pack' | 'check' | 'mark' | 'photos';
 
 export interface SetupStep {
   key: SetupKey;
@@ -104,10 +107,13 @@ export function hasPhotos(pack: BrandPack | null): boolean {
 }
 
 /**
- * The five derived steps, in the order they get done. FCRA is not one of
- * them: it is the trust's legal status, not something set-up finishes.
+ * The five derived steps, in the order they get done. Every one is read
+ * from the pack file. "First members" is not among them: whether anyone
+ * has joined is a fact about the college's members, and the vendor holds
+ * no capability that would say. FCRA is not one either: it is the trust's
+ * legal status, not something set-up finishes.
  */
-export function setupSteps(tenant: TenantSummary, pack: BrandPack | null): SetupStep[] {
+export function setupSteps(_tenant: TenantSummary, pack: BrandPack | null): SetupStep[] {
   return [
     { key: 'created', label: 'College created', done: true, ask: '' },
     {
@@ -116,14 +122,16 @@ export function setupSteps(tenant: TenantSummary, pack: BrandPack | null): Setup
       done: pack !== null,
       ask: 'Pick a starting pack from Brand packs until the college’s own is written.',
     },
+    {
+      key: 'check',
+      label: 'Brand check passed',
+      done: pack !== null && !brandVerdict(pack).blocked,
+      ask: pack
+        ? 'Some colour pairings in the pack fail contrast. Run npm run brand:check; it names each one.'
+        : 'Assign a pack first; the check runs on its colours.',
+    },
     { key: 'mark', label: 'Crest or logo', done: hasMark(pack), ask: COLLEGE_ASKS.brand.ask },
     { key: 'photos', label: 'Campus photos', done: hasPhotos(pack), ask: COLLEGE_ASKS.photos.ask },
-    {
-      key: 'members',
-      label: 'First members',
-      done: tenant.memberCount > 0,
-      ask: 'Members arrive once the first admin is in and the college shares its registration link.',
-    },
   ];
 }
 
@@ -210,6 +218,12 @@ function slots(pack: BrandPack): Slot[] {
 /** A `url()` for a pack path, with the one character that could end it escaped. */
 function cssUrl(src: string): string {
   return `url("${src.replace(/"/g, '%22')}")`;
+}
+
+/** How many media slots a pack has filled, for a meter. No pack: none of them. */
+export function mediaSummary(pack: BrandPack | null): { present: number; total: number } {
+  const all = slots(pack ?? DEFAULT_PACK);
+  return { present: pack ? all.filter((s) => s.src).length : 0, total: all.length };
 }
 
 export function MediaReadiness({
@@ -305,10 +319,8 @@ export function MediaReadiness({
           <ul className="mt-3 grid gap-x-8 gap-y-3 md:grid-cols-2">
             {missing.map((s) => (
               <li key={s.key} className="flex min-w-0 gap-3">
-                <span
-                  className="grid size-8 shrink-0 place-items-center rounded-full bg-surface-sunken text-secondary [&>svg]:size-4"
-                  aria-hidden="true"
-                >
+                {/* Bare, per the house rule: no tile behind an icon. */}
+                <span className="mt-0.5 shrink-0 text-secondary [&>svg]:size-4" aria-hidden="true">
                   {s.icon}
                 </span>
                 <div className="min-w-0">

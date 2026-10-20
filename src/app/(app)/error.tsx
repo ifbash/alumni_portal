@@ -1,8 +1,9 @@
 'use client';
 
 import * as React from 'react';
-import { Home, RotateCw } from 'lucide-react';
-import { Button, ButtonLink, Card, CardBody, DetailRow, PageHeader } from '@/components/ui';
+import { Home, RotateCw, TriangleAlert } from 'lucide-react';
+import { Button, ButtonLink, Card, CardBody, DetailRow } from '@/components/ui';
+import { NotFoundPanel } from './_components/NotFoundPanel';
 
 /**
  * The member portal's error boundary.
@@ -28,26 +29,28 @@ export default function AppError({
   }, [error]);
 
   return (
-    <div className="max-w-prose space-y-6">
-      <PageHeader
+    <div className="space-y-6">
+      <NotFoundPanel
+        numeral={null}
+        eyebrow="Something went wrong"
+        icon={<TriangleAlert />}
         title="This page could not be shown"
-        description="Something went wrong, or this page is not open to your account."
+        description="Something went wrong, or this page is not open to your account. If you were filling in a form, open it again before saving."
+        action={
+          <>
+            <Button onClick={reset} className="min-h-11">
+              <RotateCw className="size-4" aria-hidden="true" />
+              Try again
+            </Button>
+            <ButtonLink href="/dashboard" variant="secondary" className="min-h-11">
+              <Home className="size-4" aria-hidden="true" />
+              Back to home
+            </ButtonLink>
+          </>
+        }
       />
 
-      <div className="flex flex-wrap gap-2">
-        <Button onClick={reset}>
-          <RotateCw className="size-4" aria-hidden="true" />
-          Try again
-        </Button>
-        <ButtonLink href="/dashboard" variant="secondary">
-          <Home className="size-4" aria-hidden="true" />
-          Back to home
-        </ButtonLink>
-      </div>
-
-      <p className="text-sm text-secondary">If you were filling in a form, open it again before saving.</p>
-
-      <Card>
+      <Card className="max-w-prose">
         <CardBody className="space-y-3">
           <p className="text-sm text-secondary">
             If it keeps happening, send the office that runs this portal the reference below.

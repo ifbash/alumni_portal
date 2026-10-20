@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { Camera, Images, Info, Ticket } from 'lucide-react';
 
@@ -10,20 +9,20 @@ import { getDepartments, getEventBySlug, searchDirectory } from '@/lib/data/repo
 import { getAlbumBySlug, getAlbumPhotos, getAlbums, type GalleryAlbum } from '@/lib/data/content';
 import type { MemberSummary } from '@/lib/data/types';
 import {
-  Badge,
   Breadcrumbs,
-  CoverArt,
+  ButtonLink,
   EmptyState,
-  MediaFrame,
   Section,
   ShareActions,
   Tooltip,
 } from '@/components/ui';
-import { AlbumCard, isContributed, parseContributor } from '@/components/content';
+import { BandChip, PageBand } from '@/components/brand/PageBand';
+import { AlbumCard, parseContributor } from '@/components/content';
 import { formatDate, memberLine } from '@/lib/format';
 import { mailto } from '@/lib/mailto';
 import { albumShareText } from '@/lib/share-text';
 import { siteOrigin, whatsappShareUrl } from '@/lib/share';
+import { OutlineNumeral } from '@/app/(app)/directory/batch/OutlineNumeral';
 import { PhotoWall, type PhotoTag, type WallPhoto } from './Lightbox';
 
 /**
@@ -114,7 +113,6 @@ export default async function AlbumPage({ params }: { params: Promise<{ slug: st
   const photoCount =
     shown.length > 0 ? `${album.photoCount.toLocaleString('en-IN')} photo${album.photoCount === 1 ? '' : 's'}` : null;
   const date = formatDate(album.takenOn, locale);
-  const facts = [date, photoCount, creditLine].filter(Boolean).join(' · ');
   const place = memberLine([branchName, album.batchYear ? `Batch of ${album.batchYear}` : null]);
 
   const origin = await siteOrigin();
@@ -144,77 +142,64 @@ export default async function AlbumPage({ params }: { params: Promise<{ slug: st
   ];
   if (rows.length === 0 && others.length > 0) rows.push({ title: 'More albums', albums: others.slice(0, 4) });
 
-  const actions = (
-    <div className="space-y-3">
-      <ShareActions
-        url={url}
-        whatsappHref={whatsappShareUrl(albumShareText(pack, album), url)}
-        title={album.title}
-        size="sm"
-      />
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-        {event ? (
-          <Link href={`/events/${event.slug}`} className="link inline-flex min-h-11 items-center gap-1.5 text-sm">
-            <Ticket className="size-4 shrink-0 text-muted" aria-hidden="true" />
-            From the event: {event.title}
-          </Link>
-        ) : null}
-        {addHref ? (
-          <a href={addHref} className="link inline-flex min-h-11 items-center gap-1.5 text-sm">
-            <Camera className="size-4 shrink-0 text-muted" aria-hidden="true" />
-            Add your photos
-          </a>
-        ) : null}
-      </div>
-    </div>
+  // The band carries the album: its cover behind the scrim at lg when there
+  // is one, otherwise the batch, branch or year as a giant outlined numeral.
+  // Actions sit on the band in the band's own button variants.
+  const bandPhoto = coverSrc ? { src: coverSrc, alt: '', focus: '50% 50%' } : null;
+  const motif = album.batchYear ? String(album.batchYear) : (album.departmentCode ?? date.slice(-4));
+
+  const band = (
+    <PageBand
+      pack={pack}
+      eyebrow={place || 'Photos'}
+      title={album.title}
+      lead={album.description ?? undefined}
+      photo={bandPhoto}
+      photoOnPhones
+      aside={bandPhoto ? undefined : <OutlineNumeral>{motif}</OutlineNumeral>}
+      meta={
+        <>
+          <BandChip icon={<Camera />}>{date}</BandChip>
+          {photoCount ? <BandChip icon={<Images />}>{photoCount}</BandChip> : null}
+          <BandChip>{creditLine}</BandChip>
+          {contributor ? <BandChip>Contributed</BandChip> : null}
+        </>
+      }
+      actions={
+        <div className="w-full space-y-3">
+          <ShareActions
+            band
+            url={url}
+            whatsappHref={whatsappShareUrl(albumShareText(pack, album), url)}
+            title={album.title}
+            size="sm"
+          />
+          {event || addHref ? (
+            <div className="flex flex-wrap gap-2">
+              {event ? (
+                <ButtonLink href={`/events/${event.slug}`} variant="band-outline" size="sm" className="min-h-11">
+                  <Ticket className="size-4 shrink-0" aria-hidden="true" />
+                  From the event: {event.title}
+                </ButtonLink>
+              ) : null}
+              {addHref ? (
+                <ButtonLink href={addHref} variant="band-outline" size="sm" className="min-h-11">
+                  <Camera className="size-4 shrink-0" aria-hidden="true" />
+                  Add your photos
+                </ButtonLink>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      }
+    />
   );
 
   return (
     <div className="space-y-8">
       <div className="space-y-4">
         <Breadcrumbs items={[{ label: 'Photos', href: '/gallery' }, { label: album.title }]} />
-
-        {coverSrc ? (
-          <>
-            <MediaFrame
-              src={coverSrc}
-              alt=""
-              aspect="16/9"
-              loading="eager"
-              className="lg:[&>div]:aspect-[21/9]"
-              overlay={
-                <div className="space-y-1">
-                  {place ? <p className="text-sm font-semibold">{place}</p> : null}
-                  <h1 className="font-display text-display-sm font-bold text-band-fg">{album.title}</h1>
-                  <p className="text-sm">{facts}</p>
-                </div>
-              }
-            />
-            {contributor ? <Badge tone="accent">Contributed</Badge> : null}
-            {album.description ? <p className="max-w-prose text-md text-secondary">{album.description}</p> : null}
-            {actions}
-          </>
-        ) : (
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-[18rem_minmax(0,1fr)] lg:items-start lg:gap-8">
-            <div className="aspect-[5/2] overflow-hidden rounded-lg border border-line lg:aspect-[3/2]">
-              <CoverArt
-                motif={album.batchYear ? String(album.batchYear) : (album.departmentCode ?? date.slice(-4))}
-                label={photoCount ?? undefined}
-                tone={isContributed(album) ? 'accent' : 'brand'}
-              />
-            </div>
-            <div className="min-w-0 space-y-3">
-              {place ? <p className="text-xs font-semibold uppercase tracking-wider text-brand-fg">{place}</p> : null}
-              <h1 className="font-display text-display-sm font-bold">{album.title}</h1>
-              <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-secondary">
-                <span>{facts}</span>
-                {contributor ? <Badge tone="accent">Contributed</Badge> : null}
-              </p>
-              {album.description ? <p className="max-w-prose text-md text-secondary">{album.description}</p> : null}
-              <div className="pt-1">{actions}</div>
-            </div>
-          </div>
-        )}
+        {band}
       </div>
 
       {shown.length === 0 ? (

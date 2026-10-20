@@ -21,25 +21,26 @@ export default function MentorshipLoading() {
 
       <div className="space-y-4">
         <Skeleton className="h-6 w-48" />
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
-            <Card key={i}>
-              <CardBody className="space-y-4">
-                <div className="flex items-start gap-3">
-                  <Skeleton className="size-10 shrink-0 rounded" />
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <Skeleton className="h-4 w-3/4" />
-                    <Skeleton className="h-3 w-full" />
-                    <Skeleton className="h-3 w-2/3" />
-                  </div>
+            <Card key={i} className={i === 0 ? 'xl:col-span-2' : undefined}>
+              <CardBody className="flex h-full flex-col space-y-4">
+                <div className="flex items-start justify-between">
+                  <Skeleton className="size-11 rounded-full" />
+                  <Skeleton className="h-8 w-12" />
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-2/3" />
+                  <Skeleton className="h-3 w-full" />
+                  <Skeleton className="h-3 w-3/4" />
+                </div>
+                <div className="flex items-center justify-between border-t border-line pt-4">
                   <div className="flex -space-x-2">
                     {[0, 1, 2].map((j) => (
                       <Skeleton key={j} className="size-8 rounded-full" />
                     ))}
                   </div>
-                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-4 w-20" />
                 </div>
               </CardBody>
             </Card>

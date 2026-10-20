@@ -9,6 +9,7 @@ import { NOTICE_VERSION } from '@/lib/config';
 import { rollNumber } from '@/lib/branding/copy';
 import { yearIn } from '@/lib/format';
 import { Alert } from '@/components/ui';
+import { AuthHeader } from '../_components/AuthHeader';
 import { ClaimForm } from './ClaimForm';
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -84,25 +85,41 @@ export default async function RegistrationPage({ searchParams }: { searchParams:
   const departments = getDepartments().map((d) => ({ code: d.code, name: d.name }));
 
   return (
-    <div className="space-y-8">
-      <header className="space-y-3">
-        <p className="text-sm font-semibold text-brand-fg">
-          {initialYear ? `Batch of ${initialYear}` : `${copy.shortName} alumni`}
-        </p>
-        <h1 className="font-display text-display-sm font-bold">Alumni registration</h1>
-        <p className="text-secondary">
-          For graduates of {copy.institutionName}. Keep your {roll.mid} handy — it is on your{' '}
-          {roll.sourcesMid[0]} and {roll.sourcesMid[1]}. It takes about two minutes.
-        </p>
-        <p className="text-sm text-secondary">
-          Already registered?{' '}
-          <Link className="link" href="/login">
-            Sign in
-          </Link>
-        </p>
-      </header>
+    <div className="stagger space-y-8">
+      <div className="relative">
+        {/* The batch from a forwarded link, as a large outline: the product's idea, decoration only. */}
+        {initialYear ? (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute -top-3 right-0 hidden select-none font-display text-[4rem] font-bold leading-none tabular text-transparent [-webkit-text-stroke:1.5px_color-mix(in_srgb,var(--brand-500)_38%,transparent)] sm:block"
+          >
+            {initialYear}
+          </span>
+        ) : null}
+        <AuthHeader
+          className="relative"
+          eyebrow={initialYear ? `Batch of ${initialYear}` : `${copy.shortName} alumni`}
+          title="Alumni registration"
+        >
+          <p>
+            For graduates of {copy.institutionName}. Keep your {roll.mid} handy — it is on your{' '}
+            {roll.sourcesMid[0]} and {roll.sourcesMid[1]}. It takes about two minutes.
+          </p>
+          <p className="text-sm">
+            Already registered?{' '}
+            <Link className="link" href="/login">
+              Sign in
+            </Link>
+          </p>
+        </AuthHeader>
+      </div>
 
-      <Alert tone="neutral" icon={<GraduationCap className="size-4" />} title="Final-year student?">
+      <Alert
+        style={{ '--i': 1 } as React.CSSProperties}
+        tone="neutral"
+        icon={<GraduationCap className="size-4" />}
+        title="Final-year student?"
+      >
         <p>
           You do not need to register. The placement cell adds your batch and emails you an
           invitation — then you simply <Link href="/login">sign in</Link>. Not received yours?{' '}

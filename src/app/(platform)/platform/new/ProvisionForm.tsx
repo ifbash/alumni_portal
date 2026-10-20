@@ -47,7 +47,9 @@ import { api, outcomeToast, type ApiOutcome } from '@/lib/client/api';
 import { cn } from '@/lib/cn';
 import type { BrandPack, Feature } from '@/lib/branding/pack';
 
+import type { BrandVerdict } from '../_shared/brand-check';
 import { MiniPortal } from '../_shared/MiniPortal';
+import { LABEL as MONO_LABEL, VerdictText } from '../_shared/parts';
 
 /**
  * Setting up a college.
@@ -89,6 +91,8 @@ export interface PackChoice {
   inUseBy: string[];
   /** Where the pack answers on its own, for a live look. */
   previewHref: string;
+  /** The pack's `brand:check` result, worked out on the server. */
+  verdict: BrandVerdict;
 }
 
 type Plan = 'trial' | 'standard' | 'institution';
@@ -571,7 +575,7 @@ export function ProvisionForm({
           {/* Step indicator. Buttons, not links — nothing is in the URL until
               the college exists, and a shareable half-filled form is a trap. */}
           <nav aria-label="Set-up steps">
-            <ol className="grid grid-cols-3 gap-2 sm:flex">
+            <ol className="grid grid-cols-3 gap-3 sm:gap-5">
               {steps.map((s) => {
                 const active = s.n === step;
                 const done = s.n < step;
@@ -582,28 +586,28 @@ export function ProvisionForm({
                       onClick={() => goToStep(s.n)}
                       aria-current={active ? 'step' : undefined}
                       className={cn(
-                        'flex min-h-11 w-full items-center gap-2 whitespace-nowrap rounded-lg border px-3 text-sm font-medium',
-                        'transition-colors duration-fast ease-brand',
-                        active
-                          ? 'border-line-strong bg-surface-raised text-primary shadow-sm'
-                          : 'border-line text-secondary hover:bg-surface-sunken hover:text-primary',
+                        'group block min-h-11 w-full border-t-2 pt-3 text-left transition-colors duration-fast ease-brand',
+                        active ? 'border-[var(--button-primary-bg)]' : done ? 'border-accent-fg' : 'border-line hover:border-line-strong',
                       )}
                     >
                       <span
-                        className={cn(
-                          'grid size-5 shrink-0 place-items-center rounded-full text-xs',
-                          done
-                            ? 'bg-success text-success-on'
-                            : active
-                              ? 'bg-[var(--button-primary-bg)] text-[var(--button-primary-fg)]'
-                              : 'bg-surface-sunken text-secondary',
+                        className={cn(MONO_LABEL,
+                          'block tabular',
+                          done ? 'text-accent-fg' : active ? 'text-primary' : null,
                         )}
-                        aria-hidden="true"
                       >
-                        {done ? '✓' : s.n}
+                        {String(s.n).padStart(2, '0')}
+                        {done ? <span> · done</span> : null}
                       </span>
-                      <span className="sm:hidden">{s.short}</span>
-                      <span className="hidden sm:inline">{s.label}</span>
+                      <span
+                        className={cn(
+                          'mt-1 block truncate text-sm font-medium',
+                          active ? 'text-primary' : 'text-secondary group-hover:text-primary',
+                        )}
+                      >
+                        <span className="sm:hidden">{s.short}</span>
+                        <span className="hidden sm:inline">{s.label}</span>
+                      </span>
                     </button>
                   </li>
                 );
@@ -757,6 +761,12 @@ export function ProvisionForm({
                       <PackGroup title="Already in use" packs={inUse} value={packId} onChange={setPackId} />
                     ) : null}
                   </fieldset>
+
+                  {pack?.verdict.blocked ? (
+                    <Alert tone="danger" icon={<CircleAlert className="size-4" />}>
+                      <p>This pack fails the brand check, so it cannot be published. Pick another, or fix its colours first.</p>
+                    </Alert>
+                  ) : null}
 
                   {pack && !pack.template && pack.inUseBy.length ? (
                     <Alert tone="warning" icon={<CircleAlert className="size-4" />}>
@@ -1068,7 +1078,8 @@ export function ProvisionForm({
           <Card>
             <CardBody className="space-y-4">
               <div className="space-y-1">
-                <p className="text-xs font-semibold uppercase tracking-wider text-secondary">Address</p>
+                <p className="eyebrow font-mono text-brand-fg">Preview</p>
+                <p className={cn(MONO_LABEL, 'pt-2')}>Address</p>
                 <p className="break-all font-mono text-md font-semibold text-primary">{host}</p>
                 <p className="text-sm text-secondary">
                   {shortName.trim() || institution.trim() ? (
@@ -1083,6 +1094,12 @@ export function ProvisionForm({
               </div>
               {pack ? (
                 <MiniPortal pack={pack.pack} css={pack.css} fontHref={pack.fontHref} names={names} size="sm" />
+              ) : null}
+              {pack ? (
+                <p className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
+                  <span className={MONO_LABEL}>Brand check</span>
+                  <VerdictText verdict={pack.verdict} />
+                </p>
               ) : null}
               <p className="border-t border-line pt-3 text-xs text-secondary">
                 <span className="font-medium">Technical</span>{' '}
@@ -1159,7 +1176,7 @@ function PackGroup({
 }) {
   return (
     <div className="space-y-2">
-      <p className="text-xs font-semibold uppercase tracking-wider text-secondary">{title}</p>
+      <p className={MONO_LABEL}>{title}</p>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {packs.map((p) => {
           const selected = value === p.id;
@@ -1192,6 +1209,7 @@ function PackGroup({
                   <span className="block truncate text-xs text-secondary">
                     {p.inUseBy.length && !p.template ? `In use by ${p.inUseBy.join(', ')}` : p.institutionName}
                   </span>
+                  <VerdictText verdict={p.verdict} className="mt-1 text-xs" />
                 </span>
                 {selected ? (
                   <CircleCheck className="size-5 shrink-0 text-brand-fg" aria-hidden="true" />
@@ -1362,10 +1380,8 @@ function CreateItem({
 }) {
   return (
     <li className="flex gap-3">
-      <span
-        className="grid size-7 shrink-0 place-items-center rounded-full bg-brand-soft text-brand-soft-fg"
-        aria-hidden="true"
-      >
+      {/* Bare, per the house rule: no tile behind an icon. */}
+      <span className="mt-0.5 shrink-0 text-accent-fg" aria-hidden="true">
         {icon}
       </span>
       <div className="min-w-0 space-y-1">

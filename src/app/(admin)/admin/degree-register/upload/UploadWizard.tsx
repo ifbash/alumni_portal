@@ -190,9 +190,14 @@ interface ImportReport {
 
 const STEP_LABELS = ['Choose the file', 'Map the columns', 'Dry run', 'Commit'];
 
+/**
+ * A rail, not a row of pills: four nodes joined by a line that fills as
+ * steps complete. Below sm only the current step is named, so the rail
+ * never wraps; the full list stays in the accessible name.
+ */
 function Steps({ current }: { current: number }) {
   return (
-    <ol className="flex flex-wrap gap-2" aria-label="Import steps">
+    <ol className="flex items-center" aria-label="Import steps">
       {STEP_LABELS.map((label, i) => {
         const n = i + 1;
         const done = n < current;
@@ -201,23 +206,36 @@ function Steps({ current }: { current: number }) {
           <li
             key={label}
             aria-current={active ? 'step' : undefined}
-            className={cn(
-              'flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold',
-              active && 'border-line-strong bg-brand-soft text-brand-soft-fg',
-              done && 'border-line bg-surface-sunken text-secondary',
-              !active && !done && 'border-line bg-surface text-secondary',
-            )}
+            className={cn('flex items-center', n < STEP_LABELS.length && 'flex-1')}
           >
-            <span
-              className={cn(
-                'grid size-5 shrink-0 place-items-center rounded-full text-xs tabular',
-                active ? 'bg-[var(--button-primary-bg)] text-[var(--button-primary-fg)]' : 'bg-surface-sunken',
-              )}
-              aria-hidden="true"
-            >
-              {done ? <Check className="size-3" /> : n}
+            <span className="flex shrink-0 items-center gap-2">
+              <span
+                className={cn(
+                  'grid size-7 shrink-0 place-items-center rounded-full text-xs font-semibold tabular',
+                  active && 'bg-[var(--button-primary-bg)] text-[var(--button-primary-fg)] shadow-sm',
+                  done && 'bg-brand-soft text-brand-soft-fg',
+                  !active && !done && 'border border-line-strong bg-surface-raised text-secondary',
+                )}
+                aria-hidden="true"
+              >
+                {done ? <Check className="size-3.5" /> : n}
+              </span>
+              <span
+                className={cn(
+                  'text-sm',
+                  active ? 'font-semibold text-primary' : 'hidden text-secondary sm:inline',
+                )}
+              >
+                {label}
+                <span className="sr-only">{done ? ' (done)' : ''}</span>
+              </span>
             </span>
-            {label}
+            {n < STEP_LABELS.length ? (
+              <span
+                aria-hidden="true"
+                className={cn('mx-3 h-px min-w-4 flex-1', done ? 'bg-[var(--button-primary-bg)]' : 'bg-line-strong')}
+              />
+            ) : null}
           </li>
         );
       })}
@@ -630,28 +648,46 @@ export function UploadWizard({
             </div>
           </CardHeader>
           <CardBody className="space-y-5">
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div className="rounded-lg border border-line bg-surface p-4">
-                <p className="text-sm text-secondary">New rows</p>
-                <p className="font-display text-display-xs font-bold tabular text-success-fg">
-                  {preview.counts.new}
+            {/* The hero moment: what committing would add, in numerals big
+                enough to read from across a desk, and the two counts that
+                would otherwise surprise somebody. */}
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="flex flex-col justify-between gap-2 rounded-lg border border-line bg-success-soft p-5">
+                <p className="text-sm font-medium text-success-fg">Would be added</p>
+                <p className="font-display text-display-lg font-bold leading-none tabular text-success-fg">
+                  {preview.counts.new.toLocaleString('en-IN')}
                 </p>
-                <p className="text-xs text-secondary">Graduates who become verifiable</p>
+                <p className="text-sm text-success-fg">
+                  {preview.counts.new === 1 ? 'graduate becomes' : 'graduates become'} verifiable
+                </p>
               </div>
-              <div className="rounded-lg border border-line bg-surface p-4">
-                <p className="text-sm text-secondary">Already present</p>
-                <p className="font-display text-display-xs font-bold tabular">{preview.counts.duplicate}</p>
+              <div className="flex flex-col justify-between gap-2 rounded-lg border border-line bg-surface p-5">
+                <p className="text-sm font-medium text-secondary">Already present</p>
+                <p className="font-display text-display-md font-bold leading-none tabular">
+                  {preview.counts.duplicate.toLocaleString('en-IN')}
+                </p>
                 <p className="text-xs text-secondary">
                   {preview.counts.duplicateInRegister} in the register · {preview.counts.duplicateInFile} repeated in
                   the file
                 </p>
               </div>
-              <div className="rounded-lg border border-line bg-surface p-4">
-                <p className="text-sm text-secondary">Rejected</p>
-                <p className="font-display text-display-xs font-bold tabular text-danger-fg">
-                  {preview.counts.rejected}
+              <div
+                className={cn(
+                  'flex flex-col justify-between gap-2 rounded-lg border p-5',
+                  preview.counts.rejected > 0
+                    ? 'border-line bg-danger-soft text-danger-fg'
+                    : 'border-line bg-surface',
+                )}
+              >
+                <p className={cn('text-sm font-medium', preview.counts.rejected > 0 ? 'text-danger-fg' : 'text-secondary')}>
+                  Refused
                 </p>
-                <p className="text-xs text-secondary">Listed row by row below</p>
+                <p className="font-display text-display-md font-bold leading-none tabular">
+                  {preview.counts.rejected.toLocaleString('en-IN')}
+                </p>
+                <p className={cn('text-xs', preview.counts.rejected > 0 ? 'text-danger-fg' : 'text-secondary')}>
+                  {preview.counts.rejected > 0 ? 'Listed row by row below' : 'Every row was usable'}
+                </p>
               </div>
             </div>
 

@@ -1,4 +1,4 @@
-import { Github, Globe, Linkedin, Lock, Mail, Phone } from 'lucide-react';
+import { Github, Globe, Linkedin, Lock, LockOpen, Mail, Phone } from 'lucide-react';
 import { Badge, Card, CardBody, CardTitle } from '@/components/ui';
 import { firstNameOf } from '@/lib/identity';
 import type { ContactDetails } from '@/lib/data/types';
@@ -86,6 +86,8 @@ export function ContactBlock({
       );
     }
 
+    // Styling only: the rows and sentences are exactly what the projection released.
+
     const because = viewerIsOwner ? 'owner' : (releasedBecause ?? (hasAcceptedConnection ? 'connection' : undefined));
     const footnote =
       because === 'connection'
@@ -97,24 +99,35 @@ export function ContactBlock({
             : null;
 
     return (
-      <Card>
-        <CardBody className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
+      <Card className="overflow-hidden">
+        {/* The unlocked state: a success-tinted header, so "released" is a different object from "withheld" at a glance. */}
+        <div className="flex items-center justify-between gap-3 border-b border-line bg-success-soft px-5 py-3.5">
+          <div className="flex items-center gap-2.5">
+            <span
+              aria-hidden="true"
+              className="grid size-8 shrink-0 place-items-center rounded-full bg-surface-raised text-success-fg shadow-sm"
+            >
+              <LockOpen className="size-4" />
+            </span>
             <CardTitle as="h2">Contact</CardTitle>
-            {because === 'owner' ? <Badge tone="neutral">Only you see this</Badge> : null}
           </div>
-
+          {because === 'owner' ? <Badge tone="neutral">Only you see this</Badge> : null}
+        </div>
+        <CardBody className="space-y-3">
           <dl className="space-y-2">
             {rows.map((r) => (
-              <div key={r!.label} className="relative flex min-h-11 items-center gap-2.5 text-sm sm:min-h-0">
-                <dt className="flex items-center gap-2.5 text-muted">
+              <div
+                key={r!.label}
+                className="group relative flex min-h-11 items-center gap-3 rounded-lg border border-line bg-surface-sunken px-3 text-sm transition-colors duration-fast ease-brand hover:border-line-strong hover:bg-surface-raised sm:min-h-10"
+              >
+                <dt className="flex items-center gap-2.5 text-brand-fg">
                   <span aria-hidden="true">{r!.icon}</span>
                   <span className="sr-only">{r!.label}</span>
                 </dt>
                 <dd className="min-w-0 truncate">
                   <a
                     href={r!.href}
-                    className="link after:absolute after:inset-0"
+                    className="link font-medium after:absolute after:inset-0 after:rounded-lg"
                     {...(r!.href.startsWith('http') ? { target: '_blank', rel: 'noreferrer noopener' } : {})}
                   >
                     {r!.value}
@@ -124,26 +137,31 @@ export function ContactBlock({
             ))}
           </dl>
 
-          {footnote ? <p className="border-t border-line pt-3 text-xs text-secondary">{footnote}</p> : null}
+          {footnote ? <p className="text-xs text-secondary">{footnote}</p> : null}
         </CardBody>
       </Card>
     );
   }
 
   return (
-    <Card>
-      <CardBody className="space-y-3">
-        <CardTitle as="h2">Contact</CardTitle>
-
-        <div className="flex items-start gap-2.5 text-sm">
-          <Lock className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-          <div className="min-w-0 space-y-1">
-            <p className="font-medium text-primary">Email and mobile are private</p>
-            <p className="text-secondary">{withheldReason(visibility, first)}</p>
-          </div>
+    <Card className="overflow-hidden">
+      <CardBody className="space-y-4">
+        <div className="flex items-center gap-2.5">
+          <span
+            aria-hidden="true"
+            className="grid size-8 shrink-0 place-items-center rounded-full bg-surface-sunken text-secondary ring-1 ring-inset ring-line"
+          >
+            <Lock className="size-4" />
+          </span>
+          <CardTitle as="h2">Contact</CardTitle>
         </div>
 
-        {action ? <div className="pt-1">{action}</div> : null}
+        <div className="rounded-lg bg-surface-sunken p-3.5 text-sm">
+          <p className="font-medium text-primary">Email and mobile are private</p>
+          <p className="mt-1 text-secondary">{withheldReason(visibility, first)}</p>
+        </div>
+
+        {action ? <div>{action}</div> : null}
       </CardBody>
     </Card>
   );

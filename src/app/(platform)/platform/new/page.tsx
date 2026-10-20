@@ -1,17 +1,17 @@
 import { redirect } from 'next/navigation';
-import { Clock } from 'lucide-react';
-
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap } from '@/lib/auth/guard';
 import { getTenants, findMemberById } from '@/lib/data/repo';
 import { listPacks, getPack, HOUSE_PACK_ID, DEMO_PACK_IDS } from '@/lib/branding/registry';
 import { readableTextOn } from '@/lib/branding/color';
 import { googleFontsHref } from '@/lib/branding/tokens';
-import { Badge, Breadcrumbs, PageHeader } from '@/components/ui';
+import { Breadcrumbs } from '@/components/ui';
 
 import { ProvisionForm, type PackChoice } from './ProvisionForm';
+import { brandVerdict } from '../_shared/brand-check';
 import { COLLEGE_ASKS } from '../_shared/MediaReadiness';
 import { miniPortalCss } from '../_shared/MiniPortal';
+import { ConsoleBand } from '../_shared/parts';
 import { portalAddress, portalRoot } from '../_shared/portal-address';
 import { VendorTrustChip } from '../_shared/VendorTrustChip';
 
@@ -68,6 +68,7 @@ export default async function ProvisionPage() {
           template: isTemplate(p.id),
           inUseBy: tenants.filter((t) => t.packId === p.id).map((t) => t.name),
           previewHref: (await portalAddress(p.id)).href,
+          verdict: brandVerdict(pack),
         };
         return choice;
       }),
@@ -87,19 +88,15 @@ export default async function ProvisionPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        breadcrumbs={
-          <Breadcrumbs items={[{ label: 'Colleges', href: '/platform' }, { label: 'Set up a new college' }]} />
-        }
+      <div className="flex flex-col items-start gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4">
+        <Breadcrumbs items={[{ label: 'Colleges', href: '/platform' }, { label: 'Set up a new college' }]} />
+        <VendorTrustChip />
+      </div>
+
+      <ConsoleBand
+        eyebrow="Platform / Set up"
         title="Set up a new college"
-        description="Name it, give it an address and a look. Its admin gets an invite; the college adds its own people."
-        meta={<VendorTrustChip />}
-        actions={
-          <Badge tone="outline">
-            <Clock className="size-3.5" aria-hidden="true" />
-            About ten minutes
-          </Badge>
-        }
+        lead="Name it, give it an address and a look. Its admin gets an invite; the college adds its own people. About ten minutes."
       />
 
       <ProvisionForm

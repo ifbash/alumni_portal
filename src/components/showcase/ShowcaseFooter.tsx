@@ -8,14 +8,14 @@ import { LABEL, SHOWCASE_NAV } from './styles';
 import type { ShowcaseLinks } from './links';
 
 /**
- * The product site's footer. Light, under a hairline: the one dark field
- * on the page is the call to action just above it.
+ * The product site's footer. Light, under a hairline: the page's one dark
+ * field is the hero at the top.
  *
  * Everything about the company comes from the house pack's copy. An
  * address renders only if the pack carries one; nothing is invented here.
  */
 const LINK =
-  'inline-flex min-h-11 items-center text-base text-secondary underline-offset-4 transition-colors duration-fast ease-brand hover:text-primary hover:underline';
+  'inline-flex min-h-11 items-center text-base lg:min-h-9 text-secondary underline-offset-4 transition-colors duration-fast ease-brand hover:text-primary hover:underline';
 
 function displayUrl(url: string): string {
   try {
@@ -62,7 +62,7 @@ export function ShowcaseFooter({ pack, links }: { pack: BrandPack; links: Showca
 
   return (
     <footer className="mt-auto border-t border-line bg-surface">
-      <div className="page-shell py-12 lg:py-16">
+      <div className="page-shell py-10 lg:py-12">
         <div className="grid grid-cols-2 gap-x-8 gap-y-10 sm:grid-cols-3 lg:grid-cols-[minmax(0,1.6fr)_repeat(3,minmax(0,1fr))]">
           <div className="col-span-2 space-y-4 sm:col-span-3 lg:col-span-1">
             <Logo pack={pack} height={28} />
@@ -107,7 +107,7 @@ export function ShowcaseFooter({ pack, links }: { pack: BrandPack; links: Showca
             ))}
         </div>
 
-        <div className="mt-10 flex flex-col gap-2 border-t border-line pt-6 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mt-8 flex flex-col gap-2 border-t border-line pt-6 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-secondary">
             © {year} {copy.institutionName}
           </p>

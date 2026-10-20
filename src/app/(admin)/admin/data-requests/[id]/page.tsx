@@ -31,6 +31,7 @@ import {
   STATE_TONE,
   dueStatus,
 } from '../dpdp';
+import { ClockBar } from '../ClockBar';
 import { RequestActions } from '../RequestActions';
 
 export const metadata = { title: 'Data request · Staff console' };
@@ -175,6 +176,29 @@ export default async function DataRequestPage({ params }: { params: Promise<{ id
               </span>
             </CardHeader>
             <CardBody className="space-y-4">
+              {due.open ? (
+                // The 30-day clock, large: what is left (or how late), and how
+                // much of the window has gone.
+                <div className="space-y-2">
+                  <p className={cn('flex items-baseline gap-2', dueTone)}>
+                    <span className="font-display text-display-sm font-bold leading-none tabular">
+                      {Math.abs(due.days)}
+                    </span>
+                    <span className="text-sm font-semibold">
+                      {due.overdue
+                        ? `${Math.abs(due.days) === 1 ? 'day' : 'days'} overdue`
+                        : due.days === 0
+                          ? 'days left, due today'
+                          : `${due.days === 1 ? 'day' : 'days'} left`}
+                    </span>
+                  </p>
+                  <ClockBar due={due} />
+                  <p className="text-xs text-secondary tabular">
+                    Day {Math.min(RESPONSE_WINDOW_DAYS, Math.max(0, RESPONSE_WINDOW_DAYS - due.days))} of{' '}
+                    {RESPONSE_WINDOW_DAYS}
+                  </p>
+                </div>
+              ) : null}
               {due.open ? (
                 <p className="text-sm text-secondary">
                   {due.detail} Deadline{' '}

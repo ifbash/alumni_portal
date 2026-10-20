@@ -1,12 +1,12 @@
+import * as React from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { ChevronDown, ChevronRight, Search, Users } from 'lucide-react';
+import { ChevronDown, Search, Users } from 'lucide-react';
 import { getSessionMember } from '@/lib/auth/session';
 import { can, require as requireCap } from '@/lib/auth/guard';
 import { getDepartments, getMembersForAdminView, getVerificationClaims } from '@/lib/data/repo';
 import type { MemberStatus, MemberSummary } from '@/lib/data/types';
 import {
-  Avatar,
   Badge,
   Breadcrumbs,
   Button,
@@ -16,19 +16,14 @@ import {
   PageHeader,
   Pagination,
   Select,
-  Table,
-  TableWrap,
+  SummaryLine,
   Tabs,
-  TBody,
-  TD,
-  TH,
-  THead,
-  TR,
   type TabItem,
 } from '@/components/ui';
 import { MemberRow } from '@/components/members/MemberCard';
 import { formatNumber, memberLine } from '@/lib/format';
 import { ExportDialog } from './ExportDialog';
+import { MembersTable } from './MembersTable';
 import { STATUS_META, STATUS_ORDER } from './status';
 
 export const metadata = { title: 'Members · Staff console' };
@@ -162,6 +157,15 @@ export default async function AdminMembersPage({
   const queued = status === 'pending' && canReview ? getVerificationClaims(session, { status: 'queued' }).length : 0;
 
   const filtered = Boolean(q || department);
+
+  // What needs a person at the top of a list page, not a second row of tab
+  // counts: the tabs already carry the cohort sizes.
+  const summary: React.ComponentProps<typeof SummaryLine>['items'] = [
+    ...(filtered ? [{ value: result.total, label: filtered && q ? `match "${q}"` : 'match this branch' }] : []),
+    { value: countFor('pending'), label: 'awaiting verification', href: buildHref({ q, department, status: 'pending' }), tone: 'attention' },
+    { value: countFor('invited'), label: 'invited, not yet signed in', href: buildHref({ q, department, status: 'invited' }) },
+    { value: countFor('unclaimed'), label: 'not yet registered', href: buildHref({ q, department, status: 'unclaimed' }) },
+  ];
   const scopeLabel = memberLine([
     STATUS_ORDER.includes(status as MemberStatus) ? STATUS_META[status as MemberStatus].label : 'All statuses',
     department ? departments.find((d) => d.code === department)?.name ?? department : 'All branches',
@@ -215,6 +219,8 @@ export default async function AdminMembersPage({
           ) : null
         }
       />
+
+      <SummaryLine items={summary} />
 
       <form method="get" action="/admin/members" role="search" className="flex flex-wrap items-center gap-2">
         {status !== 'all' ? <input type="hidden" name="status" value={status} /> : null}
@@ -320,56 +326,9 @@ export default async function AdminMembersPage({
             ))}
           </ul>
 
-          <TableWrap caption="Member records" className="hidden sm:block">
-            <Table>
-              <THead>
-                <TR>
-                  <TH>Name</TH>
-                  <TH>Batch</TH>
-                  <TH>Work</TH>
-                  <TH>Roll number</TH>
-                  <TH className="w-8">
-                    <span className="sr-only">Open</span>
-                  </TH>
-                </TR>
-              </THead>
-              <TBody>
-                {rows.map((r) => (
-                  <TR key={r.id} interactive className="relative">
-                    <TD>
-                      <div className="flex items-center gap-3">
-                        <Avatar name={r.fullName} src={r.photoUrl} size="sm" />
-                        <div className="min-w-0">
-                          <span className="flex flex-wrap items-center gap-2">
-                            <Link
-                              href={`/admin/members/${r.id}`}
-                              className="font-medium text-primary after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:rounded focus-visible:after:ring-2 focus-visible:after:ring-[var(--focus-ring)]"
-                            >
-                              {r.fullName}
-                            </Link>
-                            {statusBadge(r)}
-                          </span>
-                          {r.preferredName ? (
-                            <span className="block text-xs text-secondary">Goes by {r.preferredName}</span>
-                          ) : null}
-                        </div>
-                      </div>
-                    </TD>
-                    <TD className="whitespace-nowrap">{memberLine([r.departmentCode, r.batchYear]) || '—'}</TD>
-                    <TD className="max-w-80">
-                      <span className="block truncate text-secondary">
-                        {memberLine([r.designation, r.currentCompany, r.city]) || '—'}
-                      </span>
-                    </TD>
-                    <TD className="whitespace-nowrap font-mono text-xs text-secondary">{r.rollNumber ?? '—'}</TD>
-                    <TD align="right">
-                      <ChevronRight className="size-4 text-muted" aria-hidden="true" />
-                    </TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
-          </TableWrap>
+          <div className="hidden sm:block">
+            <MembersTable rows={rows} />
+          </div>
         </>
       )}
 

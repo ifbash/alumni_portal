@@ -16,7 +16,6 @@ import {
   Field,
   Fieldset,
   Input,
-  Progress,
   Radio,
   Select,
   Switch,
@@ -381,24 +380,12 @@ export function WelcomeWizard({
     return (
       <StartContext.Provider value={() => setStage('steps')}>
         {intro}
-        <section aria-labelledby="welcome-steps-title" className="rounded-lg border border-line bg-surface-raised p-card shadow-sm">
-          <h2 id="welcome-steps-title" className="text-sm font-semibold text-primary">
+        <section aria-labelledby="welcome-steps-title" className="ring-hairline relative rounded-xl border border-line bg-surface-raised p-card shadow-sm">
+          <h2 id="welcome-steps-title" className="eyebrow text-secondary">
             Four short steps
           </h2>
-          <ol className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
-            {steps.map((s, i) => (
-              <li key={s.label} className="flex items-center gap-2.5 text-sm text-primary">
-                <span
-                  className="grid size-7 shrink-0 place-items-center rounded-full bg-brand-soft text-xs font-semibold tabular text-brand-soft-fg"
-                  aria-hidden="true"
-                >
-                  {i + 1}
-                </span>
-                {s.long}
-              </li>
-            ))}
-          </ol>
-          <p className="mt-3 text-sm text-secondary">Each one saves on its own, and you can skip any of them.</p>
+          <Stepper steps={steps.map((s) => s.long)} current={-1} className="mt-5" />
+          <p className="mt-5 text-sm text-secondary">Each one saves on its own, and you can skip any of them.</p>
         </section>
       </StartContext.Provider>
     );
@@ -435,32 +422,7 @@ export function WelcomeWizard({
           </Link>
         </div>
 
-        <Progress
-          value={step}
-          max={STEP_COUNT}
-          tone="brand"
-          label={`Step ${step + 1} of ${STEP_COUNT}`}
-        />
-
-        <ol className="hidden gap-x-5 text-xs text-secondary sm:flex">
-          {steps.map((s, i) => (
-            <li
-              key={s.label}
-              className={cn('inline-flex items-center gap-1', i === step && 'font-semibold text-primary')}
-              aria-current={i === step ? 'step' : undefined}
-            >
-              {i < step ? (
-                <>
-                  <Check className="size-3.5 text-success-fg" aria-hidden="true" />
-                  <span className="sr-only">Done: </span>
-                </>
-              ) : (
-                <span className="tabular">{i + 1}.</span>
-              )}
-              {s.label}
-            </li>
-          ))}
-        </ol>
+        <Stepper steps={steps.map((s) => s.label)} current={step} className="pt-2" />
       </div>
 
       <form onSubmit={onSubmit}>
@@ -841,6 +803,58 @@ export function WelcomeWizard({
 // ---------------------------------------------------------------
 // Pieces
 // ---------------------------------------------------------------
+
+/**
+ * The steps as a connected row: a numbered node per step, a rail between
+ * them that fills with the brand colour as the member moves on. Done steps
+ * carry a tick (and "Done" for a screen reader), the current step a ring.
+ * `current` of -1 is the preview before the first step. On a phone only
+ * the current label shows, so four nodes always fit.
+ */
+function Stepper({ steps, current, className }: { steps: string[]; current: number; className?: string }) {
+  return (
+    <ol className={cn('flex items-start', className)}>
+      {steps.map((label, i) => {
+        const done = i < current;
+        const here = i === current;
+        return (
+          <li key={label} className="relative flex min-w-0 flex-1 flex-col items-center" aria-current={here ? 'step' : undefined}>
+            {i > 0 ? (
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'absolute left-[-50%] right-[50%] top-4 h-0.5 -translate-y-1/2 rounded-full transition-colors duration-slow ease-brand',
+                  i <= current ? 'bg-[var(--button-primary-bg)]' : 'bg-line',
+                )}
+              />
+            ) : null}
+            <span
+              aria-hidden="true"
+              className={cn(
+                'relative z-10 grid size-8 place-items-center rounded-full text-xs font-semibold tabular transition-[background-color,box-shadow] duration-slow ease-brand',
+                done && 'bg-[var(--button-primary-bg)] text-[var(--button-primary-fg)]',
+                here &&
+                  'border-2 border-[var(--button-primary-bg)] bg-surface-raised text-brand-fg shadow-[0_0_0_4px_color-mix(in_srgb,var(--button-primary-bg)_18%,transparent)]',
+                !done && !here && 'border border-line bg-surface-sunken text-secondary',
+              )}
+            >
+              {done ? <Check className="size-4" /> : i + 1}
+            </span>
+            {done ? <span className="sr-only">Done: </span> : null}
+            <span
+              className={cn(
+                'mt-2 px-1 text-center text-xs leading-snug',
+                here ? 'block font-semibold text-primary' : current === -1 ? 'block text-primary' : 'hidden text-secondary sm:block',
+              )}
+            >
+              {label}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
 
 /**
  * A radio option with the weight of a card.

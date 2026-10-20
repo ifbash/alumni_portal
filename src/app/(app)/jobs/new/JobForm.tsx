@@ -25,7 +25,7 @@ import {
   describedBy,
   useToast,
 } from '@/components/ui';
-import { JobSummary, type JobSummaryData } from '@/components/content';
+import { JobTile, type JobTileData } from '../JobCard';
 import { cn } from '@/lib/cn';
 import type { LocaleSpec } from '@/lib/branding/pack';
 import type { MemberSummary } from '@/lib/data/types';
@@ -237,7 +237,7 @@ export function JobForm({
   };
 
   // The card as students will see it, from what has been typed so far.
-  const preview: JobSummaryData = {
+  const preview: JobTileData = {
     id: 'preview',
     title: form.title.trim() || 'Role title',
     company: form.company.trim() || 'Company',
@@ -248,12 +248,14 @@ export function JobForm({
     closesOn: form.closesOn || null,
     postedBy: poster,
     viewerHasApplied: false,
+    skills,
+    description: form.description.trim() || null,
   };
 
   const previewCard = (
     // `inert`: a picture of the card, not a second set of links.
     <div inert>
-      <JobSummary job={preview} href="/jobs" locale={locale} variant="card" showPoster />
+      <JobTile job={preview} href="/jobs" locale={locale} showPoster />
     </div>
   );
 
@@ -319,7 +321,7 @@ export function JobForm({
 
         <CardBody>
           <form onSubmit={onSubmit} noValidate className="space-y-8">
-            <Group legend="The role">
+            <Group n={1} legend="The role">
               <Field htmlFor="job-title" label="Role title" required error={errors.title}>
                 <Input
                   id="job-title"
@@ -368,7 +370,7 @@ export function JobForm({
               />
             </Group>
 
-            <Group legend="Who you want">
+            <Group n={2} legend="Who you want">
               <Field htmlFor="job-experience" label="Experience">
                 <Select
                   id="job-experience"
@@ -408,7 +410,7 @@ export function JobForm({
               ) : null}
             </Group>
 
-            <Group legend="Details">
+            <Group n={3} legend="Details">
               <Field
                 htmlFor="job-salary"
                 label="Pay"
@@ -536,7 +538,7 @@ export function JobForm({
       </Card>
 
       <aside aria-label={`Preview for ${shortName} final-year students`} className="hidden space-y-4 lg:sticky lg:top-20 lg:block lg:self-start">
-        <p className="text-sm font-semibold text-secondary">What students will see</p>
+        <p className="eyebrow text-xs text-secondary">What students will see</p>
         {previewCard}
         {steps}
       </aside>
@@ -545,10 +547,18 @@ export function JobForm({
 }
 
 /** A form section with a heading-weight legend. */
-function Group({ legend, children }: { legend: string; children: React.ReactNode }) {
+function Group({ n, legend, children }: { n: number; legend: string; children: React.ReactNode }) {
   return (
     <fieldset className="min-w-0 space-y-5">
-      <legend className="font-display text-md font-semibold text-primary">{legend}</legend>
+      <legend className="flex items-center gap-2.5 font-display text-md font-semibold text-primary">
+        <span
+          className="grid size-6 place-items-center rounded-full bg-brand-soft text-xs font-bold tabular text-brand-soft-fg"
+          aria-hidden="true"
+        >
+          {n}
+        </span>
+        {legend}
+      </legend>
       {children}
     </fieldset>
   );
@@ -562,11 +572,11 @@ function ReviewSteps({ reviewLine }: { reviewLine: string | null }) {
   ];
   return (
     <div className="space-y-3 rounded-lg border border-line bg-surface-raised p-4">
-      <ol className="space-y-2.5">
+      <ol className="relative space-y-3.5 before:absolute before:bottom-2.5 before:left-[0.5625rem] before:top-2.5 before:w-px before:bg-line before:content-['']">
         {items.map((label, i) => (
-          <li key={label} className="flex items-start gap-2.5 text-sm">
+          <li key={label} className="relative flex items-start gap-2.5 text-sm">
             <span
-              className="grid size-5 shrink-0 place-items-center rounded-full bg-brand-soft text-xs font-semibold tabular text-brand-soft-fg"
+              className="relative z-[1] grid size-5 shrink-0 place-items-center rounded-full bg-brand-soft text-xs font-semibold tabular text-brand-soft-fg ring-4 ring-[var(--surface-raised)]"
               aria-hidden="true"
             >
               {i + 1}

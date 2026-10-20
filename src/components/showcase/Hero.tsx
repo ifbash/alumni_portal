@@ -1,27 +1,30 @@
 import * as React from 'react';
 import { ArrowRight, ArrowUpRight } from 'lucide-react';
 import { ButtonLink } from '@/components/ui';
-import { Scribble } from '@/components/brand/Marks';
 import { PACKS, DEMO_PACK_IDS } from '@/lib/branding/registry';
 import { cn } from '@/lib/cn';
 import type { BrandPack } from '@/lib/branding/pack';
 import { PortalPreview, PreviewStyles, previewScreen } from './PortalPreview';
-import { EYEBROW } from './styles';
 import type { ShowcaseLinks } from './links';
 
 /**
- * The first screen of the product site.
+ * The first screen of the product site, and the page's one dark field.
  *
  * Written for a principal, a T&P officer or a trust member deciding
- * whether this is worth a call. The headline is the promise, the subhead
- * says what the thing is in one breath, and the visual proves the
- * white-label claim instead of asserting it: three colleges' real brand
- * packs, rendered through the real resolver, side by side.
+ * whether this is worth a call. The headline is the promise; the visual
+ * proves the white-label claim instead of asserting it: three colleges'
+ * real brand packs, rendered through the real resolver, as browser windows
+ * on an aubergine field. The windows rise in turn, float, tilt toward the
+ * visitor and settle flat under the pointer. They are cropped by the
+ * hero's floor, so the page seems to continue under them.
  */
 
 /** Left to right on a laptop. The college with photographs sits in the middle and leads on a phone. */
 const PREVIEWS = ['diet', 'srivarsity', 'northgate'] as const;
 const LEAD = 'srivarsity';
+
+/** Where each window stands on a laptop (see ShowcaseStyles): left and right lean in, the middle faces front. */
+const STANCE: Record<string, string> = { diet: 'sc-dev sc-dev-l', srivarsity: 'sc-dev sc-dev-m z-10', northgate: 'sc-dev sc-dev-r' };
 
 const CORNERS: Record<BrandPack['shape']['radius'], string> = {
   none: 'square',
@@ -46,153 +49,158 @@ function specLine(pack: BrandPack): string {
   return [colours, faces, corners, photos, ...door].join(' · ');
 }
 
-/** The headline, with its last promise underlined in the marker. Plain if the wording changes. */
+/** The headline, with its last promise in the band's accent: the portal's own emphasis rule. Plain if the wording changes. */
 function Headline({ text, mark }: { text: string; mark: string }) {
   const at = text.lastIndexOf(mark);
   if (at < 0) return <>{text}</>;
   return (
     <>
       {text.slice(0, at)}
-      <span className="relative inline-block">
-        {mark}
-        <Scribble className="absolute -bottom-[0.12em] left-0 h-[0.18em] w-full" />
-      </span>
+      <span className="text-band-accent">{mark}</span>
       {text.slice(at + mark.length)}
     </>
   );
 }
 
+const step = (i: number) => ({ '--i': i }) as React.CSSProperties;
+
 export function Hero({ pack, links }: { pack: BrandPack; links: ShowcaseLinks }) {
   const previews = PREVIEWS.map((id) => PACKS[id]).filter((p): p is BrandPack => Boolean(p));
   const headline = pack.copy.tagline ?? 'The alumni network your college actually owns.';
-  // A pack on the stage whose landing page is switched off, named in the note under the frames.
-  const signInOnly = previews.find((p) => previewScreen(p) === 'sign-in');
 
   return (
-    <section aria-labelledby="showcase-title">
+    <section aria-labelledby="showcase-title" className="sc-field band-surface grain relative overflow-hidden">
       <PreviewStyles packs={previews} />
+      <div className="aurora" aria-hidden="true" />
 
-      <div className="page-shell pb-12 pt-12 lg:pb-14 lg:pt-14">
-        <div className="grid gap-y-8 lg:grid-cols-12 lg:items-end lg:gap-x-12">
-          <div className="lg:col-span-7">
-            <p className={EYEBROW}>Alumni portal for Indian engineering colleges</p>
-            <h1
-              id="showcase-title"
-              className="mt-5 max-w-[15ch] font-display text-display-xl font-bold text-primary"
-            >
-              <Headline text={headline} mark="owns" />
-            </h1>
-          </div>
+      <div className="page-shell relative z-10 pt-10 lg:pt-14">
+        <div className="stagger">
+          <p
+            style={step(0)}
+            className="font-mono text-xs font-medium uppercase tracking-[0.14em] text-band-accent"
+          >
+            Alumni portal for Indian engineering colleges
+          </p>
+          <h1
+            id="showcase-title"
+            style={step(1)}
+            className="mt-4 max-w-[17ch] font-display text-display-xl font-bold text-band-fg [text-wrap:balance] lg:max-w-[22ch] lg:text-[length:calc(var(--display-xl)*1.2)]"
+          >
+            <Headline text={headline} mark="owns" />
+          </h1>
+        </div>
 
-          <div className="lg:col-span-5 lg:pb-2">
-            <p className="text-lg text-secondary">
-              One network for your final-year students and alumni, in your college&rsquo;s own name, colours
-              and photographs. Every alumni registration is checked against your degree register, and
-              ifBash&rsquo;s own admin account has no permission to open a profile or search your directory.
-            </p>
+        <div className="stagger mt-5 grid gap-x-12 gap-y-5 lg:grid-cols-12 lg:items-center">
+          <p style={step(2)} className="text-md text-band-muted lg:col-span-7">
+            One network for final-year students and alumni, in your college&rsquo;s own name, colours and
+            photographs. Every alumni registration is checked against your degree register, and
+            ifBash&rsquo;s own admin account has no permission to open a profile or search your directory.
+          </p>
 
-            <div className="mt-7 flex flex-wrap gap-3">
-              {links.requestDemo ? (
-                <ButtonLink href={links.requestDemo} size="lg" className="min-h-11">
-                  Request a demo
-                  <ArrowRight className="size-4" aria-hidden="true" />
-                </ButtonLink>
-              ) : null}
-              {links.demoCollege ? (
-                <ButtonLink href={links.demoCollege} variant="secondary" size="lg" className="min-h-11">
-                  See a demo college
-                  <ArrowUpRight className="size-4" aria-hidden="true" />
-                </ButtonLink>
-              ) : null}
-            </div>
-
-            <p className="mt-4 text-sm text-secondary">
-              The demo college is fictional and runs on sample data.
-            </p>
+          <div style={step(3)} className="flex flex-wrap gap-3 lg:col-span-5 lg:justify-end">
+            {links.requestDemo ? (
+              <ButtonLink href={links.requestDemo} variant="band" size="lg" className="min-h-11">
+                Request a demo
+                <ArrowRight className="size-4" aria-hidden="true" />
+              </ButtonLink>
+            ) : null}
+            {links.demoCollege ? (
+              <ButtonLink href={links.demoCollege} variant="band-outline" size="lg" className="min-h-11">
+                See a demo college
+                <ArrowUpRight className="size-4" aria-hidden="true" />
+              </ButtonLink>
+            ) : null}
           </div>
         </div>
       </div>
 
       {/* The stage: the same portal in three brand packs. */}
-      <div className="border-y border-line bg-surface-sunken pb-10 pt-8 lg:pb-14 lg:pt-10">
-        {/* Says what the frames are before a reader has to work it out, and survives a crop of the stage. */}
-        <div className="page-shell mb-6 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1.5">
-          <p className={EYEBROW}>One product · three colleges</p>
-          <p className="text-base text-secondary">The same code in every frame. Only each college&rsquo;s JSON file differs.</p>
+      <div className="relative z-10 mt-8 lg:mt-9">
+        <div className="page-shell mb-3 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+          <p className="font-mono text-xs font-medium uppercase tracking-[0.14em] text-band-accent">
+            One product · three colleges
+          </p>
+          <p className="text-sm text-band-muted">The same code in every frame. Only each college&rsquo;s JSON file differs.</p>
         </div>
 
-        <div
-          className={cn(
-            'snap-x snap-mandatory overflow-x-auto overscroll-x-contain [scroll-padding-inline:clamp(16px,4vw,32px)]',
-            'lg:snap-none lg:overflow-visible',
-          )}
-        >
-          <ul
-            aria-label="The same portal wearing three colleges’ brand packs"
+        {/* On a laptop the windows are cropped by the hero's floor; on a phone they scroll sideways. */}
+        <div className="relative lg:h-[23rem] lg:overflow-hidden lg:pt-3">
+          <div
             className={cn(
-              'page-shell flex gap-4 lg:grid lg:grid-cols-3 lg:gap-8',
-              // Room after the last frame when the row scrolls on a phone.
-              "after:block after:w-px after:shrink-0 after:content-[''] lg:after:hidden",
+              'snap-x snap-mandatory overflow-x-auto overscroll-x-contain [scroll-padding-inline:clamp(16px,4vw,32px)]',
+              'lg:snap-none lg:overflow-visible',
             )}
           >
-            {previews.map((p) => (
-              <li
-                key={p.id}
-                className={cn(
-                  // `relative` keeps the caption's sr-only text inside the scroller's clip.
-                  'relative w-[84%] max-w-[24rem] shrink-0 snap-start sm:w-[22rem] lg:w-auto lg:max-w-none',
-                  p.id === LEAD && 'order-first lg:order-none',
-                )}
-              >
-                <figure className="m-0">
-                  <PortalPreview
-                    pack={p}
-                    host={links.hostFor(p.id)}
-                    label={isDemo(p.id) ? 'Demo' : 'Preview'}
-                    // Tall enough that every frame's Register / Sign in row sits clear of the fade at its foot.
-                    className="h-[37rem]"
-                  />
-                  <figcaption className="mt-4 flex gap-3">
-                    {/* The college's band colour, from its own scoped tokens. */}
-                    <span aria-hidden="true" className={cn(`pv-${p.id}`, 'mt-1.5 size-3.5 shrink-0 bg-band')} />
-                    <span className="min-w-0">
-                      <span className="block font-display text-lg font-bold text-primary">
-                        {p.copy.portalName}
-                        <span className="sr-only">
-                          , a phone-sized preview of its {previewScreen(p) === 'sign-in' ? 'sign-in page' : 'landing page'}
+            <ul
+              aria-label="The same portal wearing three colleges’ brand packs"
+              className={cn(
+                'sc-stage page-shell flex gap-4 pb-8 lg:grid lg:grid-cols-3 lg:gap-8 lg:pb-0',
+                // Room after the last frame when the row scrolls on a phone.
+                "after:block after:w-px after:shrink-0 after:content-[''] lg:after:hidden",
+              )}
+            >
+              {previews.map((p, i) => (
+                <li
+                  key={p.id}
+                  className={cn(
+                    // `relative` keeps the caption's sr-only text inside the scroller's clip.
+                    'relative w-[84%] max-w-[24rem] shrink-0 snap-start sm:w-[22rem] lg:w-auto lg:max-w-none',
+                    STANCE[p.id],
+                    p.id === LEAD && 'order-first lg:order-none',
+                  )}
+                >
+                  <div className="sc-rise" style={step(i)}>
+                    <figure className="sc-float m-0" style={{ animationDelay: `${i * -2.3}s` }}>
+                      <figcaption className="mb-3 flex gap-3">
+                        {/* The college's band colour, from its own scoped tokens. */}
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            `pv-${p.id}`,
+                            'mt-1.5 size-3.5 shrink-0 border border-[color-mix(in_srgb,var(--band-fg)_45%,transparent)] bg-band',
+                          )}
+                        />
+                        <span className="min-w-0">
+                          <span className="block font-display text-lg font-bold text-band-fg">
+                            {p.copy.portalName}
+                            <span className="ml-2 align-middle font-mono text-xs font-medium uppercase tracking-[0.12em] text-band-muted">
+                              {isDemo(p.id) ? 'Fictional' : 'First college'}
+                            </span>
+                            <span className="sr-only">
+                              , {p.copy.institutionName}: a phone-sized preview of its{' '}
+                              {previewScreen(p) === 'sign-in' ? 'sign-in page' : 'landing page'}
+                            </span>
+                          </span>
+                          <span className="block font-mono text-xs text-band-muted">{specLine(p)}</span>
                         </span>
-                      </span>
-                      <span className="block text-sm text-secondary">
-                        {p.copy.institutionName} · {isDemo(p.id) ? 'fictional demo college' : 'our first college'}
-                      </span>
-                      <span className="mt-1.5 block font-mono text-xs text-secondary">{specLine(p)}</span>
-                    </span>
-                  </figcaption>
-                </figure>
-              </li>
-            ))}
-          </ul>
+                      </figcaption>
+                      <PortalPreview
+                        pack={p}
+                        host={links.hostFor(p.id)}
+                        label={isDemo(p.id) ? 'Demo' : 'Preview'}
+                        // Tall enough that the crop, not the frame, ends the window on a laptop.
+                        className="sc-window h-[30rem] lg:h-[34rem]"
+                      />
+                    </figure>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* The hero's floor: the windows sink into the field instead of stopping at a line. */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-20 hidden h-28 bg-[linear-gradient(to_bottom,transparent,var(--band))] lg:block"
+          />
         </div>
 
-        <div className="page-shell mt-10 grid gap-4 lg:grid-cols-12 lg:gap-12">
-          <p className="text-base text-primary lg:col-span-7">
-            <span className="font-semibold">Same product, three brand packs.</span> Every colour, typeface,
-            corner, photograph and name in these screens comes from one JSON file per college, through the
-            same resolver and contrast check the portal itself runs.
-            {signInOnly ? (
-              <>
-                {' '}
-                So does the screen each address opens on: {signInOnly.copy.institutionName} has switched its
-                public landing page off, so its members start at sign-in.
-              </>
-            ) : null}
-          </p>
-          <p className="text-sm text-secondary lg:col-span-5">
-            DIET&rsquo;s colours are placeholders until the college sends its official values. Tamarind
-            Grove University and Northgate Polytechnic are fictional demonstration colleges; their photographs are
-            illustrative.
-          </p>
-        </div>
+        {/* Names what is fictional before a reader has to ask, and survives a crop of the stage. */}
+        <p className="page-shell relative z-30 pb-6 pt-3 text-xs text-band-muted lg:pb-7">
+          The demo college is fictional and runs on sample data. DIET&rsquo;s colours are placeholders until the college
+          sends its official values. Tamarind Grove University and Northgate Polytechnic are fictional, and their
+          photographs are illustrative.
+        </p>
       </div>
     </section>
   );

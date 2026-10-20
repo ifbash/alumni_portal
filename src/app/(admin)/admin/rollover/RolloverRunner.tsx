@@ -11,6 +11,7 @@ import {
   ButtonLink,
   Card,
   CardBody,
+  Checkbox,
   ConfirmDialog,
   EmptyState,
   Field,
@@ -121,6 +122,8 @@ export function RolloverRunner({
   const [year, setYear] = React.useState<number | null>(batches[0]?.year ?? null);
   const [preview, setPreview] = React.useState<RolloverPreview | null>(null);
   const [confirming, setConfirming] = React.useState(false);
+  // Reading the preview is a deliberate act, not a side effect of scrolling past it.
+  const [ackedYear, setAckedYear] = React.useState<number | null>(null);
   const [running, setRunning] = React.useState<'dry' | 'execute' | null>(null);
   const [refused, setRefused] = React.useState<string | null>(null);
   const [done, setDone] = React.useState<{ result: RolloverResult; persisted: boolean } | null>(null);
@@ -133,6 +136,7 @@ export function RolloverRunner({
     if (year === null) return;
     setRunning('dry');
     setRefused(null);
+    setAckedYear(null);
 
     // `dryRun` is stated, never omitted. The endpoint has no default and
     // refuses a body without it, which is the behaviour that makes a
@@ -359,24 +363,49 @@ export function RolloverRunner({
               </div>
             ) : (
               <div className="space-y-4 text-sm">
-                <p className="font-display text-lg font-semibold">
-                  {preview.moves.count} final-year students become alumni.
-                </p>
+                {/* The number the decision turns on, set big, with the two
+                    facts that change for those people beside it. */}
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+                  <div className="rounded-lg border border-line bg-surface-sunken p-5">
+                    <p className="text-sm font-medium text-secondary">Batch of {preview.batchYear} would move</p>
+                    <p className="mt-2 font-display text-display-lg font-bold leading-none tabular">
+                      {preview.moves.count.toLocaleString('en-IN')}
+                    </p>
+                    <p className="mt-2 text-sm">final-year students become alumni.</p>
+                  </div>
+                  <dl className="space-y-3 rounded-lg border border-line p-5">
+                    <div>
+                      <dt className="text-xs font-semibold uppercase tracking-wide text-secondary">Request limit</dt>
+                      <dd className="mt-1 font-display text-lg font-semibold tabular">
+                        {preview.changes.connectionQuota.before}
+                        <ArrowRight className="mx-1.5 inline size-4 align-[-2px] text-muted" aria-hidden="true" />
+                        {preview.changes.connectionQuota.after}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs font-semibold uppercase tracking-wide text-secondary">Register rows</dt>
+                      <dd className="mt-1 text-sm">
+                        <span className="font-semibold tabular">{preview.reachability.withRegisterRow}</span> matched
+                        {preview.reachability.withoutRegisterRow > 0 ? (
+                          <>
+                            , <span className="font-semibold tabular text-warning-fg">{preview.reachability.withoutRegisterRow}</span> without a row yet
+                          </>
+                        ) : null}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
                 <ul className="list-disc space-y-1.5 pl-5 text-secondary">
                   <li>
                     They can post jobs and receive mentorship and referral requests
                     {donations ? ', and give to campaigns' : ''}.
                   </li>
-                  <li>
-                    Their request limit goes from {preview.changes.connectionQuota.before} to{' '}
-                    {preview.changes.connectionQuota.after}.
-                  </li>
                   <li>Their academic and placement data stays with placement staff.</li>
                   <li>Their contact settings, connections, registrations and applications stay as they are.</li>
                   {preview.reachability.withoutRegisterRow > 0 ? (
                     <li>
-                      {preview.reachability.withoutRegisterRow} have no register row yet. They are verified by the rollover
-                      and linked to their row when the {preview.batchYear} files are loaded.
+                      Those without a row are verified by the rollover and linked to it when the {preview.batchYear}{' '}
+                      files are loaded.
                     </li>
                   ) : null}
                 </ul>
@@ -398,11 +427,25 @@ export function RolloverRunner({
           {/* ---- 3 ---- */}
           <Step n={3} title="Run" state={preview ? 'current' : 'waiting'}>
             {preview ? (
-              <div className="space-y-3">
-                <p className="text-sm text-secondary">
-                  There is no undo inside the portal. You will be asked to type the batch year to confirm.
+              <div className="space-y-4 rounded-lg border border-[color-mix(in_srgb,var(--danger)_40%,var(--border))] bg-[color-mix(in_srgb,var(--danger)_5%,var(--surface-raised))] p-4">
+                <p className="flex items-start gap-2 text-sm">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-danger-fg" aria-hidden="true" />
+                  <span>
+                    <span className="font-semibold">There is no undo inside the portal.</span> You will be asked to type
+                    the phrase for the batch year to confirm.
+                  </span>
                 </p>
-                <Button variant="danger" disabled={running !== null} onClick={() => setConfirming(true)}>
+                <Checkbox
+                  id="rollover-ack"
+                  checked={ackedYear === preview.batchYear}
+                  onChange={(e) => setAckedYear(e.target.checked ? preview.batchYear : null)}
+                  label={`I have read the preview for the batch of ${preview.batchYear}.`}
+                />
+                <Button
+                  variant="danger"
+                  disabled={running !== null || ackedYear !== preview.batchYear}
+                  onClick={() => setConfirming(true)}
+                >
                   Roll the batch of {preview.batchYear} into alumni
                 </Button>
               </div>

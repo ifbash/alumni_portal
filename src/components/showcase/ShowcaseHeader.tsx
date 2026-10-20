@@ -12,11 +12,11 @@ import type { ShowcaseLinks } from './links';
  * The product site's header: the ifBash logo, four anchors and the two
  * calls to action. One tier, on the page's own paper, because this is the
  * vendor's site rather than a college's: there is no institution strip to
- * carry, and the one dark field on the page is saved for the last section.
+ * carry, and the one dark field on the page is the hero beneath it.
  */
 export function ShowcaseHeader({ pack, links }: { pack: BrandPack; links: ShowcaseLinks }) {
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-surface">
+    <header className="glass sticky top-0 z-40 border-x-0 border-t-0">
       <div className="page-shell flex h-16 items-center gap-4">
         <Link href="/" aria-label={`${pack.copy.institutionName} — home`} className="inline-flex min-h-11 shrink-0 items-center">
           <Logo pack={pack} height={28} />
@@ -50,6 +50,8 @@ export function ShowcaseHeader({ pack, links }: { pack: BrandPack; links: Showca
           <ShowcaseMenu items={SHOWCASE_NAV} demoHref={links.demoCollege} className="lg:hidden" />
         </div>
       </div>
+      {/* Reading progress, drawn by the scroll timeline (see ShowcaseStyles). Decoration only. */}
+      <div aria-hidden="true" className="sc-progress absolute inset-x-0 bottom-[-1px] h-0.5 bg-brand-fg" />
     </header>
   );
 }

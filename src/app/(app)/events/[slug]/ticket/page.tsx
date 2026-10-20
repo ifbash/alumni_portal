@@ -10,6 +10,7 @@ import { getTenantBrand } from '@/lib/tenant';
 import { getEventBySlug, getEventRegistrations, getEvents } from '@/lib/data/repo';
 import { getAlbums } from '@/lib/data/content';
 import { Breadcrumbs, ButtonLink, DetailRow, Disclosure } from '@/components/ui';
+import { EventDateBlock } from '@/components/content';
 import { Crest } from '@/components/brand/Crest';
 import { Logo } from '@/components/brand/Logo';
 import { formatCurrency, formatDate } from '@/lib/format';
@@ -117,16 +118,17 @@ export default async function EventTicketPage({
   if (registration && !isPast) {
     stub = (
       <>
+        <p className="eyebrow text-xs text-brand-fg">{online ? 'Your pass' : 'Show this at the door'}</p>
         {/* The desk finds people by name and batch first, so they lead. */}
         <div className="flex items-end justify-between gap-4">
           <p className="min-w-0">
-            <span className="block truncate font-display text-xl font-semibold">{registration.memberName}</span>
+            <span className="block truncate font-display text-display-xs font-bold">{registration.memberName}</span>
             {registration.batchYear ? (
               <span className="block text-sm text-secondary">Batch of {registration.batchYear}</span>
             ) : null}
           </p>
           {guests > 0 ? (
-            <p className="shrink-0 text-right font-medium tabular">
+            <p className="shrink-0 rounded-full bg-brand-soft px-2.5 py-1 text-sm font-semibold tabular text-brand-soft-fg">
               +{guests} guest{guests === 1 ? '' : 's'}
             </p>
           ) : null}
@@ -242,33 +244,47 @@ export default async function EventTicketPage({
     <div className="mx-auto max-w-md space-y-4">
       <Breadcrumbs items={[{ label: 'Events', href: '/events' }, { label: event.title, href: eventHref }]} />
 
-      <article aria-labelledby="pass-title" className="overflow-hidden rounded-xl border border-line shadow-sm">
-        <header className="band-surface flex min-h-14 items-center justify-between gap-3 px-4 py-2.5">
-          <span className="flex min-w-0 items-center gap-2.5">
-            <Crest pack={pack} size={40} />
-            <Logo pack={pack} variant="band" height={20} />
-          </span>
-          <span className="shrink-0 text-xs font-semibold uppercase tracking-wider text-band-accent">Event pass</span>
-        </header>
+      {/* One pass in two pieces. Each piece masks away the two corners at the
+          perforation, so the notches are real cut-outs and the page shows
+          through them; the drop-shadow filter follows the cut edge where a
+          box-shadow could not. */}
+      <article
+        aria-labelledby="pass-title"
+        className="[filter:drop-shadow(0_6px_14px_color-mix(in_srgb,var(--text-primary)_14%,transparent))]"
+      >
+        <div style={NOTCH_BELOW} className="overflow-hidden rounded-t-xl border border-b-0 border-line bg-surface-raised">
+          <header className="band-surface grain relative isolate flex min-h-14 items-center justify-between gap-3 px-4 py-2.5">
+            <div className="aurora" aria-hidden="true" />
+            <span className="relative z-[2] flex min-w-0 items-center gap-2.5">
+              <Crest pack={pack} size={40} />
+              <Logo pack={pack} variant="band" height={20} />
+            </span>
+            <span className="eyebrow relative z-[2] shrink-0 text-xs text-band-accent">Event pass</span>
+          </header>
 
-        {event.coverImage ? (
-          // The event's own cover only; never a campus photo. See next.config.ts on tenant URLs.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={event.coverImage} alt="" className="h-16 w-full object-cover" loading="eager" />
-        ) : null}
+          {event.coverImage ? (
+            // The event's own cover only; never a campus photo. See next.config.ts on tenant URLs.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={event.coverImage} alt="" className="h-24 w-full object-cover" loading="eager" />
+          ) : null}
 
-        <div className="band-exit space-y-4 bg-surface-raised px-4 py-4">
-          <div>
-            <h1 id="pass-title" className="font-display text-xl font-bold leading-snug">
-              <Link href={eventHref} className="link-quiet">
-                {event.title}
-              </Link>
-            </h1>
-            <p className="mt-1 text-sm text-secondary">{whenLine(event, locale, timeZone)}</p>
-            <p className="text-sm text-secondary">{event.venue ?? 'Venue to be announced'}</p>
+          <div className="flex items-start gap-4 px-4 pb-7 pt-5">
+            <EventDateBlock iso={event.startsAt} locale={locale} timeZone={timeZone} size="lg" />
+            <div className="min-w-0">
+              <h1 id="pass-title" className="font-display text-xl font-bold leading-snug [text-wrap:balance]">
+                <Link href={eventHref} className="link-quiet">
+                  {event.title}
+                </Link>
+              </h1>
+              <p className="mt-1.5 text-sm text-secondary">{whenLine(event, locale, timeZone)}</p>
+              <p className="text-sm text-secondary">{event.venue ?? 'Venue to be announced'}</p>
+            </div>
           </div>
+        </div>
 
-          <div aria-hidden="true" className="-mx-4 border-t border-dashed border-line-strong" />
+        <div style={NOTCH_ABOVE} className="relative space-y-4 rounded-b-xl border border-t-0 border-line bg-surface-raised px-4 pb-5 pt-7">
+          {/* The perforation, level with the centre of both notches. */}
+          <div aria-hidden="true" className="absolute inset-x-5 top-0 border-t-2 border-dashed border-line-strong" />
 
           {stub}
 
@@ -305,3 +321,12 @@ export default async function EventTicketPage({
     </div>
   );
 }
+
+// A half-circle bitten out of each side, centred on the perforation. The
+// 0.75rem radius is geometry rather than a design token: it is the notch,
+// and has to stay a round cut at any card radius.
+const NOTCH = '0.75rem';
+const notch = (y: '0' | '100%') =>
+  `radial-gradient(circle ${NOTCH} at 0 ${y}, transparent 98%, black) left / 51% 100% no-repeat, radial-gradient(circle ${NOTCH} at 100% ${y}, transparent 98%, black) right / 51% 100% no-repeat`;
+const NOTCH_BELOW = { WebkitMask: notch('100%'), mask: notch('100%') };
+const NOTCH_ABOVE = { WebkitMask: notch('0'), mask: notch('0') };

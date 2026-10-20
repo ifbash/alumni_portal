@@ -51,13 +51,13 @@ export function SidebarNav({
   const pathname = usePathname();
 
   return (
-    <nav className={cn('space-y-6', compact && 'lg:space-y-3', className)} aria-label="Main">
+    <nav className={cn('space-y-7', compact && 'lg:space-y-4', className)} aria-label="Main">
       {groups.map((group) => (
-        <div key={group.label} className={cn('space-y-1', compact && 'lg:space-y-0.5')}>
+        <div key={group.label} className={cn('space-y-1.5', compact && 'lg:space-y-0.5')}>
           {/* A group whose first item carries its own name ("Today" under
               "Today") needs no heading: it would say the same word twice. */}
           {group.items[0]?.label === group.label ? null : (
-            <p className="px-3 text-xs font-semibold uppercase tracking-wider text-secondary">{group.label}</p>
+            <p className="px-3 text-xs font-semibold uppercase tracking-[0.12em] text-secondary">{group.label}</p>
           )}
           <ul className={cn('space-y-0.5', compact && 'lg:space-y-0')}>
             {group.items.map((item) => {
@@ -79,18 +79,37 @@ export function SidebarNav({
                     onClick={onNavigate}
                     aria-current={active ? 'page' : undefined}
                     className={cn(
-                      'group flex min-h-11 items-center gap-3 rounded px-3 py-2 text-sm font-medium',
-                      compact && 'lg:min-h-8 lg:py-1',
-                      'transition-colors duration-fast ease-brand',
+                      'group relative flex min-h-11 items-center gap-3 rounded-lg py-1.5 pl-2 pr-3 text-sm font-medium',
+                      compact && 'lg:min-h-8 lg:py-1 lg:pl-3',
+                      'transition-[background-color,color] duration-fast ease-brand',
+                      'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--focus-ring)]',
                       active
-                        ? 'bg-brand-soft text-brand-soft-fg'
+                        ? 'bg-brand-soft font-semibold text-brand-soft-fg'
                         : 'text-secondary hover:bg-surface-sunken hover:text-primary',
                     )}
                   >
-                    <NavIcon
-                      name={item.icon}
-                      className={cn('size-4 shrink-0', active ? '' : 'text-muted group-hover:text-secondary')}
+                    {/* The active rail grows from the middle, so moving
+                        between pages reads as the marker travelling. */}
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        'absolute -left-3 top-2 bottom-2 w-1 origin-center rounded-r-full bg-[var(--button-primary-bg)]',
+                        'transition-transform duration-slow ease-brand',
+                        compact && 'lg:-left-3 lg:top-1.5 lg:bottom-1.5',
+                        active ? 'scale-y-100' : 'scale-y-0',
+                      )}
                     />
+                    <span
+                      className={cn(
+                        'grid size-8 shrink-0 place-items-center rounded-md transition-[background-color,box-shadow,color] duration-fast ease-brand',
+                        compact && 'lg:size-5 lg:bg-transparent lg:shadow-none',
+                        active
+                          ? 'bg-surface-raised text-brand-fg shadow-sm'
+                          : 'text-muted group-hover:bg-surface-raised group-hover:text-secondary',
+                      )}
+                    >
+                      <NavIcon name={item.icon} className="size-4 shrink-0" />
+                    </span>
                     <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
                       <span className="truncate">{item.label}</span>
                       {item.tag ? (

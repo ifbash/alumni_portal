@@ -20,10 +20,11 @@ import {
   Card,
   CardBody,
   EmptyState,
-  Section,
   Separator,
 } from '@/components/ui';
-import { formatCurrency, formatDateRange, formatRelative } from '@/lib/format';
+import { PageHero } from '@/components/marketing/PageHero';
+import { EditorialSection } from '@/components/marketing/SectionHead';
+import { formatCurrency, formatDateRange, formatRelative, yearIn } from '@/lib/format';
 
 /**
  * The public events list.
@@ -109,24 +110,15 @@ export default async function PublicEventsPage() {
 
   return (
     <>
-      <section aria-labelledby="events-title" className="band-surface">
-        <div className="page-shell py-12 lg:py-16">
-          <div className="max-w-prose space-y-3">
-            <p className="text-sm font-semibold text-band-accent">{copy.institutionName}</p>
-            <h1 id="events-title" className="font-display text-display-md font-bold text-band-fg">
-              Events on campus
-            </h1>
-            <p className="text-md text-band-muted">
-              Reunions, department sessions and online panels. Dates and venues are public;
-              registering needs an account, because the college needs to know who is coming.
-            </p>
-          </div>
-        </div>
-      </section>
+      <PageHero id="events-title" eyebrow={copy.institutionName} title="Events on campus" glyph={String(yearIn(locale.timeZone))}>
+        Reunions, department sessions and online panels. Dates and venues are public; registering needs an
+        account, because the college needs to know who is coming.
+      </PageHero>
 
-      <div className="page-shell space-y-12 py-12 md:space-y-16 md:py-section">
+      <div className="page-shell space-y-16 py-14 [counter-reset:sec] md:space-y-24 md:py-section">
         {/* --------------------------------------------------------- Upcoming */}
-        <Section
+        <EditorialSection
+          eyebrow="Calendar"
           title="Coming up"
           description={
             upcoming.length
@@ -177,12 +169,16 @@ export default async function PublicEventsPage() {
               is confirmed.
             </p>
           </Alert>
-        </Section>
+        </EditorialSection>
 
         <Separator />
 
         {/* --------------------------------------------------- How registering works */}
-        <Section title="How registering works" description="From your first sign-in to the day itself.">
+        <EditorialSection
+          eyebrow="How it works"
+          title="How registering works"
+          description="From your first sign-in to the day itself."
+        >
           <div className="grid gap-4 md:grid-cols-3">
             <Step n={1} title="Sign in, or register">
               If the college already holds your email address, sign in with a six-digit code. If it
@@ -200,14 +196,14 @@ export default async function PublicEventsPage() {
           <p className="text-sm text-secondary">
             Final-year students can register for anything marked open to them.
           </p>
-        </Section>
+        </EditorialSection>
 
         {past.length > 0 ? (
           <>
             <Separator />
 
             {/* ----------------------------------------------------- Already held */}
-            <Section title="Recently held" description="Sessions from the last few months.">
+            <EditorialSection eyebrow="Archive" title="Recently held" description="Sessions from the last few months.">
               <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface-raised">
                 {past.map((event) => (
                   <li key={event.id} className="flex flex-wrap items-baseline gap-x-4 gap-y-1 p-card">
@@ -225,7 +221,7 @@ export default async function PublicEventsPage() {
                   </li>
                 ))}
               </ul>
-            </Section>
+            </EditorialSection>
           </>
         ) : null}
 
@@ -282,14 +278,14 @@ function PublicEventCard({
   return (
     <Card as="article" id={`event-${event.slug}`} className="scroll-mt-20">
       <CardBody className="flex flex-col gap-4 sm:flex-row">
-        {/* `self-start`: as a flex child the tile stretched to the card's
-            full height, a tall grey slab with the date stuck at its top. */}
+        {/* Date-led: the day is display type. `self-start`: as a flex child the
+            block stretched to the card's full height, a tall slab with the date at its top. */}
         <div
           aria-hidden="true"
-          className="flex w-full shrink-0 flex-row items-center gap-3 rounded border border-line bg-surface-sunken px-3 py-2 sm:w-20 sm:flex-col sm:gap-1 sm:self-start sm:py-3"
+          className="flex w-full shrink-0 flex-row items-baseline gap-3 rounded-lg border border-line bg-surface-sunken px-4 py-3 sm:w-28 sm:flex-col sm:items-center sm:gap-1 sm:self-start sm:py-5"
         >
-          <span className="text-xs font-semibold uppercase tracking-wider text-brand-fg">{month}</span>
-          <span className="font-display text-xl font-bold leading-none tabular">{day}</span>
+          <span className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-fg">{month}</span>
+          <span className="font-display text-display-md font-bold leading-none tabular">{day}</span>
           <span className="text-xs text-secondary">{weekday}</span>
         </div>
 

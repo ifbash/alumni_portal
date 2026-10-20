@@ -1,5 +1,6 @@
 import * as React from 'react';
 import Link from 'next/link';
+import { ArrowUpRight } from 'lucide-react';
 import { Badge, CoverArt, MediaFrame } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import { formatDate } from '@/lib/format';
@@ -50,6 +51,7 @@ export function AlbumCard({
   showCount = true,
   state,
   action,
+  aspect = '3/2',
   className,
 }: {
   album: AlbumCardData;
@@ -70,6 +72,12 @@ export function AlbumCard({
   state?: React.ReactNode;
   /** A staff Menu. */
   action?: React.ReactNode;
+  /**
+   * The tile's frame shape. A mosaic varies it so the page has a rhythm
+   * instead of a spreadsheet's worth of identical 3:2 boxes; every shape
+   * is fixed, so nothing moves when a photo loads.
+   */
+  aspect?: '3/2' | '4/3' | '1/1' | '4/5' | '5/2';
   className?: string;
 }) {
   const contributed = isContributed(album);
@@ -133,13 +141,38 @@ export function AlbumCard({
     );
   }
 
+  // The tile's frame: the kit's 3:2 slot, re-shaped from outside so the kit stays untouched.
+  const SHAPE = {
+    '3/2': '',
+    '4/3': '[&_figure>div]:aspect-[4/3]',
+    '1/1': '[&_figure>div]:aspect-square',
+    '4/5': '[&_figure>div]:aspect-[4/5]',
+    '5/2': '[&_figure>div]:aspect-[5/2]',
+  } as const;
+
   return (
-    <article className={cn('relative min-w-0', variant === 'large' && 'sm:col-span-2', className)}>
-      <MediaFrame src={coverSrc} alt="" aspect="3/2" fallback={art} />
-      <div className="mt-2 flex items-start justify-between gap-2">
+    <article className={cn('group relative min-w-0', variant === 'large' && 'sm:col-span-2', className)}>
+      <div className={cn('relative overflow-hidden rounded-lg', SHAPE[aspect])}>
+        <MediaFrame
+          src={coverSrc}
+          alt=""
+          aspect="3/2"
+          fallback={art}
+          className="group-hover:[&_img]:scale-[1.04] [&_img]:transition-transform [&_img]:duration-slow [&_img]:ease-brand"
+        />
+        {/* A reveal on hover and keyboard focus; touch never sees it, and it carries no information the title does not. */}
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-3 right-3 inline-flex translate-y-1 items-center gap-1 rounded-full bg-scrim px-3 py-1 text-xs font-semibold text-band-fg opacity-0 transition duration-fast ease-brand group-hover:translate-y-0 group-hover:opacity-100 group-has-[:focus-visible]:translate-y-0 group-has-[:focus-visible]:opacity-100"
+        >
+          View album
+          <ArrowUpRight className="size-3.5" />
+        </span>
+      </div>
+      <div className="mt-2.5 flex items-start justify-between gap-2">
         <div className="min-w-0 space-y-0.5">
-          <h3 className="line-clamp-2 font-semibold leading-snug">{title}</h3>
-          <p className="text-sm text-secondary">{facts}</p>
+          <h3 className="line-clamp-2 font-display text-md font-semibold leading-snug">{title}</h3>
+          <p className="text-sm tabular text-secondary">{facts}</p>
           <p className="truncate text-sm text-secondary">{credit}</p>
           {chips ? <div className="relative z-10 pt-1">{chips}</div> : null}
         </div>

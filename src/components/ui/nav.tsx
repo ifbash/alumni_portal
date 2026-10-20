@@ -39,9 +39,9 @@ export function PageHeader({
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="min-w-0 space-y-1.5">
           {eyebrow ? (
-            <p className="text-xs font-semibold uppercase tracking-wider text-brand-fg">{eyebrow}</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-brand-fg">{eyebrow}</p>
           ) : null}
-          <h1 className="font-display text-display-xs font-bold">{title}</h1>
+          <h1 className="font-display text-display-xs font-bold tracking-tight">{title}</h1>
           {description ? <p className="max-w-prose text-sm text-secondary">{description}</p> : null}
           {meta ? <div className="flex flex-wrap items-center gap-2 pt-1">{meta}</div> : null}
         </div>
@@ -106,7 +106,7 @@ export function Tabs({ items, className, ariaLabel = 'Sections' }: { items: TabI
               aria-current={item.active ? 'page' : undefined}
               className={cn(
                 'inline-flex items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium',
-                'transition-colors duration-fast ease-brand',
+                'transition-colors duration-fast ease-brand focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--focus-ring)]',
                 item.active
                   ? 'border-[var(--button-primary-bg)] text-brand-fg'
                   : 'border-transparent text-secondary hover:border-line-strong hover:text-primary',
@@ -349,7 +349,7 @@ export function Section({
       {title || actions ? (
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="space-y-1">
-            {title ? <h2 className="font-display text-xl font-semibold">{title}</h2> : null}
+            {title ? <h2 className="font-display text-xl font-semibold tracking-tight">{title}</h2> : null}
             {description ? <p className="text-sm text-secondary">{description}</p> : null}
           </div>
           {actions ? <div className="flex items-center gap-2">{actions}</div> : null}

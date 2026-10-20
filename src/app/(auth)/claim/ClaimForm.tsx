@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Mail } from 'lucide-react';
+import { ArrowRight, Check, Mail } from 'lucide-react';
 import {
   Alert,
   Button,
@@ -66,6 +66,9 @@ type ClaimResponse = {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const HELP_ID = 'roll-number-help';
+
+/** Stagger index for the entrance; see `.stagger` in globals.css. */
+const at = (n: number) => ({ '--i': n }) as React.CSSProperties;
 
 const SOMETHING_WRONG = 'Something went wrong on our side. Try again in a minute — nothing has been recorded.';
 
@@ -337,9 +340,82 @@ export function ClaimForm({
   const summaryKeys = showSummary ? FIELDS.filter((k) => errors[k]) : [];
   const unlisted = values.yearOfPassing === 'unlisted';
 
+  // Progress is read off what has been typed and never gates anything: the
+  // submit handler still validates every field. A section reads as done when
+  // its fields would pass the same checks.
+  const mobile = normaliseMobile(values.mobile);
+  const done = [
+    values.rollNumber.trim().replace(/\s/g, '').length >= 6 &&
+      values.fullName.trim().length >= 3 &&
+      Boolean(values.departmentCode) &&
+      Boolean(values.yearOfPassing) &&
+      !unlisted,
+    EMAIL_RE.test(values.email.trim()) && (!mobile || mobile.length === 10),
+    consent,
+  ];
+  const current = done.findIndex((d) => !d);
+  const stages = ['Your degree', 'Contact', 'Consent'];
+
   return (
-    <div className="space-y-8">
-      <form onSubmit={onSubmit} noValidate className="space-y-8">
+    <div className="stagger space-y-8">
+      <form onSubmit={onSubmit} noValidate className="space-y-6" style={at(2)}>
+        {/* Where you are in the form. Sticky, so a long form on a phone never loses its place. */}
+        <nav
+          aria-label="Registration progress"
+          className="glass sticky top-0 z-20 -mx-3 rounded-lg px-3 py-3 shadow-sm"
+        >
+          <ol className="flex items-center">
+            {stages.map((label, i) => {
+              const isDone = done[i];
+              const isCurrent = current === i;
+              return (
+                <li
+                  key={label}
+                  aria-current={isCurrent ? 'step' : undefined}
+                  className={cn('flex items-center', i < stages.length - 1 && 'flex-1')}
+                >
+                  <span className="flex items-center gap-2">
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        'grid size-7 shrink-0 place-items-center rounded-full text-xs font-bold tabular',
+                        'transition-[background-color,color,box-shadow] duration-slow ease-brand',
+                        isDone && 'bg-[var(--button-primary-bg)] text-[var(--button-primary-fg)]',
+                        isCurrent && 'bg-brand-soft text-brand-soft-fg ring-2 ring-[var(--focus-ring)]',
+                        !isDone && !isCurrent && 'border border-line bg-surface-sunken text-muted',
+                      )}
+                    >
+                      {isDone ? <Check className="size-3.5" /> : i + 1}
+                    </span>
+                    <span
+                      className={cn(
+                        'text-xs font-semibold sm:text-sm',
+                        isDone || isCurrent ? 'text-primary' : 'text-secondary',
+                      )}
+                    >
+                      {label}
+                      <span className="sr-only">{isDone ? ' (complete)' : isCurrent ? ' (current)' : ''}</span>
+                    </span>
+                  </span>
+                  {i < stages.length - 1 ? (
+                    <span
+                      aria-hidden="true"
+                      className="relative mx-2 h-0.5 flex-1 overflow-hidden rounded-full bg-line sm:mx-3"
+                    >
+                      <span
+                        className={cn(
+                          'absolute inset-0 origin-left bg-[var(--button-primary-bg)] transition-transform duration-slow ease-brand',
+                          isDone ? 'scale-x-100' : 'scale-x-0',
+                        )}
+                      />
+                    </span>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ol>
+        </nav>
+
         {summaryKeys.length > 0 ? (
           <Alert tone="danger" title={`Check ${summaryKeys.length} ${summaryKeys.length === 1 ? 'detail' : 'details'}`}>
             <ul>
@@ -366,9 +442,14 @@ export function ClaimForm({
         </div>
 
         {/* ---------------------------------------------- Your degree */}
-        <fieldset className="space-y-5" aria-describedby="degree-intro">
-          <legend className="font-display text-lg font-semibold">Your degree</legend>
-          <p id="degree-intro" className="!mt-1 text-sm text-secondary">
+        <fieldset
+          className="space-y-5 rounded-xl border border-line bg-surface-raised p-5 shadow-sm sm:p-6"
+          aria-describedby="degree-intro"
+        >
+          <legend className="float-left w-full p-0 font-display text-lg font-semibold">
+            <SectionTitle n={1}>Your degree</SectionTitle>
+          </legend>
+          <p id="degree-intro" className="clear-both !mt-1 text-sm text-secondary">
             Exactly as your certificate shows it. This is what the college matches.
           </p>
 
@@ -552,9 +633,14 @@ export function ClaimForm({
         </fieldset>
 
         {/* ---------------------------------------- How we will reach you */}
-        <fieldset className="space-y-5" aria-describedby="reach-intro">
-          <legend className="font-display text-lg font-semibold">How we will reach you</legend>
-          <p id="reach-intro" className="!mt-1 text-sm text-secondary">
+        <fieldset
+          className="space-y-5 rounded-xl border border-line bg-surface-raised p-5 shadow-sm sm:p-6"
+          aria-describedby="reach-intro"
+        >
+          <legend className="float-left w-full p-0 font-display text-lg font-semibold">
+            <SectionTitle n={2}>How we will reach you</SectionTitle>
+          </legend>
+          <p id="reach-intro" className="clear-both !mt-1 text-sm text-secondary">
             You will sign in with this email.
           </p>
 
@@ -613,7 +699,10 @@ export function ClaimForm({
           </div>
         </fieldset>
 
-        <div className="space-y-2 rounded-lg border border-line bg-surface-sunken p-4">
+        <div className="space-y-2 rounded-xl border border-line bg-surface-sunken p-5">
+          <p className="mb-2 font-display text-lg font-semibold">
+            <SectionTitle n={3}>Consent</SectionTitle>
+          </p>
           <Checkbox
             id="consent"
             name="consent"
@@ -648,8 +737,8 @@ export function ClaimForm({
           ) : null}
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 border-t border-line pt-5">
-          <Button type="submit" size="lg" loading={pending} className="min-h-11">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <Button type="submit" size="lg" loading={pending} className="min-h-14 w-full shadow-md sm:w-auto sm:min-w-64">
             {pending ? 'Submitting your registration' : 'Submit registration'}
             {pending ? null : <ArrowRight className="size-4" aria-hidden="true" />}
           </Button>
@@ -663,34 +752,42 @@ export function ClaimForm({
       </form>
 
       {/* ------------------------------------------------ What happens next */}
-      <section aria-labelledby="next-title" className="space-y-3">
+      <section style={at(3)} aria-labelledby="next-title" className="space-y-4">
         <h2 id="next-title" className="font-display text-lg font-semibold">
           What happens next
         </h2>
-        <ol className="space-y-4">
-          <Step n={1} title="We check the college's records." titleClassName="text-base">
-            <p>
-              Your {roll.mid}, name, branch and year are matched against the degree register.
-            </p>
-          </Step>
-          <Step n={2} title={`The ${office} confirms the match.`} titleClassName="text-base">
-            <p>
-              They open your account once it is confirmed
-              {reviewTurnaround ? `, usually within ${reviewTurnaround}` : ''}. Anything unclear is
-              compared by hand, record against record.
-            </p>
-          </Step>
-          <Step n={3} title="You sign in with a code." titleClassName="text-base">
-            <p>
-              We email you at the address you gave either way. Once your account is open, you sign in
-              with a six-digit code — there is no password.
-            </p>
-          </Step>
+        <ol className="grid gap-3 sm:grid-cols-3">
+          {[
+            {
+              title: "We check the college's records.",
+              body: `Your ${roll.mid}, name, branch and year are matched against the degree register.`,
+            },
+            {
+              title: `The ${office} confirms the match.`,
+              body: `They open your account once it is confirmed${reviewTurnaround ? `, usually within ${reviewTurnaround}` : ''}. Anything unclear is compared by hand, record against record.`,
+            },
+            {
+              title: 'You sign in with a code.',
+              body: 'We email you at the address you gave either way. Once your account is open, you sign in with a six-digit code — there is no password.',
+            },
+          ].map((item, i) => (
+            <li key={item.title} className="space-y-2 rounded-lg border border-line bg-surface-raised p-4">
+              <span
+                className="grid size-7 place-items-center rounded-full bg-brand-soft font-display text-xs font-bold text-brand-soft-fg tabular"
+                aria-hidden="true"
+              >
+                {i + 1}
+              </span>
+              <p className="text-sm font-semibold text-primary">{item.title}</p>
+              <p className="text-sm text-secondary">{item.body}</p>
+            </li>
+          ))}
         </ol>
       </section>
 
       {/* ------------------------------------------ If your record will not match */}
       <section
+        style={at(4)}
         aria-labelledby="mismatch-title"
         className="space-y-2 rounded-lg border border-line bg-surface-sunken p-4"
       >
@@ -775,6 +872,21 @@ export function ClaimForm({
         );
     }
   }
+}
+
+/** A form section's title with its number in a disc, matching the progress tracker above. */
+function SectionTitle({ n, children }: { n: number; children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-3">
+      <span
+        aria-hidden="true"
+        className="grid size-7 shrink-0 place-items-center rounded-full bg-brand-soft font-display text-xs font-bold text-brand-soft-fg tabular"
+      >
+        {n}
+      </span>
+      {children}
+    </span>
+  );
 }
 
 /** One numbered step: a disc, a title, and a line or two under it. */

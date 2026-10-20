@@ -125,11 +125,11 @@ export function BandDate({ iso, locale, timeZone }: { iso: string; locale: strin
   return (
     <span
       aria-hidden="true"
-      className="block w-16 shrink-0 self-start rounded-lg border border-band-rule py-2 text-center"
+      className="block w-20 shrink-0 self-start rounded-xl border border-band-rule px-1 py-3 text-center sm:w-24"
     >
-      <span className="block text-xs font-semibold uppercase tracking-wider text-band-accent">{part({ month: 'short' })}</span>
-      <span className="block font-display text-2xl font-bold leading-tight tabular text-band-fg">{part({ day: 'numeric' })}</span>
-      <span className="block text-xs text-band-muted">{part({ weekday: 'short' })}</span>
+      <span className="block text-xs font-semibold uppercase tracking-[0.16em] text-band-accent">{part({ month: 'short' })}</span>
+      <span className="block font-display text-5xl font-bold leading-none tabular text-band-fg sm:text-6xl">{part({ day: 'numeric' })}</span>
+      <span className="mt-1 block text-xs text-band-muted">{part({ weekday: 'short' })}</span>
     </span>
   );
 }
@@ -163,7 +163,7 @@ export function PastEventCard({
     album?.coverSrc ? `${album.photoCount.toLocaleString('en-IN')} photo${album.photoCount === 1 ? '' : 's'}` : null;
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-lg border border-line bg-surface-raised shadow-sm">
+    <div className="lift flex h-full flex-col overflow-hidden rounded-lg border border-line bg-surface-raised shadow-sm">
       {album?.coverSrc ? (
         <MediaFrame
           src={album.coverSrc}
@@ -179,10 +179,10 @@ export function PastEventCard({
         locale={locale}
         variant="row"
         status={event.viewerRegistration?.checkedIn ? <Badge tone="success">You attended</Badge> : undefined}
-        className="px-4 pt-4"
+        className="px-5 pt-5"
       />
       {album ? (
-        <div className="relative z-10 mt-auto px-4 pb-4 pt-1">
+        <div className="relative z-10 mt-auto px-5 pb-5 pt-1">
           <ActionButton
             action={{ label: photos ? `See ${photos}` : 'See the album', href: album.href, primary: false, icon: 'photos' }}
             className="w-full sm:w-auto"
@@ -233,7 +233,7 @@ export function NextUpCard({
   const where = event.venue ?? 'Venue to be announced';
 
   const heading = (
-    <h2 id="next-up-title" className="font-display text-display-xs font-bold text-band-fg">
+    <h2 id="next-up-title" className="font-display text-display-sm font-bold text-band-fg">
       <Link href={href} className="underline-offset-4 hover:underline">
         {event.title}
       </Link>
@@ -288,13 +288,14 @@ export function NextUpCard({
   return (
     <section
       aria-labelledby="next-up-title"
-      className="band-surface grid gap-5 rounded-xl px-5 py-6 sm:px-8 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:gap-8"
+      className="band-surface relative isolate grid gap-5 overflow-hidden rounded-xl px-5 py-7 sm:px-8 sm:py-9 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:gap-8"
     >
-      <div className="flex min-w-0 items-start gap-4 sm:gap-5">
+      <div className="aurora" aria-hidden="true" />
+      <div className="relative z-10 flex min-w-0 items-start gap-4 sm:gap-6">
         <BandDate iso={event.startsAt} locale={locale.locale} timeZone={locale.timeZone} />
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-band-accent">{eyebrow}</p>
-          <div className="mt-1">{heading}</div>
+          <p className="eyebrow text-band-accent">{eyebrow}</p>
+          <div className="mt-2">{heading}</div>
           <p className="mt-2 text-md text-band-muted">
             {when} · {where}
           </p>
@@ -305,7 +306,7 @@ export function NextUpCard({
           </div>
         </div>
       </div>
-      {buttons}
+      <div className="relative z-10">{buttons}</div>
     </section>
   );
 }

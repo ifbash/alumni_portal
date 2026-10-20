@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { ArrowRight, Ban, Clock, Handshake, Hourglass, Inbox, Send } from 'lucide-react';
+import { ArrowRight, Ban, Clock, Handshake, Inbox, Send } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap, can } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
@@ -151,9 +151,11 @@ export default async function ConnectionsPage({
 
       <Tabs items={tabs} ariaLabel="Requests" />
 
-      {/* Held to a reading width: a request is a message to read, and a
-          150-character line across a wide screen is not. */}
-      <div className="max-w-4xl space-y-6">
+      {/* The list holds a reading width beside a rail that says how a request
+          moves: a request is a message to read, and a 150-character line
+          across a wide screen is not. */}
+      <div className="grid grid-cols-1 gap-gutter lg:grid-cols-[minmax(0,1fr)_19rem]">
+      <div className="min-w-0 space-y-6">
         {tab === 'received' ? (
           <ReceivedTab
             waiting={waiting}
@@ -201,7 +203,63 @@ export default async function ConnectionsPage({
 
         {!isStudent ? <QuotaFootnote quota={quota} resetsOn={resetsOn} /> : null}
       </div>
+
+      <HowItMoves isStudent={isStudent} />
+      </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------
+// The rail: how a request moves
+// ---------------------------------------------------------------
+
+/**
+ * Three steps, the same for both sides of a request. Every line is true of
+ * what the buttons and the expiry actually do: a request closes by itself,
+ * a decline is told as "answered", and acceptance is the reason details
+ * may show, never permission by itself.
+ */
+function HowItMoves({ isStudent }: { isStudent: boolean }) {
+  const steps = [
+    {
+      title: 'A short question is sent',
+      body: isStudent
+        ? 'One specific question gets the fastest answer.'
+        : 'A student or graduate asks for mentoring, a referral or an introduction.',
+    },
+    {
+      title: 'A reply, or it closes',
+      body: `Nobody is chased. A request left alone closes by itself after ${REQUEST_EXPIRY_DAYS} days and the slot comes back.`,
+    },
+    {
+      title: 'Connected',
+      body: 'The profile then shows whatever its owner chose to share. Accepting never overrides that setting.',
+    },
+  ];
+
+  return (
+    <aside aria-label="How a request moves" className="min-w-0 lg:sticky lg:top-20 lg:self-start">
+      <Card className="p-card">
+        <h2 className="eyebrow text-xs text-secondary">How a request moves</h2>
+        <ol className="relative mt-4 space-y-5 before:absolute before:bottom-2 before:left-[0.6875rem] before:top-2 before:w-px before:bg-line before:content-['']">
+          {steps.map((st, i) => (
+            <li key={st.title} className="relative flex gap-3">
+              <span
+                aria-hidden="true"
+                className="relative z-[1] grid size-[1.375rem] shrink-0 place-items-center rounded-full bg-brand-soft text-xs font-bold tabular text-brand-soft-fg ring-4 ring-[var(--surface-raised)]"
+              >
+                {i + 1}
+              </span>
+              <div className="min-w-0 space-y-0.5 text-sm">
+                <p className="font-semibold leading-snug text-primary">{st.title}</p>
+                <p className="text-secondary">{st.body}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </Card>
+    </aside>
   );
 }
 
@@ -356,15 +414,16 @@ function RequestCard({
 }) {
   const sender = request.from;
   const expiring = isExpiringSoon(request.expiresAt, now);
+  const window = windowOf(request, now);
 
   return (
-    <Card as="article">
-      <CardBody className="space-y-3">
-        <div className="flex items-start gap-3">
-          <Avatar name={sender.fullName} src={sender.photoUrl} size="md" />
+    <Card as="article" aria-label={`Request from ${sender.fullName}`}>
+      <CardBody className="space-y-4">
+        <div className="flex items-start gap-4">
+          <Avatar name={sender.fullName} src={sender.photoUrl} size="lg" />
 
           <div className="min-w-0 flex-1">
-            <h3 className="font-display text-md font-semibold leading-snug">
+            <h3 className="font-display text-lg font-semibold leading-snug tracking-tight">
               {linkable ? (
                 <Link href={`/directory/${sender.slug}`} className="link-quiet">
                   {sender.fullName}
@@ -385,28 +444,39 @@ function RequestCard({
         </div>
 
         {request.message ? (
-          <blockquote className="line-clamp-3 border-l-2 border-line-strong pl-3 text-sm leading-relaxed text-primary">
-            {request.message}
+          <blockquote className="relative rounded-lg bg-surface-sunken px-4 py-3.5 text-sm leading-relaxed text-primary">
+            <span className="line-clamp-6 block">{request.message}</span>
           </blockquote>
         ) : (
-          <p className="text-sm text-secondary">No message included.</p>
+          <p className="rounded-lg bg-surface-sunken px-4 py-3 text-sm text-secondary">No message included.</p>
         )}
 
-        <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-secondary">
-          <span className="inline-flex items-center gap-1.5">
-            <Send className="size-3.5 text-muted" aria-hidden="true" />
-            Sent {formatRelative(request.createdAt)}
-          </span>
-          {request.expiresAt ? (
-            <span className={cn('inline-flex items-center gap-1.5', expiring && 'font-medium text-warning-fg')}>
-              <Clock className="size-3.5" aria-hidden="true" />
-              Closes {formatRelative(request.expiresAt)}
+        <div className="space-y-1.5">
+          <p className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs text-secondary">
+            <span className="inline-flex items-center gap-1.5">
+              <Send className="size-3.5 text-muted" aria-hidden="true" />
+              Sent {formatRelative(request.createdAt)}
             </span>
+            {request.expiresAt ? (
+              <span className={cn('inline-flex items-center gap-1.5', expiring && 'font-semibold text-warning-fg')}>
+                <Clock className="size-3.5" aria-hidden="true" />
+                Closes {formatRelative(request.expiresAt)}
+              </span>
+            ) : null}
+          </p>
+          {window ? (
+            <Progress
+              className="h-1.5"
+              value={window.gone}
+              max={window.span}
+              tone={expiring ? 'warning' : 'brand'}
+              label="How much of the time to answer has passed"
+            />
           ) : null}
-        </p>
+        </div>
       </CardBody>
 
-      <div className="border-t border-line px-card py-3">
+      <div className="rounded-b-lg border-t border-line bg-surface-sunken px-card py-3.5">
         <ConnectionActions
           connectionId={request.id}
           memberName={sender.fullName}
@@ -416,6 +486,14 @@ function RequestCard({
       </div>
     </Card>
   );
+}
+
+/** The time a request has to be answered, and how much of it has gone. */
+function windowOf(request: ConnectionRequest, now: Date): { span: number; gone: number } | null {
+  if (!request.expiresAt) return null;
+  const span = new Date(request.expiresAt).getTime() - new Date(request.createdAt).getTime();
+  if (span <= 0) return null;
+  return { span, gone: now.getTime() - new Date(request.createdAt).getTime() };
 }
 
 function AnsweredRow({
@@ -610,26 +688,9 @@ function SentCard({
           <p className="line-clamp-2 border-l-2 border-line pl-3 text-sm text-secondary">{request.message}</p>
         ) : null}
 
-        <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-secondary">
-          <span className="inline-flex items-center gap-1.5">
-            <Send className="size-3.5 text-muted" aria-hidden="true" />
-            Sent {formatDate(request.createdAt, timing)}
-          </span>
-          {request.state === 'pending' && request.expiresAt ? (
-            <span className={cn('inline-flex items-center gap-1.5', expiring && 'font-medium text-warning-fg')}>
-              <Hourglass className="size-3.5" aria-hidden="true" />
-              Closes {formatRelative(request.expiresAt)}
-            </span>
-          ) : null}
-          {request.respondedAt ? (
-            <span className="inline-flex items-center gap-1.5">
-              <Clock className="size-3.5 text-muted" aria-hidden="true" />
-              Answered {formatDate(request.respondedAt, timing)}
-            </span>
-          ) : null}
-        </p>
+        <StatusTrack request={request} timing={timing} expiring={expiring} />
 
-        {next ? <p className="rounded bg-surface-sunken px-3.5 py-2.5 text-sm text-secondary">{next}</p> : null}
+        {next ? <p className="rounded-lg bg-surface-sunken px-3.5 py-2.5 text-sm text-secondary">{next}</p> : null}
       </CardBody>
 
       {request.state === 'pending' ? (
@@ -652,6 +713,75 @@ function SentCard({
         </div>
       ) : null}
     </Card>
+  );
+}
+
+/**
+ * Where a request stands, as three stops on a line: sent, answered, and how
+ * it ended. Each stop carries its words and its date, so the dot colour
+ * never carries the meaning alone.
+ */
+function StatusTrack({
+  request,
+  timing,
+  expiring,
+}: {
+  request: ConnectionRequest;
+  timing: Timing;
+  expiring: boolean;
+}) {
+  const settled = request.state === 'pending' ? null : request.state;
+  const pending = settled === null;
+  const end: Record<Exclude<ConnectionState, 'pending'>, { label: string; dot: string }> = {
+    accepted: { label: 'Connected', dot: 'bg-success border-success' },
+    declined: { label: 'Closed', dot: 'bg-line-strong border-line-strong' },
+    expired: { label: 'Expired', dot: 'bg-line-strong border-line-strong' },
+    withdrawn: { label: 'Withdrawn', dot: 'bg-line-strong border-line-strong' },
+    blocked: { label: 'Blocked', dot: 'bg-danger border-danger' },
+  };
+  const done = 'bg-[var(--button-primary-bg)] border-[var(--button-primary-bg)]';
+  const stops = [
+    {
+      label: 'Sent',
+      detail: formatDate(request.createdAt, timing),
+      dot: done,
+      weight: 'text-primary',
+    },
+    pending
+      ? {
+          label: 'Awaiting reply',
+          detail: request.expiresAt ? `Closes ${formatRelative(request.expiresAt)}` : 'No reply yet',
+          dot: 'border-[var(--button-primary-bg)] bg-surface-raised',
+          weight: expiring ? 'font-semibold text-warning-fg' : 'font-semibold text-primary',
+        }
+      : {
+          label: 'Answered',
+          detail: request.respondedAt ? formatDate(request.respondedAt, timing) : 'Closed by the portal',
+          dot: done,
+          weight: 'text-primary',
+        },
+    settled
+      ? { label: end[settled].label, detail: '', dot: end[settled].dot, weight: 'font-semibold text-primary' }
+      : { label: 'Connected', detail: 'If accepted', dot: 'border-line-strong bg-surface-raised', weight: 'text-secondary' },
+  ];
+
+  return (
+    <ol className="grid grid-cols-3 gap-2" aria-label="Where this request stands">
+      {stops.map((st, i) => (
+        <li key={st.label} className="relative min-w-0 pt-5 text-xs leading-snug">
+          {/* The rail runs from this dot to the next one. */}
+          {i < stops.length - 1 ? (
+            <span aria-hidden="true" className="absolute left-4 right-[-0.5rem] top-[0.4375rem] h-px bg-line-strong" />
+          ) : null}
+          <span
+            aria-hidden="true"
+            className={cn('absolute left-0 top-0 size-3.5 rounded-full border-2', st.dot)}
+          />
+          <p className={cn('truncate', st.weight)}>{st.label}</p>
+          {st.detail ? <p className="text-secondary">{st.detail}</p> : null}
+        </li>
+      ))}
+    </ol>
   );
 }
 

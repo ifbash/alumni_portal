@@ -26,7 +26,7 @@ export function Letterhead({ pack, title }: { pack: BrandPack; title?: string })
           {address.length ? <p className="text-sm text-secondary">{address.join(', ')}</p> : null}
         </div>
         <div className="shrink-0 text-right text-sm text-secondary">
-          {title ? <p className="font-semibold text-primary">{title}</p> : null}
+          {title ? <p className="font-display text-lg font-bold text-primary">{title}</p> : null}
           <p>Generated from the degree register on {generated}</p>
         </div>
       </div>

@@ -179,12 +179,30 @@ export function StudentHome({ session, pack }: { session: Session; pack: BrandPa
       {showQuota ? (
         <Link
           href="/connections"
-          className="group flex min-h-11 items-center gap-3 rounded-lg border border-line bg-surface-raised px-4 py-2.5 text-sm shadow-sm transition-colors duration-fast ease-brand hover:border-line-strong"
+          className="group lift ring-hairline flex min-h-14 items-center gap-3 rounded-xl border border-line bg-surface-raised px-4 py-2.5 text-sm shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]"
         >
-          <Send className="size-4 shrink-0 text-muted" aria-hidden="true" />
+          <span
+            className="grid size-9 shrink-0 place-items-center rounded-full bg-brand-soft text-brand-soft-fg"
+            aria-hidden="true"
+          >
+            <Send className="size-[18px]" />
+          </span>
           <span className="min-w-0 flex-1 font-medium text-primary">{quotaLine}</span>
+          {/* One dot per open-request slot: filled when it is free. The
+              sentence beside it says the same; the dots are only a glance. */}
+          <span className="hidden shrink-0 items-center gap-1 sm:flex" aria-hidden="true">
+            {Array.from({ length: Math.min(quota.openLimit, 8) }, (_, i) => (
+              <span
+                key={i}
+                className={cn(
+                  'size-2 rounded-full',
+                  i >= quota.openRequests && available > 0 ? 'bg-[var(--button-primary-bg)]' : 'bg-line-strong',
+                )}
+              />
+            ))}
+          </span>
           <ArrowRight
-            className="size-4 shrink-0 text-brand-fg transition-transform duration-fast ease-brand group-hover:translate-x-0.5"
+            className="size-4 shrink-0 text-brand-fg transition-transform duration-fast ease-brand group-hover:translate-x-1"
             aria-hidden="true"
           />
           <span className="sr-only">, see your requests</span>
@@ -247,7 +265,7 @@ export function StudentHome({ session, pack }: { session: Session; pack: BrandPa
         <section aria-labelledby="mentors-title" className="space-y-4">
           <div className="space-y-1">
             <div className="flex items-center justify-between gap-x-4">
-              <h2 id="mentors-title" className="min-w-0 font-display text-xl font-semibold">
+              <h2 id="mentors-title" className="min-w-0 font-display text-display-xs font-bold tracking-tight">
                 {widened ? 'Alumni open to mentoring' : `${deptCode ?? copy.shortName} alumni open to mentoring`}
               </h2>
               {mentorTotal > 0 ? (

@@ -25,7 +25,44 @@ export default function AdminJobsLoading() {
 
       <div className="space-y-4">
         <Skeleton className="h-6 w-56" />
-        <div className="grid gap-4 xl:grid-cols-2">
+        {/* The desk at lg+: the queue column and the selected posting. */}
+        <div className="hidden items-start gap-gutter lg:grid lg:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]">
+          <div className="space-y-2">
+            {[0, 1].map((row) => (
+              <div key={row} className="flex items-start gap-3 rounded-lg border border-line bg-surface-raised p-3">
+                <Skeleton className="size-8 shrink-0 rounded" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="h-3.5 w-1/2" />
+                </div>
+              </div>
+            ))}
+          </div>
+          <Card className="overflow-hidden">
+            <div className="space-y-5 p-card">
+              <div className="flex items-start gap-4">
+                <Skeleton className="size-14 shrink-0 rounded" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Skeleton className="h-6 w-2/3" />
+                  <Skeleton className="h-4 w-1/3" />
+                </div>
+              </div>
+              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,17rem)]">
+                <div className="space-y-2">
+                  {['w-full', 'w-full', 'w-11/12', 'w-full', 'w-3/5'].map((w, i) => (
+                    <Skeleton key={i} className={`h-3.5 ${w}`} />
+                  ))}
+                </div>
+                <Skeleton className="h-44 rounded-lg" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-line bg-surface-sunken px-card py-3">
+              <Skeleton className="h-control w-36 rounded" />
+              <Skeleton className="h-control w-44 rounded" />
+            </div>
+          </Card>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:hidden">
           {[0, 1].map((card) => (
             <Card key={card} className="space-y-3 p-4">
               <div className="flex items-start gap-3">

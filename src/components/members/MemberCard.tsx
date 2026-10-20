@@ -48,6 +48,30 @@ function ChipList({ chips, className }: { chips: Chip[]; className?: string }) {
   );
 }
 
+/**
+ * The portrait: a photograph or initials inside a two-tone rim drawn from
+ * the college's own brand and accent ramps, so a wall of people reads as
+ * one family rather than a column of grey discs. The rim is the only
+ * decoration; the initials still come from the kit's `Avatar`.
+ */
+function Portrait({ member, large }: { member: MemberSummary; large?: boolean }) {
+  return (
+    <span
+      className={cn(
+        'inline-grid shrink-0 place-items-center rounded-full p-[3px]',
+        'bg-[linear-gradient(140deg,color-mix(in_srgb,var(--brand-500)_60%,transparent),color-mix(in_srgb,var(--accent-500)_50%,transparent))]',
+      )}
+    >
+      <Avatar
+        name={member.fullName}
+        src={member.photoUrl}
+        size="lg"
+        className={cn('ring-2 ring-surface-raised', large ? 'size-16 text-lg' : 'size-11 text-sm')}
+      />
+    </span>
+  );
+}
+
 export function MemberCard({
   member,
   variant = 'card',
@@ -94,16 +118,17 @@ export function MemberCard({
       <Card
         interactive
         as="article"
-        className={cn('relative flex min-h-[88px] items-center gap-3 px-4 py-3', className)}
+        className={cn('relative flex min-h-[88px] items-center gap-3.5 px-4 py-3', className)}
       >
-        <Avatar name={member.fullName} src={member.photoUrl} size="md" />
-        <div className="min-w-0 flex-1 space-y-1">
+        <Portrait member={member} />
+        <div className="min-w-0 flex-1 space-y-0.5">
           <div className="flex min-w-0 items-center gap-2">
             <h3 className="min-w-0 truncate font-display text-md font-semibold leading-snug">{name}</h3>
             {badges}
           </div>
           {work ? <p className="truncate text-sm text-secondary">{work}</p> : null}
-          <ChipList chips={chips.slice(0, 2)} />
+          {eyebrow && !work ? <p className="truncate text-xs text-secondary">{eyebrow}</p> : null}
+          <ChipList chips={chips.slice(0, 2)} className="pt-0.5" />
         </div>
         {footer ? <div className="relative z-10 shrink-0">{footer}</div> : null}
       </Card>
@@ -111,27 +136,41 @@ export function MemberCard({
   }
 
   return (
-    <Card interactive as="article" className={cn('relative flex flex-col p-card', className)}>
-      <div className="flex items-start gap-3">
-        <Avatar name={member.fullName} src={member.photoUrl} size="lg" />
+    <Card
+      as="article"
+      className={cn(
+        'lift group relative flex flex-col overflow-hidden',
+        // The whole tile is the link; its focus ring has to be the tile's.
+        'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-[var(--surface)]',
+        className,
+      )}
+    >
+      {/* A wash of the college's tint behind the portrait: the one place the card carries colour. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[linear-gradient(180deg,color-mix(in_srgb,var(--brand-soft)_85%,transparent),transparent)]"
+      />
 
-        <div className="min-w-0 flex-1">
-          {eyebrow ? <p className="truncate text-xs font-medium text-secondary">{eyebrow}</p> : null}
-          <h3 className="line-clamp-2 font-display text-md font-semibold leading-snug">{name}</h3>
+      <div className="relative flex items-start gap-4 px-5 pt-5">
+        <Portrait member={member} large />
+        <div className="min-w-0 flex-1 pt-0.5">
+          {eyebrow ? (
+            <p className="truncate text-xs font-semibold uppercase tracking-wider text-brand-fg">{eyebrow}</p>
+          ) : null}
+          <h3 className="mt-0.5 line-clamp-2 font-display text-lg font-semibold leading-snug">{name}</h3>
           {isViewer || member.isStudent ? <div className="mt-1.5 flex flex-wrap gap-1">{badges}</div> : null}
-          <ChipList chips={chips} className="mt-2" />
         </div>
       </div>
 
       {work || place ? (
-        <dl className="mt-3 space-y-1.5 text-sm">
+        <dl className="relative mt-4 space-y-1 px-5 text-sm">
           {work ? (
             <div className="flex items-start gap-2">
               <dt className="mt-0.5 shrink-0 text-muted">
                 <Building2 className="size-3.5" aria-hidden="true" />
                 <span className="sr-only">Work</span>
               </dt>
-              <dd className="min-w-0 line-clamp-1 text-secondary">{work}</dd>
+              <dd className="min-w-0 line-clamp-1 font-medium text-primary">{work}</dd>
             </div>
           ) : null}
           {place ? (
@@ -146,27 +185,35 @@ export function MemberCard({
         </dl>
       ) : null}
 
-      {member.skills.length ? (
-        <ul className="mt-3 flex flex-wrap gap-1" aria-label="Skills">
-          {member.skills.slice(0, 2).map((s) => (
-            <li key={s}>
-              <Badge tone="outline">{s}</Badge>
-            </li>
-          ))}
-          {member.skills.length > 2 ? (
-            <li>
-              <Badge tone="outline">
-                <span aria-hidden="true">+{member.skills.length - 2}</span>
-                <span className="sr-only">and {member.skills.length - 2} more</span>
-              </Badge>
-            </li>
+      {chips.length || member.skills.length ? (
+        <div className="relative mt-4 space-y-2.5 border-t border-line px-5 py-3.5">
+          <ChipList chips={chips} />
+          {member.skills.length ? (
+            <ul className="flex flex-wrap gap-1.5" aria-label="Skills">
+              {member.skills.slice(0, 3).map((s) => (
+                <li
+                  key={s}
+                  className="rounded-sm bg-surface-sunken px-2 py-0.5 text-xs font-medium text-secondary"
+                >
+                  {s}
+                </li>
+              ))}
+              {member.skills.length > 3 ? (
+                <li className="rounded-sm px-1.5 py-0.5 text-xs font-medium text-secondary">
+                  <span aria-hidden="true">+{member.skills.length - 3}</span>
+                  <span className="sr-only">and {member.skills.length - 3} more</span>
+                </li>
+              ) : null}
+            </ul>
           ) : null}
-        </ul>
-      ) : null}
+        </div>
+      ) : (
+        <div className="pb-5" />
+      )}
 
-      {note ? <p className="mt-3 truncate text-sm text-secondary">{note}</p> : null}
+      {note ? <p className="relative -mt-1 truncate px-5 pb-3 text-sm text-secondary">{note}</p> : null}
 
-      {footer ? <div className="relative z-10 mt-auto pt-3">{footer}</div> : null}
+      {footer ? <div className="relative z-10 mt-auto px-5 pb-5 pt-1">{footer}</div> : null}
     </Card>
   );
 }

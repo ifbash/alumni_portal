@@ -136,19 +136,24 @@ export function ConnectionActions({
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" className={TOUCH} onClick={() => void decide('accepted')}>
-          <Check className="size-4" aria-hidden="true" />
-          Accept
-        </Button>
-        <Button variant="secondary" size="sm" className={TOUCH} onClick={() => void decide('declined')}>
-          <X className="size-4" aria-hidden="true" />
-          Decline
-        </Button>
+      {/* The two answers sit side by side at equal weight and full touch
+          size; Block is a different kind of act, set apart and quiet. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="grid grid-cols-2 gap-2 sm:flex">
+          <Button className="min-h-11 sm:min-w-32" onClick={() => void decide('accepted')}>
+            <Check className="size-4" aria-hidden="true" />
+            Accept
+          </Button>
+          <Button variant="secondary" className="min-h-11 sm:min-w-32" onClick={() => void decide('declined')}>
+            <X className="size-4" aria-hidden="true" />
+            Decline
+          </Button>
+        </div>
+        <p className="text-xs text-secondary sm:ml-2 sm:flex-1">Declining is private. They are told it was answered.</p>
         <Button
           variant="ghost"
           size="sm"
-          className={TOUCH}
+          className="min-h-11 self-start text-secondary sm:self-auto"
           onClick={() => setConfirmingBlock(true)}
           aria-label={`Block ${memberName} from contacting you`}
         >
@@ -208,7 +213,7 @@ function Resolved({
 
   return (
     <div
-      className={cn('flex items-start gap-2.5 rounded p-3 text-sm', tone)}
+      className={cn('flex items-start gap-2.5 rounded-lg p-3.5 text-sm', tone)}
       role="status"
       aria-busy={phase === 'saving' || undefined}
     >

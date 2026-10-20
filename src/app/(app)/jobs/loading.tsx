@@ -2,9 +2,34 @@ import { Card, Skeleton } from '@/components/ui';
 
 /**
  * The board's own shape, drawn empty: the compact band, the tabs, the
- * search and filter row, then posting cards (rows on a phone), so the
- * only thing that changes when it lands is the text.
+ * search and filter row, then the tiles (a wide lead, then the grid; rows
+ * on a phone), so the only thing that changes when it lands is the text.
  */
+function TileSkeleton({ wide = false }: { wide?: boolean }) {
+  return (
+    <Card className="flex h-full flex-col">
+      <div className={wide ? 'space-y-4 p-5 md:p-7' : 'space-y-4 p-5'}>
+        <div className="flex items-start gap-4">
+          <Skeleton className={wide ? 'size-16 shrink-0 rounded-lg' : 'size-12 shrink-0 rounded-lg'} />
+          <div className="min-w-0 flex-1 space-y-2">
+            <Skeleton className={wide ? 'h-6 w-2/3' : 'h-5 w-3/4'} />
+            <Skeleton className="h-3.5 w-1/2" />
+          </div>
+        </div>
+        {wide ? <Skeleton className="h-4 w-full max-w-prose" /> : null}
+        <Skeleton className="h-14 w-full rounded-lg" />
+        <div className="flex gap-1.5">
+          <Skeleton className="h-5 w-24 rounded-full" />
+          <Skeleton className="h-5 w-16 rounded-full" />
+        </div>
+      </div>
+      <div className="border-t border-line px-5 py-3">
+        <Skeleton className="h-4 w-44" />
+      </div>
+    </Card>
+  );
+}
+
 export default function JobsLoading() {
   return (
     <div className="space-y-6" aria-busy="true">
@@ -40,33 +65,20 @@ export default function JobsLoading() {
 
       <ul className="hidden grid-cols-1 gap-gutter sm:grid sm:grid-cols-2 xl:grid-cols-3">
         {[0, 1, 2, 3, 4, 5].map((i) => (
-          <li key={i}>
-            <Card className="space-y-3 p-4">
-              <div className="flex items-start gap-3">
-                <Skeleton className="size-14 shrink-0 rounded" />
-                <div className="min-w-0 flex-1 space-y-2">
-                  <Skeleton className="h-4 w-3/4" />
-                  <Skeleton className="h-3.5 w-1/2" />
-                  <Skeleton className="h-3.5 w-2/3" />
-                </div>
-              </div>
-              <div className="flex gap-1.5">
-                <Skeleton className="h-5 w-24 rounded-full" />
-                <Skeleton className="h-5 w-28 rounded-full" />
-              </div>
-              <Skeleton className="h-4 w-40" />
-            </Card>
+          <li key={i} className={i === 0 ? 'sm:col-span-2' : undefined}>
+            <TileSkeleton wide={i === 0} />
           </li>
         ))}
       </ul>
 
       <Card className="divide-y divide-line px-4 sm:hidden">
         {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="flex items-start gap-3 py-3">
-            <Skeleton className="size-10 shrink-0 rounded" />
+          <div key={i} className="flex items-start gap-3 py-4">
+            <Skeleton className="size-11 shrink-0 rounded-lg" />
             <div className="min-w-0 flex-1 space-y-2">
               <Skeleton className="h-4 w-3/4" />
               <Skeleton className="h-3.5 w-1/2" />
+              <Skeleton className="h-4 w-36" />
               <Skeleton className="h-5 w-32 rounded-full" />
             </div>
           </div>

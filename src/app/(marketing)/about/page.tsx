@@ -5,7 +5,9 @@ import { getTenantBrand } from '@/lib/tenant';
 import { getDepartments } from '@/lib/data/repo';
 import { registerIsFactual } from '@/lib/data/public-events';
 import { capitalise, rollNumber } from '@/lib/branding/copy';
-import { ButtonLink, Card, CardBody, Section } from '@/components/ui';
+import { ButtonLink, Card, CardBody } from '@/components/ui';
+import { PageHero } from '@/components/marketing/PageHero';
+import { EditorialSection } from '@/components/marketing/SectionHead';
 
 export const metadata: Metadata = {
   title: 'About the portal',
@@ -45,25 +47,18 @@ export default async function AboutPage() {
 
   return (
     <>
-      <section aria-labelledby="about-title" className="band-surface">
-        <div className="page-shell py-12 lg:py-16">
-          <div className="max-w-prose space-y-3">
-            <p className="text-sm font-semibold text-band-accent">{copy.institutionName}</p>
-            <h1 id="about-title" className="font-display text-display-md font-bold text-band-fg">
-              About {copy.portalName}
-            </h1>
-            <p className="text-md text-band-muted">
-              {copy.portalName} is the alumni network of {copy.institutionName}, run by the
-              college&apos;s {office}. Graduates are checked against the college&apos;s records
-              before their account opens.
-            </p>
-          </div>
-        </div>
-      </section>
+      <PageHero id="about-title" eyebrow={copy.institutionName} title={`About ${copy.portalName}`} glyph={copy.shortName}>
+        {copy.portalName} is the alumni network of {copy.institutionName}, run by the college&apos;s {office}.
+        Graduates are checked against the college&apos;s records before their account opens.
+      </PageHero>
 
-      <div className="page-shell space-y-12 py-12 md:space-y-16 md:py-section">
+      <div className="page-shell space-y-16 py-14 [counter-reset:sec] md:space-y-24 md:py-section">
         {/* ------------------------------------------------ Where your name came from */}
-        <Section title="Where your name came from" description="There are two ways a person ends up here.">
+        <EditorialSection
+          eyebrow="Your name"
+          title="Where your name came from"
+          description="There are two ways a person ends up here."
+        >
           <div className="grid gap-4 md:grid-cols-2 md:gap-6">
             <Card>
               <CardBody className="space-y-3">
@@ -93,11 +88,15 @@ export default async function AboutPage() {
               </CardBody>
             </Card>
           </div>
-        </Section>
+        </EditorialSection>
 
         {/* ------------------------------------------------------------ Branches */}
         {departments.length ? (
-          <Section title="Branches on the register" description="Graduates of these branches can register.">
+          <EditorialSection
+            eyebrow="Branches"
+            title="Branches on the register"
+            description="Graduates of these branches can register."
+          >
             <ul className="grid gap-x-8 sm:grid-cols-2">
               {departments.map((d) => (
                 <li
@@ -109,11 +108,12 @@ export default async function AboutPage() {
                 </li>
               ))}
             </ul>
-          </Section>
+          </EditorialSection>
         ) : null}
 
         {/* ------------------------------------------------ Who sees your details */}
-        <Section
+        <EditorialSection
+          eyebrow="Privacy"
           title="Who sees your details"
           description="What someone can see depends on who they are, and on your own settings."
         >
@@ -154,10 +154,10 @@ export default async function AboutPage() {
             </Link>
             .
           </p>
-        </Section>
+        </EditorialSection>
 
         {/* ------------------------------------------------------------- Contact */}
-        <Section title={`Reaching the ${office}`}>
+        <EditorialSection eyebrow="Contact" title={`Reaching the ${office}`}>
           <div className="grid gap-4 md:gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
             <Card>
               <CardBody className="space-y-4">
@@ -215,7 +215,7 @@ export default async function AboutPage() {
               </CardBody>
             </Card>
           </div>
-        </Section>
+        </EditorialSection>
       </div>
     </>
   );

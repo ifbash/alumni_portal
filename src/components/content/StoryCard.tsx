@@ -1,5 +1,6 @@
 import * as React from 'react';
 import Link from 'next/link';
+import { ArrowUpRight } from 'lucide-react';
 import { CoverArt, MediaFrame } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import { formatDate } from '@/lib/format';
@@ -65,15 +66,25 @@ export function StoryCard({
     </p>
   );
 
+  if (obituary && variant === 'row') {
+    // Laid out like every other row so the list keeps its grid, but with
+    // nothing dressed: the kind in plain words, the headline, the date.
+    return (
+      <article className={cn('relative flex items-start gap-4 py-4', className)}>
+        {date ? <p className="hidden w-24 shrink-0 pt-0.5 text-sm tabular text-secondary sm:block">{date}</p> : null}
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="sm:hidden">{eyebrowLine}</div>
+          <p className="hidden items-center gap-1.5 text-xs font-medium text-secondary sm:flex [&_svg]:size-3.5">{eyebrow}</p>
+          <h3 className="font-display text-md font-semibold leading-snug">{headline}</h3>
+        </div>
+        {action ? <div className="relative z-10 shrink-0 self-center">{action}</div> : null}
+      </article>
+    );
+  }
+
   if (obituary) {
     return (
-      <article
-        className={cn(
-          'relative',
-          variant === 'row' ? 'py-3' : 'rounded-lg border border-line bg-surface-raised p-4',
-          className,
-        )}
-      >
+      <article className={cn('relative rounded-lg border border-line bg-surface-raised p-4', className)}>
         {eyebrowLine}
         <h3 className="mt-1 font-display text-md font-semibold leading-snug">{headline}</h3>
         {variant !== 'row' ? <p className="mt-1 line-clamp-2 text-sm text-secondary">{story.summary}</p> : null}
@@ -85,14 +96,20 @@ export function StoryCard({
   const art = motif ? <CoverArt motif={motif} /> : undefined;
 
   if (variant === 'row') {
+    // Date-led, like a table of contents: the date sits in its own column so
+    // a run of rows scans down the page by when, then by what.
     return (
-      <article className={cn('relative flex items-start gap-3 py-3', className)}>
+      <article className={cn('relative flex items-start gap-4 py-4', className)}>
+        {date ? (
+          <p className="hidden w-24 shrink-0 pt-0.5 text-sm tabular text-secondary sm:block">{date}</p>
+        ) : null}
         {story.coverImage ? (
           <MediaFrame src={story.coverImage} alt="" aspect="1/1" className="w-16 shrink-0" />
         ) : null}
         <div className="min-w-0 flex-1 space-y-1">
-          {eyebrowLine}
-          <h3 className="line-clamp-2 font-semibold leading-snug">{headline}</h3>
+          <div className="sm:hidden">{eyebrowLine}</div>
+          <p className="hidden items-center gap-1.5 text-xs font-medium text-secondary sm:flex [&_svg]:size-3.5">{eyebrow}</p>
+          <h3 className="line-clamp-2 font-display text-md font-semibold leading-snug">{headline}</h3>
         </div>
         {action ? <div className="relative z-10 shrink-0 self-center">{action}</div> : null}
       </article>
@@ -100,12 +117,18 @@ export function StoryCard({
   }
 
   const lead = variant === 'lead';
+  const photo = Boolean(story.coverImage || art);
 
   return (
     <article
       className={cn(
-        'relative flex h-full flex-col overflow-hidden rounded-lg border border-line bg-surface-raised shadow-sm',
-        'transition-colors duration-fast ease-brand hover:border-line-strong',
+        'lift relative flex h-full flex-col overflow-hidden rounded-xl border border-line shadow-sm',
+        'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-[var(--surface)]',
+        // Set in type alone, the lead takes a wash of the college's tint so the
+        // front page still has a front; a photo replaces the wash.
+        lead && !photo
+          ? 'bg-[linear-gradient(135deg,var(--brand-soft),var(--surface-raised)_65%)]'
+          : 'bg-surface-raised',
         className,
       )}
     >
@@ -117,14 +140,23 @@ export function StoryCard({
         rounded={false}
         className="[&>div]:border-0 [&>div]:border-b"
       />
-      <div className="flex flex-1 flex-col gap-1.5 p-4">
+      <div className={cn('flex flex-1 flex-col gap-2', lead ? 'p-6 sm:p-8' : 'p-5')}>
         {eyebrowLine}
         {/* Joined, not `cn`: tailwind-merge drops `text-display-*` beside a colour. */}
-        <h3 className={`font-display font-semibold leading-snug ${lead ? 'text-display-xs' : 'line-clamp-2 text-lg'}`}>
+        <h3
+          className={`font-display font-semibold leading-tight ${lead ? 'max-w-[26ch] text-display-sm' : 'line-clamp-3 text-xl'}`}
+        >
           {headline}
         </h3>
-        <p className={cn('text-sm text-secondary', lead ? 'line-clamp-3' : 'line-clamp-2')}>{story.summary}</p>
-        {action ? <div className="relative z-10 mt-auto pt-2">{action}</div> : null}
+        <p className={cn('text-secondary', lead ? 'line-clamp-3 max-w-prose text-md' : 'line-clamp-3 text-sm')}>{story.summary}</p>
+        {action ? (
+          <div className="relative z-10 mt-auto pt-3">{action}</div>
+        ) : (
+          <span className="mt-auto inline-flex items-center gap-1 pt-3 text-sm font-semibold text-brand-fg" aria-hidden="true">
+            Read
+            <ArrowUpRight className="size-4" />
+          </span>
+        )}
       </div>
     </article>
   );

@@ -4,7 +4,8 @@ import { Compass } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
 import { getTenantBrand } from '@/lib/tenant';
 import { isVendorOnlySession, memberNav, type NavGroup } from '@/lib/navigation';
-import { ButtonLink, Card, CardBody, CardDescription, CardTitle, EmptyState } from '@/components/ui';
+import { ButtonLink, Card, CardBody, CardDescription, CardTitle } from '@/components/ui';
+import { NotFoundPanel } from './_components/NotFoundPanel';
 
 export const metadata: Metadata = {
   title: 'Page not found',
@@ -33,19 +34,20 @@ export default async function AppNotFound() {
 
   return (
     <div className="space-y-6">
-      {/* The visual heading is the empty state's title; this is the one the
-          document outline needs, so the h2 below descends from something. */}
-      <h1 className="sr-only">Page not found</h1>
-
-      <EmptyState
-        icon={<Compass className="size-5" />}
+      <NotFoundPanel
+        eyebrow="Page not found"
+        icon={<Compass />}
         title="That page is not here"
         description="The link may be old or cut short, or the page is not open to your account."
         action={
           vendorOnly ? (
-            <ButtonLink href="/platform">Back to the platform</ButtonLink>
+            <ButtonLink href="/platform" className="min-h-11">
+              Back to the platform
+            </ButtonLink>
           ) : (
-            <ButtonLink href="/dashboard">Back to home</ButtonLink>
+            <ButtonLink href="/dashboard" className="min-h-11">
+              Back to home
+            </ButtonLink>
           )
         }
       />

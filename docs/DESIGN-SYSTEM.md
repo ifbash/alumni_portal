@@ -571,3 +571,39 @@ scroll with `.scroll-fade-x` rather than wrap. Every standalone link or
 control is `min-h-11`. One `h1` per page; every `<aside>` has an
 `aria-label`; icon-only controls are labelled. `[data-print-hide]` and
 `.print-only` control print.
+
+---
+
+## 12. Atmosphere layer (Oct 2026)
+
+Depth, light and motion for identity surfaces. Defined once in
+`src/app/globals.css` ("ATMOSPHERE LAYER"); every value resolves through
+tokens, so a new college inherits it for free.
+
+| Class | Use | Rules |
+|---|---|---|
+| `.aurora` | Absolutely-positioned child of a `.band-surface` (hero, page band, sidebar identity block, auth panel). | Mixes `--band-accent` / `--band-fg` at 24% or less; it is the only texture allowed on the band besides `.grain`. Re-measure contrast before putting it under small text. Transform-only drift; off under reduced motion. |
+| `.grain` | Paper tooth on a band or gradient surface. | Neutral noise at 16% soft-light; hides banding. |
+| `.ring-hairline` | Raised cards that should catch light on the top edge. | Needs a radius on the element (`inherit`). |
+| `.glass` | Frosted bars and cards over imagery or the aurora. | Text uses page tokens, never band tokens. |
+| `.lift` | A card that is a link. | Hover-capable pointers only; transform and shadow, no layout shift. |
+| `.eyebrow` | The numbered-section label ("01 Events"). | One per section; the number is decoration. |
+| `.marquee` + `.marquee-track` | Endless row (batch ribbon). | Render the list twice, second copy `aria-hidden`; stops under reduced motion. |
+| `.display-outline` | Giant outlined numerals or words. | `aria-hidden`, decoration only, never carries meaning. |
+| `.reveal`, `.reveal-scale` | Scroll-driven entrance for below-the-fold blocks. | Progressive: browsers without `animation-timeline` and reduced-motion users simply see the content. Never above the fold. |
+| `.stagger` | Load-in for above-the-fold groups; set `--i` per child. | Fade-up, 70ms steps. |
+
+Animate `transform` and `opacity` only. The "no marks and no grid texture
+on the band" rule in section 2 stands; aurora and grain are the approved
+band texture.
+
+### New in the Oct 2026 pass
+
+`EventDateBlock` (`@/components/content`) is the large calendar-leaf date
+used by event leads. `CoverageHeatmap` (`admin/_shared/RegisterFilesGrid`)
+shows coverage by batch on staff Today; the percentage is always text, the
+tint is `danger-soft` / `warning-soft` / `success-soft`. `CoverageChips`
+stays for the degree-register page. Public pages compose from
+`marketing/PageHero`, `SectionHead` (CSS-counter numbering, so an absent
+section leaves no gap) and `BatchMarquee`. Auth screens share
+`(auth)/_components/AuthPanel`.

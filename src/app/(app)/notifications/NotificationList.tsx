@@ -11,7 +11,7 @@ import {
   Handshake,
   Megaphone,
 } from 'lucide-react';
-import { Alert, Button, ButtonLink, Card, useToast } from '@/components/ui';
+import { Alert, Button, ButtonLink, useToast } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import type { NotificationItem } from '@/lib/data/types';
 
@@ -47,6 +47,19 @@ const KIND_ICON: Record<NotificationKind, React.ComponentType<{ className?: stri
   job: Briefcase,
   verification: BadgeCheck,
   system: Megaphone,
+};
+
+/**
+ * Requests and events wear the college's two hues so the eye can sort a
+ * long list by colour; everything else stays neutral. The icon and the
+ * kind word beside it carry the meaning, never the tint alone.
+ */
+const KIND_TINT: Record<NotificationKind, string> = {
+  connection: 'bg-brand-soft text-brand-soft-fg',
+  event: 'bg-accent-soft text-accent-soft-fg',
+  job: 'bg-surface-sunken text-secondary ring-1 ring-inset ring-line',
+  verification: 'bg-surface-sunken text-secondary ring-1 ring-inset ring-line',
+  system: 'bg-surface-sunken text-secondary ring-1 ring-inset ring-line',
 };
 
 export interface NotificationView {
@@ -203,14 +216,19 @@ export function NotificationList({ groups }: { groups: NotificationGroupView[] }
         </Alert>
       ) : null}
 
-      {groups.map((group) => (
-        <section key={group.key} aria-labelledby={`group-${group.key}`} className="space-y-2">
-          <h2 id={`group-${group.key}`} className="text-sm font-semibold text-secondary">
-            {group.label}
-          </h2>
+      {groups.map((group) => {
+        const fresh = group.items.filter((n) => !isRead(n)).length;
+        return (
+          <section key={group.key} aria-labelledby={`group-${group.key}`} className="space-y-3">
+            <h2 id={`group-${group.key}`} className="flex items-baseline gap-3">
+              <span className="font-display text-lg font-semibold tracking-tight">{group.label}</span>
+              <span className="font-sans text-sm font-normal text-secondary tabular">
+                {fresh > 0 ? `${fresh} unread` : group.items.length === 1 ? '1 notice' : `${group.items.length} notices`}
+              </span>
+            </h2>
 
-          <Card className="overflow-hidden">
-            <ul className="divide-y divide-line">
+            {/* The rail: one hairline down the left, each notice an icon on it. */}
+            <ul className="relative space-y-3 before:absolute before:bottom-4 before:left-[1.1875rem] before:top-4 before:w-px before:bg-line before:content-['']">
               {group.items.map((n) => (
                 <Row
                   key={n.id}
@@ -221,9 +239,9 @@ export function NotificationList({ groups }: { groups: NotificationGroupView[] }
                 />
               ))}
             </ul>
-          </Card>
-        </section>
-      ))}
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -245,45 +263,75 @@ function Row({
   const when = n.relative ?? n.stamp;
 
   return (
-    <li className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-3 p-4 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:gap-x-4 sm:px-card">
-      <span className="relative mt-0.5" aria-hidden="true">
-        <span className="grid size-9 place-items-center rounded-full bg-surface-sunken text-secondary">
-          <Icon className="size-4" />
-        </span>
+    <li className="relative flex gap-3 sm:gap-4">
+      <span
+        className={cn(
+          'relative z-[1] mt-4 grid size-10 shrink-0 place-items-center rounded-full ring-4 ring-[var(--surface)]',
+          KIND_TINT[n.kind],
+        )}
+        aria-hidden="true"
+      >
+        <Icon className="size-[1.125rem]" />
         {read ? null : (
-          <span className="absolute -left-0.5 -top-0.5 size-2.5 rounded-full bg-[var(--button-primary-bg)] ring-2 ring-[var(--surface-raised)]" />
+          <span className="absolute -right-0.5 -top-0.5 size-3 rounded-full bg-[var(--button-primary-bg)] ring-2 ring-[var(--surface)]" />
         )}
       </span>
 
-      <div className="min-w-0 space-y-1">
-        <p className={cn('text-sm', read ? 'text-primary' : 'font-semibold text-primary')}>{n.title}</p>
-        {n.body ? <p className="text-sm text-secondary">{n.body}</p> : null}
-        <p className="text-xs text-secondary">
-          {KIND_LABEL[n.kind]}
-          <span aria-hidden="true"> · </span>
-          <span className="tabular">{when}</span>
-          {read ? null : (
-            <>
-              <span aria-hidden="true"> · </span>
-              <span className="font-semibold text-brand-fg">Unread</span>
-            </>
-          )}
-        </p>
-        {n.hrefNote ? <p className="text-xs text-secondary">{n.hrefNote}</p> : null}
-      </div>
+      <div
+        className={cn(
+          'ring-hairline relative min-w-0 flex-1 overflow-hidden rounded-lg border bg-surface-raised p-4 shadow-sm',
+          'grid gap-x-4 gap-y-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center',
+          read ? 'border-line' : 'border-line-strong',
+        )}
+      >
+        {read ? null : (
+          <span aria-hidden="true" className="absolute inset-y-0 left-0 w-1 bg-[var(--button-primary-bg)]" />
+        )}
 
-      {n.href && n.action ? (
-        <div className="col-start-2 flex flex-wrap items-center gap-2 sm:col-start-3 sm:row-start-1 sm:self-center">
-          <ButtonLink
-            href={n.href}
-            variant="secondary"
-            size="sm"
-            className="min-h-11"
-            onClick={read ? undefined : onMarkRead}
-          >
-            {n.action}
-          </ButtonLink>
-          {read ? null : (
+        <div className="min-w-0 space-y-1">
+          <p className={cn('text-sm', read ? 'text-primary' : 'font-semibold text-primary')}>{n.title}</p>
+          {n.body ? <p className="text-sm text-secondary">{n.body}</p> : null}
+          <p className="text-xs text-secondary">
+            {KIND_LABEL[n.kind]}
+            <span aria-hidden="true"> · </span>
+            <span className="tabular">{when}</span>
+            {read ? null : (
+              <>
+                <span aria-hidden="true"> · </span>
+                <span className="font-semibold text-brand-fg">Unread</span>
+              </>
+            )}
+          </p>
+          {n.hrefNote ? <p className="text-xs text-secondary">{n.hrefNote}</p> : null}
+        </div>
+
+        {n.href && n.action ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <ButtonLink
+              href={n.href}
+              variant="secondary"
+              size="sm"
+              className="min-h-11"
+              onClick={read ? undefined : onMarkRead}
+            >
+              {n.action}
+            </ButtonLink>
+            {read ? null : (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="min-h-11"
+                onClick={onMarkRead}
+                loading={busy}
+                aria-label={`Mark “${n.title}” as read`}
+              >
+                {busy ? null : <Check className="size-4" aria-hidden="true" />}
+                <span className="sm:sr-only">Mark read</span>
+              </Button>
+            )}
+          </div>
+        ) : read ? null : (
+          <div>
             <Button
               variant="ghost"
               size="sm"
@@ -293,25 +341,11 @@ function Row({
               aria-label={`Mark “${n.title}” as read`}
             >
               {busy ? null : <Check className="size-4" aria-hidden="true" />}
-              <span className="sm:sr-only">Mark read</span>
+              Mark read
             </Button>
-          )}
-        </div>
-      ) : read ? null : (
-        <div className="col-start-2 sm:col-start-3 sm:row-start-1 sm:self-center">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="min-h-11"
-            onClick={onMarkRead}
-            loading={busy}
-            aria-label={`Mark “${n.title}” as read`}
-          >
-            {busy ? null : <Check className="size-4" aria-hidden="true" />}
-            Mark read
-          </Button>
-        </div>
-      )}
+          </div>
+        )}
+      </div>
     </li>
   );
 }

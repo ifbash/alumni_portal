@@ -54,9 +54,11 @@ export function TicketCode({ registrationId }: { registrationId: string }) {
   const code = checkInCode(registrationId);
 
   return (
-    <div className="min-w-0">
+    // The one thing the desk reads, so it gets the biggest type on the pass,
+    // in a sunken well with its own hairline. Spaced rather than scannable.
+    <div className="min-w-0 rounded-lg border border-line bg-surface-sunken px-3 py-4 text-center">
       <p className="text-xs font-semibold uppercase tracking-wider text-secondary">Check-in code</p>
-      <p className="whitespace-nowrap font-mono text-xl font-bold tracking-wider">{code}</p>
+      <p className="mt-1 whitespace-nowrap font-mono text-display-xs font-bold tracking-[0.14em] tabular">{code}</p>
     </div>
   );
 }

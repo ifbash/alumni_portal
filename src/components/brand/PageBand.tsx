@@ -28,6 +28,11 @@ export type { BandPhoto };
  *
  * On the band, text is band-* only, and a light card inside it carries
  * `.band-exit`.
+ *
+ * Atmosphere: a slow `.aurora` (derived from the band tokens, 24% at most)
+ * and `.grain` sit behind the text, which is lifted above both with z-2.
+ * The aurora is left off where a photo is showing, so nothing lightens the
+ * scrim's solid text zone.
  */
 export function PageBand({
   pack,
@@ -70,8 +75,14 @@ export function PageBand({
   return (
     <section
       aria-labelledby={headingId}
-      className={cn('band-surface relative isolate -mx-4 overflow-hidden sm:mx-0 sm:rounded-xl', className)}
+      className={cn('band-surface grain relative isolate -mx-4 overflow-hidden sm:mx-0 sm:rounded-xl sm:shadow-lg', className)}
     >
+      {shown ? null : <div className="aurora" aria-hidden="true" />}
+      {/* The rim: a hairline in the band's own foreground, so the slab has an edge. */}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 z-[1] hidden rounded-[inherit] ring-1 ring-inset ring-[color-mix(in_srgb,var(--band-fg)_16%,transparent)] sm:block"
+      />
       {shown ? (
         <>
           {/* Tenant-supplied URLs; see next.config.ts. */}
@@ -99,6 +110,7 @@ export function PageBand({
 
       <div
         className={cn(
+          'relative z-[2]',
           compact ? 'px-5 py-5 sm:px-8 lg:py-6' : 'px-5 py-6 sm:px-8 lg:py-10',
           aside ? 'grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-8' : null,
         )}
@@ -107,18 +119,18 @@ export function PageBand({
           {showCrest ? <Crest pack={pack} size={compact ? 40 : 48} /> : null}
           <div className="min-w-0">
             {eyebrow ? (
-              <p className={cn('text-sm font-semibold text-band-accent', shown && 'lg:text-band-fg')}>{eyebrow}</p>
+              <p className={cn('eyebrow max-w-full text-xs text-band-accent', shown && 'lg:text-band-fg')}>{eyebrow}</p>
             ) : null}
             {/* Plain string, not `cn`: tailwind-merge reads `text-display-*`
                 as a colour and would drop it beside `text-band-fg`. */}
             <Heading
               id={headingId}
-              className={`${eyebrow ? 'mt-1 ' : ''}font-display font-bold text-band-fg ${compact ? 'text-display-xs' : 'text-display-sm'}`}
+              className={`${eyebrow ? 'mt-2 ' : ''}font-display font-bold tracking-tight text-band-fg ${compact ? 'text-display-xs' : 'text-display-md'}`}
             >
               {title}
             </Heading>
             {lead ? (
-              <p className={cn('mt-2 max-w-prose text-md text-band-muted', shown && 'lg:text-band-fg')}>{lead}</p>
+              <p className={cn('mt-2.5 max-w-prose text-md text-band-muted', shown && 'lg:text-band-fg')}>{lead}</p>
             ) : null}
             {meta ? <div className="mt-3 flex flex-wrap gap-2">{meta}</div> : null}
             {actions ? <div className="mt-5 flex flex-wrap gap-2">{actions}</div> : null}
@@ -144,7 +156,7 @@ export function BandChip({
   href?: string;
 }) {
   const classes =
-    'inline-flex min-h-8 items-center gap-1.5 rounded-full border border-band-rule px-3 text-xs font-medium text-band-fg';
+    'inline-flex min-h-8 items-center gap-1.5 rounded-full border border-band-rule bg-[color-mix(in_srgb,var(--band-fg)_8%,transparent)] px-3 text-xs font-medium text-band-fg';
   const inner = (
     <>
       {icon ? (
@@ -163,7 +175,7 @@ export function BandChip({
       href={href}
       className={cn(
         classes,
-        'min-h-11 transition-colors duration-fast ease-brand hover:bg-[color-mix(in_srgb,var(--band-fg)_12%,transparent)] sm:min-h-8',
+        'min-h-11 transition-colors duration-fast ease-brand hover:bg-[color-mix(in_srgb,var(--band-fg)_16%,transparent)] sm:min-h-8',
       )}
     >
       {inner}

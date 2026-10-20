@@ -221,10 +221,13 @@ export default async function NewsPage({
           ) : null}
 
           {rows.length > 0 ? (
-            <section aria-labelledby="news-more" className="space-y-1">
-              <h2 id="news-more" className={lead ? 'font-display text-xl font-semibold' : 'sr-only'}>
-                Earlier
-              </h2>
+            <section aria-labelledby="news-more" className="space-y-1 pt-2">
+              <div className={lead ? 'flex items-center gap-4 pb-1' : 'sr-only'}>
+                <h2 id="news-more" className="font-display text-xl font-semibold">
+                  Earlier
+                </h2>
+                <span aria-hidden="true" className="h-px flex-1 bg-line" />
+              </div>
               <ul className="divide-y divide-line">
                 {rows.map((item) => (
                   <li key={item.id}>

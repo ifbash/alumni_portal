@@ -1,10 +1,12 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { Mail } from 'lucide-react';
 import { redirect } from 'next/navigation';
 import { getSession } from '@/lib/auth/session';
 import { safeNextParam } from '@/lib/auth/route-policy';
 import { getTenantBrand } from '@/lib/tenant';
 import { IS_FIXTURE, OTP_MAX_ATTEMPTS, OTP_TTL_SECONDS } from '@/lib/config';
+import { AuthHeader } from '../_components/AuthHeader';
 import { OtpForm } from './OtpForm';
 
 export const metadata: Metadata = {
@@ -42,21 +44,21 @@ export default async function VerifyPage({
   const copy = brand.pack.copy;
 
   return (
-    <div className="space-y-8">
-      <header className="space-y-2">
-        <h1 className="font-display text-display-sm font-bold">Check your email</h1>
-        <p className="text-secondary">
-          A six-digit code is on its way to <span className="font-medium text-primary">{email}</span>.
-          Enter it below and you are in.
+    <div className="stagger space-y-6">
+      <AuthHeader icon={<Mail className="size-5" />} title="Check your email" className="pb-2">
+        <p>
+          A six-digit code is on its way to{' '}
+          <span className="break-all font-medium text-primary">{email}</span>. Enter it below and you
+          are in.
         </p>
-        <p className="text-sm text-secondary">
+        <p className="text-sm">
           Wrong address?{' '}
           <Link href={`/login?email=${encodeURIComponent(email)}`} className="link">
             Use a different one
           </Link>
           .
         </p>
-      </header>
+      </AuthHeader>
 
       <OtpForm
         email={email}

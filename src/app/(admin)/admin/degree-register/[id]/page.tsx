@@ -340,14 +340,13 @@ export default async function RegisterRowPage({ params }: { params: Promise<{ id
                 </CardTitle>
               </CardHeader>
               <CardBody className="space-y-3 pt-3">
-                <p className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="tabular">
+                {/* The percentage is the point; the tint repeats it, never replaces it. */}
+                <div className={cn('flex items-end justify-between gap-3 rounded-lg p-3', COVERAGE_CLASS[coverageTone(pct)])}>
+                  <p className="font-display text-display-xs font-bold leading-none tabular">{formatPercent(pct)}</p>
+                  <p className="text-sm tabular">
                     {formatNumber(batch.claimed)} of {formatNumber(batch.total)} joined
-                  </span>
-                  <span className={cn('rounded-full px-2 py-0.5 text-xs font-semibold tabular', COVERAGE_CLASS[coverageTone(pct)])}>
-                    {formatPercent(pct)}
-                  </span>
-                </p>
+                  </p>
+                </div>
                 <p className="text-xs text-secondary">Across the whole register it is {formatPercent(stats.coverage)}.</p>
                 <ButtonLink
                   href={`/admin/degree-register?year=${record.yearOfPassing}`}

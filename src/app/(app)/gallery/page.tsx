@@ -35,11 +35,9 @@ export const metadata: Metadata = {
   description: 'Meets, convocations and batch memories, including photos sent in by graduates.',
 };
 
-/**
- * An album with no photo of its own gets its `CoverArt` as a slim strip
- * rather than a 3:2 picture slot: a label, not an empty frame.
- */
-const SLIM_ART = '[&_figure>div]:aspect-[5/2]';
+/** Frame shapes for the mosaic, cycled by position. Art-only albums keep to wide and square. */
+const PHOTO_SHAPES = ['3/2', '4/5', '1/1', '4/3', '3/2', '4/5'] as const;
+const ART_SHAPES = ['4/3', '5/2', '1/1', '5/2', '4/3'] as const;
 
 const one = (v: string | string[] | undefined): string | undefined =>
   Array.isArray(v) ? v[0] : v;
@@ -129,7 +127,6 @@ export default async function GalleryPage({
   // without photos is always an even, slim tile.
   const hero = !filtered && albums[0] && coverOf(albums[0]) ? albums[0] : null;
   const mosaic = hero ? albums.slice(1) : albums;
-  const largeFirst = Boolean(mosaic[0] && coverOf(mosaic[0]));
 
   const support = pack.copy.supportEmail ?? null;
   const phoneDigits = pack.copy.supportPhone?.replace(/\D/g, '') ?? '';
@@ -244,20 +241,24 @@ export default async function GalleryPage({
           <h2 id="albums-heading" className={hero ? 'font-display text-xl font-semibold' : 'sr-only'}>
             {hero ? 'More albums' : 'Albums'}
           </h2>
-          <ul className="grid grid-flow-row-dense grid-cols-2 gap-x-4 gap-y-6 lg:grid-cols-3 xl:grid-cols-4">
+          {/* A masonry of shapes: CSS columns, so each tile keeps its own height. The shape cycles by position;
+              an album with no photo stays gentler (no tall frames), because a tall block that holds only a year
+              reads as a picture that failed to load. */}
+          <ul className={cn('columns-2 gap-x-4 lg:columns-3', mosaic.length > 8 && 'xl:columns-4')}>
             {mosaic.map((album, i) => {
-              const large = i === 0 && largeFirst;
+              const cover = coverOf(album);
+              const aspect = cover ? PHOTO_SHAPES[i % PHOTO_SHAPES.length]! : ART_SHAPES[i % ART_SHAPES.length]!;
               return (
-                <li key={album.id} className={large ? 'col-span-2 min-w-0 lg:row-span-2' : 'min-w-0'}>
+                <li key={album.id} className="mb-6 min-w-0 break-inside-avoid">
                   <AlbumCard
                     album={album}
-                    coverSrc={coverOf(album)}
+                    coverSrc={cover}
                     href={`/gallery/${album.slug}`}
                     locale={locale}
                     credit={creditOf(album)}
-                    variant={large ? 'large' : 'tile'}
+                    variant="tile"
+                    aspect={aspect}
                     showCount={hasPhotos(album)}
-                    className={coverOf(album) ? undefined : SLIM_ART}
                   />
                 </li>
               );

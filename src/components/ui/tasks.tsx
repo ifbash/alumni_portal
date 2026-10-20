@@ -42,7 +42,7 @@ export function NeedsYou({
 
   return (
     <section aria-labelledby={headingId} className={cn('space-y-3', className)}>
-      <h2 id={headingId} className="text-sm font-semibold text-secondary">
+      <h2 id={headingId} className="eyebrow text-secondary">
         {heading}
       </h2>
 
@@ -52,37 +52,43 @@ export function NeedsYou({
           {caughtUp}
         </p>
       ) : (
-        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {open.map((t) => {
+        <ul className="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {open.map((t, i) => {
             const attention = t.tone === 'attention';
             return (
-              <li key={t.key} className="min-w-0">
+              <li key={t.key} className="min-w-0" style={{ '--i': i } as React.CSSProperties}>
                 <Link
                   href={t.href}
                   className={cn(
-                    'group flex h-full min-h-11 flex-col gap-1 rounded-lg border border-line bg-surface-raised p-4 shadow-sm',
-                    'transition-colors duration-fast ease-brand hover:border-line-strong',
-                    attention && 'border-l-4 border-l-warning',
+                    'group lift ring-hairline relative flex h-full min-h-11 flex-col gap-1 overflow-hidden rounded-lg border border-line bg-surface-raised p-4 shadow-sm',
+                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]',
+                    // A rail inside the card, so it follows the corner radius.
+                    attention &&
+                      "after:absolute after:inset-y-0 after:left-0 after:w-1 after:bg-warning after:content-['']",
                   )}
                 >
                   <span className="flex items-start justify-between gap-3">
-                    <span className="font-display text-display-xs font-bold tabular">
+                    {/* Joined, not cn: tailwind-merge would drop the display size. */}
+                    <span className="font-display text-display-sm font-bold leading-none tracking-tight tabular">
                       {t.count.toLocaleString('en-IN')}
                     </span>
                     {t.icon ? (
-                      <span className="mt-1 text-muted [&>svg]:size-5" aria-hidden="true">
+                      <span
+                        className="grid size-9 shrink-0 place-items-center rounded-full bg-brand-soft text-brand-soft-fg [&>svg]:size-[18px]"
+                        aria-hidden="true"
+                      >
                         {t.icon}
                       </span>
                     ) : null}
                   </span>
-                  <span className="text-sm font-medium text-primary">{t.label}</span>
+                  <span className="mt-1 text-sm font-medium text-primary">{t.label}</span>
                   {t.detail ? (
                     <span className={cn('text-sm', attention ? 'text-warning-fg' : 'text-secondary')}>{t.detail}</span>
                   ) : null}
-                  <span className="mt-auto inline-flex items-center gap-1 pt-2 text-sm font-semibold text-brand-fg">
+                  <span className="mt-auto inline-flex items-center gap-1 pt-3 text-sm font-semibold text-brand-fg">
                     {t.action}
                     <ArrowRight
-                      className="size-4 transition-transform duration-fast ease-brand group-hover:translate-x-0.5"
+                      className="size-4 transition-transform duration-fast ease-brand group-hover:translate-x-1"
                       aria-hidden="true"
                     />
                   </span>

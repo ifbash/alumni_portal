@@ -27,6 +27,7 @@ import {
 import { BandChip, PageBand } from '@/components/brand/PageBand';
 import { BarList } from '@/components/charts';
 import { MemberCard } from '@/components/members/MemberCard';
+import { OutlineNumeral } from '../OutlineNumeral';
 
 /**
  * One graduating batch, on one page.
@@ -191,13 +192,15 @@ export default async function BatchPage({
     );
   }
 
+  const bandPhoto = photoForBatch(pack, year);
   const band = (
     <PageBand
       pack={pack}
       eyebrow={pack.copy.institutionName}
       title={`Class of ${year}`}
       lead={lead}
-      photo={photoForBatch(pack, year)}
+      photo={bandPhoto}
+      aside={bandPhoto ? undefined : <OutlineNumeral>{String(year)}</OutlineNumeral>}
       photoOnPhones
       meta={yourBatch ? <BandChip icon={<GraduationCap />}>Your batch</BandChip> : undefined}
       actions={
@@ -283,7 +286,7 @@ export default async function BatchPage({
       {band}
 
       {summary.length ? (
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+        <div className="flex flex-col gap-3 rounded-lg border border-line bg-surface-raised px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:gap-4">
           <FacePile people={shown.slice(0, 5)} />
           <p className="min-w-0 text-md text-primary sm:flex-1">{summary.join(' · ')}</p>
         </div>

@@ -1,8 +1,9 @@
 import * as React from 'react';
 import Link from 'next/link';
+import { Clock, MapPin, Video } from 'lucide-react';
 import { Badge, DateTile, MediaFrame } from '@/components/ui';
 import { cn } from '@/lib/cn';
-import { formatCurrency, formatDateRange } from '@/lib/format';
+import { formatCurrency, formatDateRange, formatTimeZoneLabel } from '@/lib/format';
 import { isOnlineVenue, seatStatus } from '@/lib/event-status';
 import type { LocaleSpec } from '@/lib/branding/pack';
 import type { EventItem } from '@/lib/data/types';
@@ -41,6 +42,87 @@ function fmtOf(locale: LocaleSpec) {
 export function eventMetaLine(event: Pick<EventItem, 'startsAt' | 'endsAt' | 'venue'>, locale: LocaleSpec): string {
   const where = isOnlineVenue(event.venue) ? 'Online' : (event.venue ?? 'Venue to be announced');
   return `${formatDateRange(event.startsAt, event.endsAt, fmtOf(locale))} · ${where}`;
+}
+
+/**
+ * The date as a calendar leaf: a brand-tinted month cap over a large day
+ * numeral. It is what the eye lands on first in a list of events, so it
+ * carries the date's weight and the title can be quieter. Decorative; the
+ * line beside it states the date in words.
+ */
+export function EventDateBlock({
+  iso,
+  locale,
+  timeZone,
+  size = 'md',
+  className,
+}: {
+  iso: string;
+  locale: string;
+  timeZone: string;
+  size?: 'md' | 'lg';
+  className?: string;
+}) {
+  const d = new Date(iso);
+  const part = (opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat(locale, { ...opts, timeZone }).format(d);
+  const lg = size === 'lg';
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        'block shrink-0 self-start overflow-hidden rounded-lg border border-line bg-surface text-center shadow-sm',
+        lg ? 'w-[4.5rem]' : 'w-14',
+        className,
+      )}
+    >
+      <span className="block bg-brand-soft py-0.5 text-xs font-semibold uppercase tracking-wider text-brand-soft-fg">
+        {part({ month: 'short' })}
+      </span>
+      <span className={cn('block font-display font-bold leading-none tabular', lg ? 'pt-2 text-3xl' : 'pt-1.5 text-2xl')}>
+        {part({ day: 'numeric' })}
+      </span>
+      <span className="block pb-1.5 pt-1 text-xs text-secondary">{part({ weekday: 'short' })}</span>
+    </span>
+  );
+}
+
+/**
+ * The line beside the date block. A same-day event needs only its hours
+ * (the block already says which day); one that runs over a night needs
+ * both ends, so it keeps the full range.
+ */
+function whenText(event: EventSummaryData, locale: LocaleSpec): string {
+  const tz = { timeZone: locale.timeZone };
+  const day = (iso: string) => new Intl.DateTimeFormat('en-CA', tz).format(new Date(iso));
+  const time = (iso: string) =>
+    new Intl.DateTimeFormat(locale.locale, { hour: 'numeric', minute: '2-digit', ...tz }).format(new Date(iso));
+  if (!event.endsAt || day(event.endsAt) !== day(event.startsAt)) {
+    return formatDateRange(event.startsAt, event.endsAt, fmtOf(locale));
+  }
+  return `${time(event.startsAt)} – ${time(event.endsAt)} ${formatTimeZoneLabel(locale.timeZone, locale.locale)}`;
+}
+
+function EventFacts({ event, locale }: { event: EventSummaryData; locale: LocaleSpec }) {
+  const online = isOnlineVenue(event.venue);
+  const Where = online ? Video : MapPin;
+  return (
+    <dl className="space-y-1 text-sm text-secondary">
+      <div className="flex items-start gap-2">
+        <dt className="mt-0.5 shrink-0 text-muted">
+          <Clock className="size-3.5" aria-hidden="true" />
+          <span className="sr-only">When</span>
+        </dt>
+        <dd className="min-w-0 tabular">{whenText(event, locale)}</dd>
+      </div>
+      <div className="flex items-start gap-2">
+        <dt className="mt-0.5 shrink-0 text-muted">
+          <Where className="size-3.5" aria-hidden="true" />
+          <span className="sr-only">Where</span>
+        </dt>
+        <dd className="min-w-0 line-clamp-1">{online ? 'Online' : (event.venue ?? 'Venue to be announced')}</dd>
+      </div>
+    </dl>
+  );
 }
 
 function EventBadges({ event, locale }: { event: EventSummaryData; locale: LocaleSpec }) {
@@ -97,10 +179,10 @@ export function EventSummary({
   if (variant === 'row') {
     return (
       <article className={cn('relative flex items-start gap-3 py-3', className)}>
-        <DateTile iso={event.startsAt} locale={locale.locale} timeZone={locale.timeZone} size="md" />
-        <div className="min-w-0 flex-1 space-y-1">
-          <h3 className="line-clamp-2 font-semibold leading-snug">{title}</h3>
-          <p className="truncate text-sm text-secondary">{eventMetaLine(event, locale)}</p>
+        <EventDateBlock iso={event.startsAt} locale={locale.locale} timeZone={locale.timeZone} />
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <h3 className="line-clamp-2 font-display text-md font-semibold leading-snug">{title}</h3>
+          <EventFacts event={event} locale={locale} />
           <div className="flex flex-wrap items-center gap-1.5">
             <EventBadges event={event} locale={locale} />
             {status}
@@ -114,27 +196,29 @@ export function EventSummary({
   return (
     <article
       className={cn(
-        'relative flex h-full flex-col overflow-hidden rounded-lg border border-line bg-surface-raised shadow-sm',
-        'transition-colors duration-fast ease-brand hover:border-line-strong',
+        'lift relative flex h-full flex-col overflow-hidden rounded-lg border border-line bg-surface-raised shadow-sm',
+        'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-[var(--surface)]',
         className,
       )}
     >
       {showThumbnail && event.coverImage ? (
         <MediaFrame src={event.coverImage} alt="" aspect="16/9" rounded={false} className="[&>div]:border-0 [&>div]:border-b" />
       ) : null}
-      <div className="flex flex-1 gap-3 p-4">
-        <DateTile iso={event.startsAt} locale={locale.locale} timeZone={locale.timeZone} size="md" />
-        <div className="min-w-0 flex-1 space-y-1.5">
-          <h3 className="line-clamp-2 font-semibold leading-snug">{title}</h3>
-          <p className="line-clamp-2 text-sm text-secondary">{eventMetaLine(event, locale)}</p>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <EventBadges event={event} locale={locale} />
-            {status}
+      <div className="flex flex-1 flex-col gap-4 p-5">
+        <div className="flex items-start gap-4">
+          <EventDateBlock iso={event.startsAt} locale={locale.locale} timeZone={locale.timeZone} size="lg" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <h3 className="line-clamp-3 font-display text-lg font-semibold leading-snug">{title}</h3>
+            <EventFacts event={event} locale={locale} />
           </div>
+        </div>
+        <div className="mt-auto flex flex-wrap items-center gap-1.5">
+          <EventBadges event={event} locale={locale} />
+          {status}
         </div>
       </div>
       {action ? (
-        <div className="relative z-10 px-4 pb-4 [&>*]:w-full sm:[&>*]:w-auto">{action}</div>
+        <div className="relative z-10 border-t border-line px-5 py-3.5 [&>*]:w-full sm:[&>*]:w-auto">{action}</div>
       ) : null}
     </article>
   );

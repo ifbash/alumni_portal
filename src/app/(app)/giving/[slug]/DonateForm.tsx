@@ -246,8 +246,14 @@ export function DonateForm({
     const d = result.data.donation;
 
     return (
-      <Card as="section" aria-labelledby="donate-thanks">
-        <CardHeader variant="stack">
+      <Card as="section" aria-labelledby="donate-thanks" className="overflow-hidden shadow-md">
+        <CardHeader variant="stack" className="bg-[linear-gradient(to_bottom,color-mix(in_srgb,var(--brand-soft)_80%,transparent),transparent)] pb-4">
+          <span
+            className="mb-1 grid size-11 place-items-center rounded-full bg-surface-raised text-brand-fg shadow-sm"
+            aria-hidden="true"
+          >
+            <Heart className="size-5" />
+          </span>
           <CardTitle as="h2" id="donate-thanks">
             Thank you, {donorFirstName}.
           </CardTitle>
@@ -413,7 +419,7 @@ export function DonateForm({
                         }}
                         className="peer sr-only"
                       />
-                      <span className={cn(CHOICE, 'tabular')}>{money(v)}</span>
+                      <span className={cn(CHOICE, 'px-1.5 py-3 font-display text-base tabular')}>{money(v)}</span>
                     </label>
                   ))}
 

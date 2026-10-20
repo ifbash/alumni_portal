@@ -262,7 +262,105 @@
   }
 }
 
+/*
+ * ATMOSPHERE LAYER (Oct 2026). Depth, light and motion for identity
+ * surfaces. Everything resolves through tokens; there is no colour literal
+ * here except the grain's neutral noise, which carries no hue. See
+ * docs/DESIGN-SYSTEM.md section 12 for where each piece may be used.
+ */
+@layer components {
+  /*
+   * .aurora - soft, slow light behind content, derived from the college's
+   * band tokens. Put on a `.band-surface` (or any dark identity surface) as
+   * an absolutely-positioned child: <div class="aurora" aria-hidden />.
+   * Mixes stay at or under 24% so the band's text pairings still clear
+   * their contrast checks; never place it under small text without
+   * re-measuring. Motion is transform-only and stops under reduced-motion.
+   */
+  .aurora { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+  .aurora::before,
+  .aurora::after {
+    content: ''; position: absolute; border-radius: 9999px; filter: blur(56px);
+    will-change: transform;
+  }
+  .aurora::before {
+    width: 46rem; height: 46rem; right: -12rem; top: -18rem;
+    background: radial-gradient(closest-side, color-mix(in oklab, var(--band-accent) 24%, transparent), transparent 72%);
+    animation: aurora-drift 26s ease-in-out infinite alternate;
+  }
+  .aurora::after {
+    width: 38rem; height: 38rem; left: -14rem; bottom: -20rem;
+    background: radial-gradient(closest-side, color-mix(in oklab, var(--band-fg) 12%, transparent), transparent 70%);
+    animation: aurora-drift 32s ease-in-out infinite alternate-reverse;
+  }
+
+  /* .grain - paper tooth over a surface. Neutral noise at low opacity; hides banding in gradients. */
+  .grain { position: relative; isolation: isolate; }
+  .grain::after {
+    content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; opacity: 0.16; mix-blend-mode: soft-light;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .5  0 0 0 0 .5  0 0 0 0 .5  0 0 0 .9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    background-size: 160px 160px;
+  }
+
+  /* .ring-hairline - a 1px gradient rim that catches light on the top edge of raised surfaces. */
+  .ring-hairline { position: relative; }
+  .ring-hairline::before {
+    content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none;
+    background: linear-gradient(160deg, color-mix(in srgb, var(--surface-raised) 90%, transparent), color-mix(in srgb, var(--border) 70%, transparent) 40%, transparent 85%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  }
+
+  /* .glass - a frosted bar or card over imagery or the aurora. Text on it uses page tokens. */
+  .glass {
+    background: color-mix(in srgb, var(--surface-raised) 78%, transparent);
+    -webkit-backdrop-filter: blur(14px) saturate(1.3); backdrop-filter: blur(14px) saturate(1.3);
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  }
+
+  /* .lift - hover raises a card. Pointer devices only; no layout shift (transform + shadow). */
+  @media (hover: hover) {
+    .lift { transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+    .lift:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); border-color: var(--border-strong); }
+  }
+
+  /* .eyebrow - small caps label with a leading rule; the numbered-section device ("01 Events"). */
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 0.75rem;
+    font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+  }
+  .eyebrow::before { content: ''; width: 2rem; height: 1px; background: currentColor; opacity: 0.55; }
+
+  /* .marquee - an endless row. The child list is rendered twice (second copy aria-hidden); mask softens the ends. */
+  .marquee { overflow: hidden; mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent); }
+  .marquee-track { display: flex; width: max-content; gap: var(--marquee-gap, 1.5rem); animation: marquee var(--marquee-dur, 48s) linear infinite; }
+  .marquee:hover .marquee-track { animation-play-state: paused; }
+}
+
 @layer utilities {
+  /* Giant outlined numerals / words. Decoration only: aria-hidden, never carries meaning. */
+  .display-outline {
+    /* Fill, not colour: `color: transparent` would make the currentColor stroke transparent too. */
+    -webkit-text-fill-color: transparent;
+    -webkit-text-stroke: 1.5px currentColor;
+    paint-order: stroke fill;
+  }
+
+  /*
+   * Scroll reveal. Progressive: browsers without scroll-driven animations
+   * (and anyone with reduced motion) simply see the content. Never use it
+   * on above-the-fold content or on anything a test must see on load.
+   */
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      .reveal { animation: reveal-up linear both; animation-timeline: view(); animation-range: entry 4% cover 26%; }
+      .reveal-scale { animation: reveal-scale linear both; animation-timeline: view(); animation-range: entry 0% cover 30%; }
+    }
+  }
+
+  /* Staggered entrance for above-the-fold content: set --i on each child. */
+  .stagger > * { animation: fade-up 520ms var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms); }
+
   .text-gradient-brand {
     background-image: linear-gradient(100deg, var(--brand-fg), var(--brand-500));
     -webkit-background-clip: text;
@@ -277,7 +375,17 @@
   .tabular { font-variant-numeric: tabular-nums; }
 }
 
+@keyframes aurora-drift {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(-6%, 8%, 0) scale(1.12); }
+}
+@keyframes marquee { from { transform: translateX(0); } to { transform: translateX(calc(-50% - var(--marquee-gap, 1.5rem) / 2)); } }
+@keyframes reveal-up { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: none; } }
+@keyframes reveal-scale { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
+
 @media (prefers-reduced-motion: reduce) {
+  .marquee-track { animation: none !important; }
+  .aurora::before, .aurora::after { animation: none !important; }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;

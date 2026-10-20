@@ -2,15 +2,23 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ChevronLeft, ChevronRight, Maximize2, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Users, X } from 'lucide-react';
 
-import { Avatar, Badge, Button, Kbd } from '@/components/ui';
+import { Avatar, Kbd } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
 /**
  * The photograph wall and its viewer.
  *
- * Built on the native `<dialog>` element, the same way `components/ui/
+ * The wall is a justified mosaic: every tile in a row shares one height and
+ * its width follows its aspect ratio, so mixed portrait and landscape
+ * photographs fill the row edge to edge with no crop to a grid and no ragged
+ * gap under a portrait. It is plain CSS (`flex-grow` proportional to the
+ * ratio, a filler that keeps the last row from stretching), so there is no
+ * layout script and no jump when images load: each tile reserves its box
+ * from the stored width and height.
+ *
+ * The viewer is the native `<dialog>`, the same way `components/ui/
  * overlay.tsx` builds `Dialog` and `Sheet`, and for the same reason: focus
  * trapping, Escape-to-close, `inert` on the background and correct
  * screen-reader semantics all come free and all get subtly wrong when
@@ -43,6 +51,11 @@ export interface WallPhoto {
   height: number;
   tags: PhotoTag[];
 }
+
+/** A round control on the viewer's dark ground: 44px, a tint of the band's own foreground. */
+const ROUND =
+  'grid size-11 shrink-0 place-items-center rounded-full bg-[color-mix(in_srgb,var(--band-fg)_14%,transparent)] text-band-fg ' +
+  'transition-colors duration-fast ease-brand hover:bg-[color-mix(in_srgb,var(--band-fg)_24%,transparent)] disabled:opacity-40 disabled:hover:bg-[color-mix(in_srgb,var(--band-fg)_14%,transparent)]';
 
 export function PhotoWall({
   photos,
@@ -81,6 +94,15 @@ export function PhotoWall({
       if (back !== null) triggers.current[back]?.focus();
     }
   }, [index]);
+
+  // The photograph either side is fetched ahead of the arrow key, so a
+  // browse through the album does not flash an empty stage.
+  React.useEffect(() => {
+    if (index === null) return;
+    for (const near of [photos[index + 1], photos[index - 1]]) {
+      if (near?.url) new Image().src = near.url;
+    }
+  }, [index, photos]);
 
   const open = (i: number) => {
     openedFrom.current = i;
@@ -132,48 +154,62 @@ export function PhotoWall({
 
   return (
     <>
-      {/* Multi-column rather than a fixed grid: photographs come in mixed
-          orientations, and a row-based grid either crops them or leaves a
-          ragged gap under every portrait. */}
-      <div className="columns-2 gap-3 sm:columns-3 sm:gap-4 xl:columns-4">
-        {photos.map((photo, i) => (
-          <figure key={photo.id} className="mb-3 break-inside-avoid sm:mb-4">
-            <button
-              type="button"
-              ref={(el) => {
-                triggers.current[i] = el;
-              }}
-              onClick={() => open(i)}
-              aria-label={`Open photograph ${i + 1} of ${photos.length}${
-                photo.caption ? `: ${photo.caption}` : ''
-              } in the viewer`}
-              style={{ aspectRatio: `${photo.width} / ${photo.height}` }}
-              className={cn(
-                'group relative block w-full overflow-hidden rounded-lg border border-line bg-surface-sunken',
-                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]',
-              )}
+      {/* The mosaic. --row is the target row height; the filler's huge
+          grow factor keeps a short last row at its natural size. */}
+      <ul className="flex flex-wrap gap-2 [--row:8.5rem] after:grow-[100000] after:content-[''] sm:gap-3 sm:[--row:12rem] xl:[--row:14rem]">
+        {photos.map((photo, i) => {
+          const ratio = photo.width > 0 && photo.height > 0 ? photo.width / photo.height : 1.5;
+          return (
+            <li
+              key={photo.id}
+              style={{ flexGrow: Math.round(ratio * 100), flexBasis: `calc(${ratio.toFixed(4)} * var(--row))` }}
+              className="min-w-0"
             >
-              <PhotoBody photo={photo} />
-              <span
-                aria-hidden="true"
+              <button
+                type="button"
+                ref={(el) => {
+                  triggers.current[i] = el;
+                }}
+                onClick={() => open(i)}
+                aria-label={`Open photograph ${i + 1} of ${photos.length}${
+                  photo.caption ? `: ${photo.caption}` : ''
+                }${photo.tags.length > 0 ? `, ${photo.tags.length} tagged` : ''} in the viewer`}
+                style={{ aspectRatio: `${photo.width} / ${photo.height}` }}
                 className={cn(
-                  'absolute bottom-2 right-2 grid size-7 place-items-center rounded bg-scrim text-band-fg',
-                  'opacity-0 transition-opacity duration-fast ease-brand group-hover:opacity-100 group-focus-visible:opacity-100',
+                  'group relative block w-full overflow-hidden rounded-lg border border-line bg-surface-sunken',
+                  'transition-shadow duration-fast ease-brand hover:shadow-lg',
+                  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]',
                 )}
               >
-                <Maximize2 className="size-3.5" />
-              </span>
-            </button>
-
-            {photo.caption || photo.tags.length > 0 ? (
-              <figcaption className="space-y-1.5 pt-2">
-                {photo.caption ? <p className="text-xs text-secondary">{photo.caption}</p> : null}
-                {photo.tags.length > 0 ? <TagRow tags={photo.tags} /> : null}
-              </figcaption>
-            ) : null}
-          </figure>
-        ))}
-      </div>
+                <PhotoBody photo={photo} />
+                {photo.tags.length > 0 ? (
+                  <span
+                    aria-hidden="true"
+                    className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-scrim px-2 py-0.5 text-xs font-medium tabular text-band-fg"
+                  >
+                    <Users className="size-3" />
+                    {photo.tags.length}
+                  </span>
+                ) : null}
+                {/* The caption rises over a scrim on hover and keyboard focus.
+                    Touch has no hover; the viewer carries the caption there. */}
+                {photo.caption ? (
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      'absolute inset-x-0 bottom-0 line-clamp-2 bg-scrim px-3 py-2 text-left text-xs text-band-fg',
+                      'translate-y-1 opacity-0 transition duration-fast ease-brand',
+                      'group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100',
+                    )}
+                  >
+                    {photo.caption}
+                  </span>
+                ) : null}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
 
       <dialog
         ref={dialogRef}
@@ -190,47 +226,44 @@ export function PhotoWall({
         onKeyDown={onKeyDown}
         aria-labelledby={headingId}
         className={cn(
-          'm-0 h-dvh max-h-none w-screen max-w-none overflow-hidden border-0 bg-[var(--overlay)] p-0 text-band-fg',
+          'band-surface m-0 h-dvh max-h-none w-screen max-w-none overflow-hidden border-0 bg-band p-0 text-band-fg',
           'backdrop:bg-[var(--overlay)] open:animate-fade-in',
         )}
       >
         {current && index !== null ? (
           <div className="flex h-full flex-col" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-            <h2 id={headingId} className="sr-only">
-              {albumTitle}
-            </h2>
+            <div className="flex shrink-0 items-center justify-between gap-3 px-3 py-2 sm:px-5">
+              <div className="min-w-0">
+                <h2 id={headingId} className="truncate text-sm font-semibold text-band-fg">
+                  {albumTitle}
+                </h2>
+                <p aria-live="polite" className="text-xs tabular text-band-muted">
+                  {index + 1} of {photos.length}
+                </p>
+              </div>
+              <button type="button" onClick={close} aria-label="Close the viewer" autoFocus className={ROUND}>
+                <X className="size-5" aria-hidden="true" />
+              </button>
+            </div>
 
-            {/* The photograph, as large as the screen allows. A tap on the
-                space around it closes the viewer, as a tap on the backdrop
-                would. */}
+            {/* The stage. A tap on the space around the photograph closes the
+                viewer, as a tap on the backdrop would. */}
             <div
-              className="relative flex min-h-0 flex-1 items-center justify-center px-3 pb-3 pt-16 sm:px-16"
+              className="relative flex min-h-0 flex-1 items-center justify-center px-3 sm:px-20"
               onClick={(e) => {
                 if (e.target === e.currentTarget) close();
               }}
             >
-              <div className="absolute inset-x-0 top-0 flex items-center justify-between gap-3 p-3">
-                <p aria-live="polite" className="rounded-full bg-scrim px-3 py-1.5 text-sm font-medium tabular text-band-fg">
-                  {index + 1} of {photos.length}
-                </p>
-                <button
-                  type="button"
-                  onClick={close}
-                  aria-label="Close the viewer"
-                  className="grid size-11 place-items-center rounded-full bg-scrim text-band-fg"
-                >
-                  <X className="size-5" aria-hidden="true" />
-                </button>
-              </div>
-
               {current.url ? (
                 // College- and member-supplied storage URLs; see next.config.ts on why
-                // archive imagery bypasses the image optimiser.
+                // archive imagery bypasses the image optimiser. Keyed so each
+                // photograph fades in rather than swapping under the eye.
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
+                  key={current.id}
                   src={current.url}
                   alt={current.caption ?? ''}
-                  className="max-h-full max-w-full rounded object-contain"
+                  className="max-h-full max-w-full animate-fade-in rounded-lg object-contain shadow-lg"
                 />
               ) : null}
 
@@ -239,7 +272,7 @@ export function PhotoWall({
                 onClick={() => step(-1)}
                 disabled={first}
                 aria-label="Previous photograph"
-                className="absolute left-3 top-1/2 hidden size-11 -translate-y-1/2 place-items-center rounded-full bg-scrim text-band-fg disabled:opacity-40 sm:grid"
+                className={cn(ROUND, 'absolute left-4 top-1/2 hidden -translate-y-1/2 sm:grid')}
               >
                 <ChevronLeft className="size-5" aria-hidden="true" />
               </button>
@@ -248,33 +281,33 @@ export function PhotoWall({
                 onClick={() => step(1)}
                 disabled={last}
                 aria-label="Next photograph"
-                className="absolute right-3 top-1/2 hidden size-11 -translate-y-1/2 place-items-center rounded-full bg-scrim text-band-fg disabled:opacity-40 sm:grid"
+                className={cn(ROUND, 'absolute right-4 top-1/2 hidden -translate-y-1/2 sm:grid')}
               >
                 <ChevronRight className="size-5" aria-hidden="true" />
               </button>
             </div>
 
-            {/* The bottom sheet: caption, tags, credit. */}
-            <div className="max-h-[40dvh] shrink-0 space-y-3 overflow-y-auto rounded-t-xl bg-surface-raised px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 text-primary shadow-lg">
-              {current.caption ? <p className="text-sm">{current.caption}</p> : null}
-              {current.tags.length > 0 ? <TagRow tags={current.tags} /> : null}
-              {credit ? <p className="text-xs text-secondary">{credit} — thank you</p> : null}
+            {/* Below the photograph, never on it: caption, who is in it, credit. */}
+            <div className="mx-auto flex w-full max-w-3xl shrink-0 flex-col gap-3 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4">
+              <div className="max-h-[22dvh] space-y-2.5 overflow-y-auto">
+                {current.caption ? <p className="text-md text-band-fg">{current.caption}</p> : null}
+                {current.tags.length > 0 ? <TagRow tags={current.tags} /> : null}
+                {credit ? <p className="text-xs text-band-muted">{credit} — thank you</p> : null}
+              </div>
 
               <div className="flex items-center justify-between gap-3">
-                <p className="hidden items-center gap-1.5 text-xs text-secondary sm:flex">
+                <p className="hidden items-center gap-1.5 text-xs text-band-muted sm:flex">
                   <Kbd>←</Kbd>
                   <Kbd>→</Kbd>
                   to move · <Kbd>Esc</Kbd> to close
                 </p>
-                <div className="flex flex-1 items-center gap-2 sm:hidden">
-                  <Button variant="secondary" onClick={() => step(-1)} disabled={first} className="min-h-11 flex-1">
-                    <ChevronLeft className="size-4" aria-hidden="true" />
-                    Previous
-                  </Button>
-                  <Button variant="secondary" onClick={() => step(1)} disabled={last} className="min-h-11 flex-1">
-                    Next
-                    <ChevronRight className="size-4" aria-hidden="true" />
-                  </Button>
+                <div className="flex flex-1 items-center justify-between gap-2 sm:hidden">
+                  <button type="button" onClick={() => step(-1)} disabled={first} aria-label="Previous photograph" className={ROUND}>
+                    <ChevronLeft className="size-5" aria-hidden="true" />
+                  </button>
+                  <button type="button" onClick={() => step(1)} disabled={last} aria-label="Next photograph" className={ROUND}>
+                    <ChevronRight className="size-5" aria-hidden="true" />
+                  </button>
                 </div>
               </div>
             </div>
@@ -292,11 +325,21 @@ function PhotoBody({ photo }: { photo: WallPhoto }) {
   if (!photo.url) return null;
   // College- and member-supplied storage URLs; see next.config.ts on why
   // archive imagery bypasses the image optimiser.
-  // eslint-disable-next-line @next/next/no-img-element
-  return <img src={photo.url} alt={photo.caption ?? ''} className="size-full object-cover" loading="lazy" />;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={photo.url}
+      alt={photo.caption ?? ''}
+      className="size-full object-cover transition-transform duration-slow ease-brand group-hover:scale-[1.03]"
+      loading="lazy"
+    />
+  );
 }
 
+/** Who is in the photograph, as chips on the viewer's dark ground. */
 function TagRow({ tags }: { tags: PhotoTag[] }) {
+  const chip =
+    'inline-flex min-h-8 max-w-52 items-center gap-1.5 rounded-full border border-band-rule bg-[color-mix(in_srgb,var(--band-fg)_10%,transparent)] py-0.5 pl-0.5 pr-3 text-xs font-medium text-band-fg';
   return (
     <ul className="flex flex-wrap gap-1.5">
       {tags.map((tag) => (
@@ -306,9 +349,8 @@ function TagRow({ tags }: { tags: PhotoTag[] }) {
               href={`/directory/${tag.slug}`}
               title={tag.line ? `${tag.name} · ${tag.line}` : tag.name}
               className={cn(
-                'inline-flex max-w-52 items-center gap-1.5 rounded-full border border-line bg-surface py-0.5 pl-0.5 pr-2.5',
-                'text-xs font-medium text-primary transition-colors duration-fast ease-brand',
-                'hover:border-line-strong hover:text-brand-fg',
+                chip,
+                'transition-colors duration-fast ease-brand hover:bg-[color-mix(in_srgb,var(--band-fg)_20%,transparent)]',
               )}
             >
               <Avatar name={tag.name} src={tag.photoUrl} size="xs" />
@@ -318,9 +360,12 @@ function TagRow({ tags }: { tags: PhotoTag[] }) {
             // No link, because the profile behind it is one this viewer's
             // directory rules would refuse. The tag is still shown: the
             // photograph plainly has somebody in it.
-            <Badge tone="neutral" title="Not in the part of the directory your account can search.">
+            <span
+              title="Not in the part of the directory your account can search."
+              className={cn(chip, 'pl-3 text-band-muted')}
+            >
               {tag.name}
-            </Badge>
+            </span>
           )}
         </li>
       ))}

@@ -4,7 +4,8 @@ import { ImageResponse } from 'next/og';
 import { headers } from 'next/headers';
 import { getTenantBrand } from '@/lib/tenant';
 import { DEFAULT_PACK, type BrandPack } from '@/lib/branding/pack';
-import { contrastRatio, mixHex, readableTextOn } from '@/lib/branding/color';
+import { contrastRatio, mixHex, parseHex, readableTextOn } from '@/lib/branding/color';
+import { getPublicRegister } from '@/lib/data/public-events';
 
 /**
  * The share card, generated from the tenant's brand pack.
@@ -13,10 +14,14 @@ import { contrastRatio, mixHex, readableTextOn } from '@/lib/branding/color';
  * image at a size where the college's name either reads or the link looks
  * like spam. Every college therefore needs a card, and today only the
  * vendor's own pack has one — DIET has not sent us the crest in vector
- * yet, let alone a 1200×630 asset. So the card is derived from the same
- * three or four values the rest of the portal is derived from: the
- * primary colour as the ground, the portal name, the institution, the
- * tagline.
+ * yet, let alone a 1200×630 asset. So the card is drawn from the same
+ * band the site paints (`--band`, `--band-fg`, `--band-muted`,
+ * `--band-accent`), the institution's name set large, and the signature
+ * of the public pages: the batch ribbon, the register's years as outlined
+ * numerals fading away along the foot of the card.
+ *
+ * What it will not carry: any member, any count, any name. The years come
+ * from `getPublicRegister`, the same projection the landing page uses.
  *
  * ── Precedence ───────────────────────────────────────────────────────
  * If a pack supplies `assets.ogImage`, **that file wins and this is only
@@ -32,12 +37,8 @@ import { contrastRatio, mixHex, readableTextOn } from '@/lib/branding/color';
  * place that can stand this route down is this route.
  *
  * ── Fonts ────────────────────────────────────────────────────────────
- * None are fetched. `ImageResponse` ships with a Latin font and uses it
- * when no `fonts` option is given, so this route makes no network call at
- * request time. Rendering the tenant's actual display face would mean
- * fetching a webfont on every crawl of every share — for a card whose
- * hierarchy is carried by size and colour anyway. Weight and scale do the
- * work instead.
+ * Read from /public/fonts, never fetched: this route makes no network
+ * call at request time. See `cardFonts()`.
  */
 
 export const alt = 'Alumni portal share card';
@@ -101,12 +102,100 @@ function clamp(text: string, max: number): string {
   return `${(lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
 }
 
-/** Long portal names step down rather than overflowing the card. */
-function headingSize(name: string): number {
-  if (name.length <= 14) return 92;
-  if (name.length <= 22) return 76;
-  if (name.length <= 34) return 58;
-  return 46;
+/** Long names step down rather than overflowing the card. Two lines at most. */
+function nameSize(name: string): number {
+  if (name.length <= 8) return 168;
+  if (name.length <= 16) return 124;
+  if (name.length <= 26) return 96;
+  if (name.length <= 36) return 82;
+  return 70;
+}
+
+/** `#rrggbb` plus alpha as `rgba()`, the one syntax every renderer in the chain parses. */
+function rgba(hex: string, alpha: number): string {
+  const { r, g, b } = parseHex(hex);
+  return `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${alpha})`;
+}
+
+/**
+ * The card's typefaces, read from /public/fonts once per process.
+ *
+ * The built-in font has a single weight, so a "bold" name would render
+ * regular. Bricolage Bold carries the name and the years; Hanken carries
+ * the small lines. They are the product's own faces, not the college's:
+ * a tenant's Google display face would be a network fetch on every crawl,
+ * and at card scale the hierarchy is size and colour. A missing file
+ * falls back to the built-in font rather than failing the share.
+ */
+type CardFont = {
+  name: string;
+  data: Buffer;
+  weight: 500 | 600 | 700;
+  style: 'normal';
+};
+let fontCache: Promise<CardFont[] | undefined> | undefined;
+
+function cardFonts(): Promise<CardFont[] | undefined> {
+  fontCache ??= (async () => {
+    try {
+      const dir = path.join(process.cwd(), 'public', 'fonts');
+      const [display, medium, semi] = await Promise.all([
+        fs.readFile(path.join(dir, 'BricolageGrotesque-Bold.ttf')),
+        fs.readFile(path.join(dir, 'HankenGrotesk-Medium.ttf')),
+        fs.readFile(path.join(dir, 'HankenGrotesk-SemiBold.ttf')),
+      ]);
+      return [
+        { name: 'Display', data: display, weight: 700, style: 'normal' },
+        { name: 'Text', data: medium, weight: 500, style: 'normal' },
+        { name: 'Text', data: semi, weight: 600, style: 'normal' },
+      ] satisfies CardFont[];
+    } catch {
+      return undefined;
+    }
+  })();
+  return fontCache;
+}
+
+/**
+ * The crest as a data URI, or null.
+ *
+ * Read from disk when the pack points into /public, so the render makes
+ * no network call. A remote crest is skipped for the same reason: a slow
+ * college server must not be able to stall every share preview. The
+ * renderer reads PNG, JPEG and SVG; anything else (WebP) is skipped.
+ */
+async function crestDataUri(ref: string | undefined): Promise<string | null> {
+  if (!ref?.startsWith('/')) return null;
+
+  const mime: Record<string, string> = {
+    '.svg': 'image/svg+xml',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+  };
+  const relative = (ref.split('?')[0] ?? ref).replace(/^\/+/, '');
+  const type = mime[path.extname(relative).toLowerCase()];
+  if (!type) return null;
+
+  const publicDir = path.join(process.cwd(), 'public');
+  const file = path.resolve(publicDir, relative);
+  if (!file.startsWith(publicDir + path.sep)) return null;
+
+  try {
+    return `data:${type};base64,${(await fs.readFile(file)).toString('base64')}`;
+  } catch {
+    return null;
+  }
+}
+
+/** The register's years and nothing else: no counts, no names, no rows. */
+function registerYears(packId: string): number[] {
+  try {
+    return [...new Set(getPublicRegister(packId).years)].sort((a, b) => b - a).slice(0, 6);
+  } catch {
+    // A card with no ribbon is still a card; a 500 is a broken preview.
+    return [];
+  }
 }
 
 export default async function OpenGraphImage() {
@@ -115,7 +204,7 @@ export default async function OpenGraphImage() {
   // An unresolved host still gets a card. A 500 on this route makes every
   // share of a merely misconfigured portal render as a broken preview.
   const pack: BrandPack = resolved?.brand.pack ?? DEFAULT_PACK;
-  const { copy, color, features } = pack;
+  const { copy, color } = pack;
 
   // The pack's own card, if there is one and it is really there.
   const supplied = pack.assets.ogImage ? await suppliedCard(pack.assets.ogImage) : null;
@@ -132,131 +221,200 @@ export default async function OpenGraphImage() {
     });
   }
 
-  const ground = color.primary;
-  const fg = readableTextOn(ground);
+  // The band, exactly as the site paints it. These tokens already clear
+  // contrast on the band (brand:check blocks publication otherwise), so
+  // the card inherits that guarantee; only the glow has to be measured.
+  const t = resolved?.brand.tokens.light;
+  const band = t?.['--band'] ?? color.primary;
+  const fg = t?.['--band-fg'] ?? readableTextOn(band);
+  const muted = t?.['--band-muted'] ?? mixHex(fg, band, 0.25);
+  const accent = t?.['--band-accent'] ?? mixHex(band, fg, 0.6);
+  // The bloom is the accent's own mid stop, not its pale text stop: the
+  // pale one mixes to grey on a dark band, the mid one stays the college's colour.
+  const bloom = t?.['--accent-500'] ?? accent;
 
-  // Shade the gradient *away* from the text colour, never toward it: on a
-  // dark brand the corner darkens, on a pale one it lightens. Both ends of
-  // the ramp then have at least the contrast the flat colour had, so the
-  // depth costs nothing in legibility.
-  const shade = fg === '#ffffff' ? '#000000' : '#ffffff';
-  const deep = mixHex(ground, shade, 0.28);
-  const muted = mixHex(fg, ground, 0.32);
+  // The accent glow lifts the ground behind the words, so it is as strong
+  // as the three text colours allow: the strongest step at which each
+  // still clears 4.5:1 where the glow reaches the text. The bloom sits in
+  // the corner and the words stay left of it, so what they meet is at most
+  // about 70% of its peak (a short name at its largest, set under the
+  // centre); that is what is measured.
+  const glow = ([0.56, 0.46, 0.36, 0.28, 0.2, 0.12, 0.06, 0] as const).find((a) => {
+    const peak = mixHex(band, bloom, a * 0.7);
+    return (
+      contrastRatio(fg, peak) >= 4.5 &&
+      contrastRatio(muted, peak) >= 4.5 &&
+      contrastRatio(accent, peak) >= 4.5
+    );
+  })!;
 
-  // A supplied accent is used unless it is invisible against the ground,
-  // in which case the rule is drawn in the text colour's direction. A pack
-  // with no accent at all falls back the same way.
-  const accentSeed = color.accent;
-  const rule =
-    accentSeed && contrastRatio(accentSeed, ground) >= 1.6
-      ? accentSeed
-      : mixHex(ground, fg, 0.55);
+  const [fonts, crest] = await Promise.all([cardFonts(), crestDataUri(pack.assets.crest)]);
+  const years = registerYears(pack.id);
 
-  const initials = copy.shortName.slice(0, 2).toUpperCase();
-  const portalName = clamp(copy.portalName, 40);
-  const institution = clamp(copy.institutionName, 62).toUpperCase();
-  const tagline = copy.tagline ? clamp(copy.tagline, 118) : null;
+  const portalName = clamp(copy.portalName, 34).toUpperCase();
+  const name = clamp(copy.institutionName, 64);
+  const tagline = copy.tagline ? clamp(copy.tagline, 90) : null;
+  const display = fonts ? 'Display' : undefined;
+  const body = fonts ? 'Text' : undefined;
 
-  // What this tenant has actually bought, in the tenant's own order of
-  // importance. A card that advertised a donations module the college has
-  // not cleared for FCRA would be the worst possible place to over-claim.
-  const capabilities = [
-    features.directory ? 'Verified alumni directory' : null,
-    features.mentorship ? 'Mentoring and referrals' : null,
-    features.events ? 'Campus events' : null,
-    features.jobs ? 'Jobs and internships' : null,
-  ]
-    .filter((label): label is string => Boolean(label))
-    .slice(0, 3);
+  // Outlined numerals fade with age: the newest batch is the loudest.
+  const fade = [0.9, 0.62, 0.42, 0.28, 0.18, 0.12];
 
   return new ImageResponse(
-    (
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        display: 'flex',
+        position: 'relative',
+        overflow: 'hidden',
+        backgroundColor: band,
+        color: fg,
+        fontFamily: body,
+      }}
+    >
+      {/* Light: an accent bloom top right, a paler one low left. */}
       <div
         style={{
-          width: '100%',
-          height: '100%',
+          position: 'absolute',
+          top: -420,
+          right: -300,
+          width: 1000,
+          height: 1000,
+          borderRadius: 1000,
+          backgroundImage: `radial-gradient(circle, ${rgba(bloom, glow)} 0%, ${rgba(bloom, glow * 0.62)} 18%, ${rgba(bloom, glow * 0.3)} 38%, ${rgba(bloom, glow * 0.1)} 56%, ${rgba(bloom, 0)} 72%)`,
+        }}
+      />
+      <div
+        style={{
+          position: 'absolute',
+          bottom: -520,
+          left: -260,
+          width: 900,
+          height: 900,
+          borderRadius: 900,
+          backgroundImage: `radial-gradient(circle, ${rgba(fg, 0.12)} 0%, ${rgba(fg, 0)} 68%)`,
+        }}
+      />
+
+      {/* The batch ribbon, cropped by the foot of the card. */}
+      {years.length > 0 ? (
+        <div
+          style={{
+            position: 'absolute',
+            left: 70,
+            bottom: -46,
+            display: 'flex',
+            fontFamily: display,
+            fontSize: 172,
+            fontWeight: 700,
+            lineHeight: 1,
+            letterSpacing: -4,
+          }}
+        >
+          {years.map((year, i) => (
+            <div
+              key={year}
+              style={{
+                display: 'flex',
+                marginRight: 44,
+                opacity: fade[i] ?? 0.18,
+                // A fully transparent fill drops the glyph; a ghost fill keeps the outline.
+                color: rgba(fg, 0.05),
+                WebkitTextStrokeWidth: 3,
+                WebkitTextStrokeColor: fg,
+              }}
+            >
+              {year}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* The words. */}
+      <div
+        style={{
           display: 'flex',
           flexDirection: 'column',
-          justifyContent: 'space-between',
-          padding: '72px 80px',
-          color: fg,
-          backgroundColor: ground,
-          backgroundImage: `linear-gradient(135deg, ${ground} 0%, ${deep} 100%)`,
+          padding: '64px 80px 0',
+          width: '100%',
         }}
       >
-        {/* ---------------------------------------------------- Institution */}
         <div style={{ display: 'flex', alignItems: 'center' }}>
+          {crest ? (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 76,
+                height: 76,
+                marginRight: 24,
+                borderRadius: 76,
+                backgroundColor: fg,
+              }}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text -- rendered to PNG, not a page */}
+              <img src={crest} width={54} height={54} style={{ objectFit: 'contain' }} />
+            </div>
+          ) : (
+            <div
+              style={{
+                display: 'flex',
+                width: 56,
+                height: 3,
+                marginRight: 22,
+                backgroundColor: accent,
+              }}
+            />
+          )}
           <div
             style={{
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 78,
-              height: 78,
-              borderRadius: 20,
-              backgroundColor: fg,
-              color: ground,
-              fontSize: 34,
-              fontWeight: 700,
-              letterSpacing: 1,
-            }}
-          >
-            {initials}
-          </div>
-          <div
-            style={{
-              display: 'flex',
-              marginLeft: 26,
-              fontSize: 24,
-              letterSpacing: 3,
-              color: muted,
-            }}
-          >
-            {institution}
-          </div>
-        </div>
-
-        {/* ----------------------------------------------------- The name */}
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div
-            style={{
-              display: 'flex',
-              fontSize: headingSize(portalName),
-              fontWeight: 700,
-              lineHeight: 1.05,
-              letterSpacing: -1.5,
+              fontSize: 26,
+              fontWeight: 600,
+              letterSpacing: 5,
+              color: accent,
             }}
           >
             {portalName}
           </div>
-          {tagline ? (
-            <div
-              style={{
-                display: 'flex',
-                marginTop: 22,
-                maxWidth: 900,
-                fontSize: 32,
-                lineHeight: 1.35,
-                color: muted,
-              }}
-            >
-              {tagline}
-            </div>
-          ) : null}
         </div>
 
-        {/* ---------------------------------------------------- What it does */}
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', width: 104, height: 6, borderRadius: 3, backgroundColor: rule }} />
-          {capabilities.length > 0 ? (
-            <div style={{ display: 'flex', marginTop: 24, fontSize: 22, color: muted }}>
-              {capabilities.join('   ·   ')}
-            </div>
-          ) : null}
+        <div
+          style={{
+            display: 'flex',
+            maxWidth: 1000,
+            marginTop: 34,
+            fontFamily: display,
+            fontSize: nameSize(name),
+            fontWeight: 700,
+            lineHeight: 1.02,
+            letterSpacing: -2.5,
+            color: fg,
+          }}
+        >
+          {name}
         </div>
+
+        {tagline ? (
+          <div
+            style={{
+              display: 'flex',
+              maxWidth: 900,
+              marginTop: 26,
+              fontSize: 32,
+              fontWeight: 500,
+              lineHeight: 1.3,
+              color: muted,
+            }}
+          >
+            {tagline}
+          </div>
+        ) : null}
       </div>
-    ),
-    { ...size },
+    </div>,
+    { ...size, fonts },
   );
 }
 

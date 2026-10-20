@@ -1,3 +1,4 @@
+import * as React from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { ArrowLeftRight, ArrowRight, Building2, ChevronRight, CircleSlash, FileSearch, Search } from 'lucide-react';
@@ -14,6 +15,7 @@ import {
   Input,
   PageHeader,
   Select,
+  SummaryLine,
   Table,
   TableWrap,
   TBody,
@@ -33,7 +35,8 @@ import type { VerificationClaim } from '@/lib/data/types';
 import { AUTO_APPROVE_AT, REVIEW_AT, nameTokens } from '@/lib/verification/matcher';
 import { daysUntil, formatRelative, memberLine } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { evidenceWords, rescoredCandidates } from '../_shared/verification-labels';
+import { rescoredCandidates } from '../_shared/verification-labels';
+import { MatchMeter } from './MatchMeter';
 import { batchCommsHref, weakestBatches } from '../_shared/RegisterFilesGrid';
 
 export const metadata = { title: 'Verification queue · Staff console' };
@@ -105,18 +108,7 @@ function EvidenceCell({ signal }: { signal: Signal }) {
     );
   }
 
-  const pct = Math.round(signal.top.confidence * 100);
-  return (
-    <span className="block w-40 max-w-full space-y-1">
-      <span className="flex items-baseline justify-between gap-2 text-sm">
-        <span className="font-medium">{evidenceWords(signal.top.confidence)}</span>
-        <span className="tabular text-secondary">{pct}%</span>
-      </span>
-      <span className="block h-1.5 overflow-hidden rounded-full bg-chart-track" aria-hidden="true">
-        <span className="block h-full rounded-full bg-chart-bar" style={{ width: `${pct}%` }} />
-      </span>
-    </span>
-  );
+  return <MatchMeter confidence={signal.top.confidence} />;
 }
 
 function StatusBadge({ claim }: { claim: VerificationClaim }) {
@@ -228,6 +220,31 @@ export default async function VerificationQueuePage({
     { key: 'overdue', label: `Waiting over ${LATE_AFTER_DAYS} days` },
   ];
 
+  // The queue at a glance, over everything this viewer can see (not the
+  // search): what is waiting, what is late, what needs a closer look.
+  const queuedAll = withSignals.filter((r) => r.claim.status === 'queued');
+  const oldestWaited = oldest ? Math.max(0, waitedDays(oldest)) : 0;
+  const summary: React.ComponentProps<typeof SummaryLine>['items'] = [
+    { value: queuedAll.length, label: 'waiting', href: hrefWith({ status: 'queued', show: 'all' }) },
+    {
+      value: queuedAll.filter((r) => isLate(r.claim)).length,
+      label: `over ${LATE_AFTER_DAYS} days`,
+      href: hrefWith({ status: 'queued', show: 'overdue' }),
+      tone: 'attention',
+    },
+    {
+      value: queuedAll.filter(contested).length,
+      label: 'contested',
+      href: hrefWith({ status: 'queued', show: 'contested' }),
+    },
+    {
+      value: queuedAll.filter((r) => !r.signal.top).length,
+      label: 'without a register row',
+      href: hrefWith({ status: 'queued', show: 'no-row' }),
+    },
+    ...(oldestWaited > 0 ? [{ value: `${oldestWaited} days`, label: 'for the longest wait' }] : []),
+  ];
+
   const openRegister = canOpen(session, pack, '/admin/degree-register');
   const openComms = canOpen(session, pack, '/admin/comms');
   const decidedTab = activeStatus !== 'queued';
@@ -268,6 +285,8 @@ export default async function VerificationQueuePage({
           </>
         }
       />
+
+      {summary.length > 0 ? <SummaryLine items={summary} /> : null}
 
       <Tabs
         ariaLabel="Registration status"

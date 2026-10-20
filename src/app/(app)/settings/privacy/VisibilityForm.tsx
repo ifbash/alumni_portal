@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Clock, Eye, ShieldCheck, X } from 'lucide-react';
+import { Clock, Eye, GraduationCap, Lock, ShieldCheck, UserCheck, Users, X, type LucideIcon } from 'lucide-react';
 import { Alert, Badge, Button, Card, FormActions, Radio, useToast } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import { outcomeToast } from '@/lib/client/api';
@@ -18,6 +18,14 @@ import type { ContactVisibility } from '@/lib/data/types';
  * gets; the server computes it by running the release rule, so choosing
  * an option shows its real consequence before anything is saved.
  */
+
+/** One glyph per option, so the four cards read at a glance before the words do. */
+const OPTION_ICON: Record<ContactVisibility, LucideIcon> = {
+  private: Lock,
+  on_accept: UserCheck,
+  alumni_only: GraduationCap,
+  all_members: Users,
+};
 
 export type MatrixCell = 'yes' | 'on_accept' | 'no';
 
@@ -120,6 +128,7 @@ export function VisibilityForm({
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             {VISIBILITY_OPTIONS.map((o) => {
               const selected = value === o.value;
+              const OptionIcon = OPTION_ICON[o.value];
               return (
                 <div
                   key={o.value}
@@ -142,6 +151,15 @@ export function VisibilityForm({
                     onChange={() => setValue(o.value)}
                     label={
                       <span className="block space-y-1 after:absolute after:inset-0 after:rounded-lg">
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            'mb-2 grid size-9 place-items-center rounded-full',
+                            selected ? 'bg-brand-soft text-brand-soft-fg' : 'bg-surface-sunken text-secondary',
+                          )}
+                        >
+                          <OptionIcon className="size-4" />
+                        </span>
                         <span className="flex flex-wrap items-center gap-2 font-medium">
                           {o.label}
                           {o.recommended ? <Badge tone="brand">Recommended</Badge> : null}

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Newspaper } from 'lucide-react';
-import { ButtonLink, EmptyState } from '@/components/ui';
+import { ButtonLink } from '@/components/ui';
+import { NotFoundPanel } from '../../_components/NotFoundPanel';
 
 /**
  * Story not found.
@@ -15,21 +16,16 @@ export const metadata: Metadata = { title: 'Story not found' };
 
 export default function NewsNotFound() {
   return (
-    <div className="space-y-6">
-      {/* EmptyState's title is a paragraph by design; the document still
-          owes itself exactly one h1. */}
-      <h1 className="sr-only">Story not found</h1>
-
-      <EmptyState
-        icon={<Newspaper className="size-5" />}
-        title="That story is not here"
-        description="The link may be old or cut short."
-        action={
-          <ButtonLink href="/news" className="min-h-11">
-            Read the latest news
-          </ButtonLink>
-        }
-      />
-    </div>
+    <NotFoundPanel
+      eyebrow="Story not found"
+      icon={<Newspaper />}
+      title="That story is not here"
+      description="The link may be old or cut short."
+      action={
+        <ButtonLink href="/news" className="min-h-11">
+          Read the latest news
+        </ButtonLink>
+      }
+    />
   );
 }

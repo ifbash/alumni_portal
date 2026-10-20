@@ -11,7 +11,9 @@ import {
   MapPin,
   Mic,
   ShieldAlert,
+  Sparkles,
   UserCheck,
+  UserRound,
 } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap, can, type Session } from '@/lib/auth/guard';
@@ -272,16 +274,21 @@ export default async function MemberProfilePage({
         </p>
         {studentWithheld ? (
           <Card>
-            <CardBody className="space-y-3">
-              <CardTitle as="h2">Contact</CardTitle>
-              <div className="flex items-start gap-2.5 text-sm">
-                <Lock className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
-                <div className="min-w-0 space-y-1">
-                  <p className="font-medium text-primary">Email and mobile are private</p>
-                  <p className="text-secondary">
-                    Final-year students cannot receive requests. Reach them through the placement cell.
-                  </p>
-                </div>
+            <CardBody className="space-y-4">
+              <div className="flex items-center gap-2.5">
+                <span
+                  aria-hidden="true"
+                  className="grid size-8 shrink-0 place-items-center rounded-full bg-surface-sunken text-secondary ring-1 ring-inset ring-line"
+                >
+                  <Lock className="size-4" />
+                </span>
+                <CardTitle as="h2">Contact</CardTitle>
+              </div>
+              <div className="rounded-lg bg-surface-sunken p-3.5 text-sm">
+                <p className="font-medium text-primary">Email and mobile are private</p>
+                <p className="mt-1 text-secondary">
+                  Final-year students cannot receive requests. Reach them through the placement cell.
+                </p>
               </div>
             </CardBody>
           </Card>
@@ -366,12 +373,25 @@ export default async function MemberProfilePage({
         ]}
       />
 
-      <Card>
-        <CardBody className="flex flex-col gap-5 sm:flex-row sm:items-start">
-          <div className="flex shrink-0 flex-col items-start gap-2">
-            <Avatar name={member.fullName} src={member.photoUrl} size="xl" />
+      <Card className="overflow-hidden">
+        {/* The cover: the college's two hues, washed, with paper grain. Pure token mixes, no photograph, so it is
+            the same on every college and never claims a picture of the person. */}
+        <div
+          aria-hidden="true"
+          className="grain h-24 bg-[linear-gradient(115deg,color-mix(in_srgb,var(--brand-500)_30%,var(--surface-raised)),color-mix(in_srgb,var(--accent-500)_26%,var(--surface-raised)))] sm:h-36"
+        />
+        <CardBody className="relative -mt-14 flex flex-col gap-5 px-5 pt-0 sm:-mt-[4.5rem] sm:px-8 sm:pb-8">
+          <div className="flex items-end gap-3">
+            <span className="inline-grid shrink-0 place-items-center rounded-full bg-surface-raised p-1.5 shadow-md">
+              <Avatar
+                name={member.fullName}
+                src={member.photoUrl}
+                size="xl"
+                className="size-24 text-3xl sm:size-32 sm:text-4xl"
+              />
+            </span>
             {viewerIsOwner && !member.photoUrl ? (
-              <Link href="/profile/edit#photo" className="link inline-flex min-h-11 items-center text-xs font-medium sm:min-h-0">
+              <Link href="/profile/edit#photo" className="link mb-2 inline-flex min-h-11 items-center text-xs font-medium sm:min-h-0">
                 Add a photo
               </Link>
             ) : null}
@@ -402,9 +422,9 @@ export default async function MemberProfilePage({
                   <span>Final year</span>
                 ) : null}
               </p>
-              <h1 className="font-display text-display-xs font-bold">{member.fullName}</h1>
+              <h1 className="font-display text-display-sm font-bold">{member.fullName}</h1>
               {identity ? (
-                <p className="text-md text-primary">{identity}</p>
+                <p className="text-lg text-primary">{identity}</p>
               ) : viewerIsOwner ? (
                 <Link href="/profile/edit#company" className="link inline-flex min-h-11 items-center text-sm sm:min-h-0">
                   Add where you work
@@ -477,7 +497,12 @@ export default async function MemberProfilePage({
           {longBio || (viewerIsOwner && !bio) ? (
             <Card id="about" className="scroll-mt-20">
               <CardBody className="space-y-3">
-                <CardTitle as="h2">About</CardTitle>
+                <CardTitle as="h2" className="flex items-center gap-2.5">
+                  <SectionIcon>
+                    <UserRound className="size-4" />
+                  </SectionIcon>
+                  About
+                </CardTitle>
                 {bio ? (
                   <p className="max-w-prose whitespace-pre-line text-sm leading-relaxed text-secondary">{bio}</p>
                 ) : (
@@ -489,8 +514,10 @@ export default async function MemberProfilePage({
 
           <Card>
             <CardBody className="space-y-4">
-              <CardTitle as="h2" className="flex items-center gap-2">
-                <Briefcase className="size-4 text-muted" aria-hidden="true" />
+              <CardTitle as="h2" className="flex items-center gap-2.5">
+                <SectionIcon>
+                  <Briefcase className="size-4" />
+                </SectionIcon>
                 Experience
               </CardTitle>
               <ExperienceTimeline
@@ -504,8 +531,10 @@ export default async function MemberProfilePage({
 
           <Card>
             <CardBody className="space-y-4">
-              <CardTitle as="h2" className="flex items-center gap-2">
-                <GraduationCap className="size-4 text-muted" aria-hidden="true" />
+              <CardTitle as="h2" className="flex items-center gap-2.5">
+                <SectionIcon>
+                  <GraduationCap className="size-4" />
+                </SectionIcon>
                 Education
               </CardTitle>
               <EducationTimeline
@@ -519,7 +548,12 @@ export default async function MemberProfilePage({
 
           <Card>
             <CardBody className="space-y-3">
-              <CardTitle as="h2">Skills</CardTitle>
+              <CardTitle as="h2" className="flex items-center gap-2.5">
+                <SectionIcon>
+                  <Sparkles className="size-4" />
+                </SectionIcon>
+                Skills
+              </CardTitle>
               {member.skills.length ? (
                 <ul className="flex flex-wrap gap-1.5">
                   {member.skills.map((skill) => (
@@ -528,7 +562,7 @@ export default async function MemberProfilePage({
                           after "who is this" is "who else does this". */}
                       <Link
                         href={`/directory?skill=${encodeURIComponent(skill)}`}
-                        className="inline-flex min-h-11 items-center rounded-full border border-line px-3 text-sm text-secondary transition-colors duration-fast ease-brand hover:border-line-strong hover:text-primary sm:min-h-8"
+                        className="inline-flex min-h-11 items-center rounded-full border border-line bg-surface-sunken px-3.5 text-sm font-medium text-secondary transition-colors duration-fast ease-brand hover:border-line-strong hover:bg-brand-soft hover:text-brand-soft-fg sm:min-h-8"
                       >
                         {skill}
                       </Link>
@@ -705,6 +739,15 @@ export default async function MemberProfilePage({
 
 /** In a 20rem rail a label beside its value squeezes both; stack them. */
 const STACKED = 'grid-cols-1 gap-0.5 py-2';
+
+/** The brand-tinted tile that leads a section heading. Decorative. */
+function SectionIcon({ children }: { children: React.ReactNode }) {
+  return (
+    <span aria-hidden="true" className="grid size-7 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand-soft-fg">
+      {children}
+    </span>
+  );
+}
 
 function EmptyLine({ text, add, addLabel }: { text: string; add?: string; addLabel: string }) {
   return (

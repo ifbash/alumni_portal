@@ -11,7 +11,6 @@ import {
   CardTitle,
   CopyButton,
   DetailRow,
-  Progress,
 } from '@/components/ui';
 import { ContactBlock } from '@/components/members/ContactBlock';
 import { getSession } from '@/lib/auth/session';
@@ -29,6 +28,7 @@ import { siteOrigin } from '@/lib/share';
 import { CONNECTION_LIMITS } from '@/lib/config';
 import type { EducationEntry, EmploymentEntry } from '@/lib/data/types';
 import { profileChecks, completenessScore } from './completeness';
+import { CompletenessRing } from './CompletenessRing';
 
 /**
  * Your own profile, as you hold it.
@@ -120,8 +120,8 @@ export default async function ProfilePage() {
     <div className="space-y-6">
       {/* ---- Header ---------------------------------------------------- */}
 
-      <Card className="overflow-hidden">
-        <div className="band-surface relative h-20 sm:h-24" aria-hidden="true">
+      <Card className="ring-hairline overflow-hidden shadow-md">
+        <div className="band-surface grain relative isolate h-28 overflow-hidden sm:h-36" aria-hidden="true">
           {photo ? (
             // Decorative: the name below says whose page this is. No text
             // sits on the photo. Tenant-supplied URL; see next.config.ts.
@@ -133,14 +133,19 @@ export default async function ProfilePage() {
               className="absolute inset-0 size-full object-cover"
               style={{ objectPosition: photo.focus }}
             />
-          ) : null}
+          ) : (
+            <div className="aurora" />
+          )}
         </div>
 
         <CardBody className="pt-0">
           <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-[minmax(0,1fr)_auto]">
-            <span className="-mt-12 inline-flex w-fit rounded-full bg-surface-raised ring-4 ring-[var(--surface-raised)] sm:col-start-1 sm:row-start-1">
+            <CompletenessRing
+              score={editable ? score : null}
+              className="-mt-14 w-fit sm:col-start-1 sm:row-start-1"
+            >
               <Avatar name={profile.fullName} src={profile.photoUrl} size="xl" />
-            </span>
+            </CompletenessRing>
 
             {editable || memberLinks ? (
               <div className="order-last flex flex-wrap items-center gap-2 sm:order-none sm:col-start-2 sm:row-start-1 sm:self-end sm:justify-end">
@@ -164,7 +169,7 @@ export default async function ProfilePage() {
 
             <div className="min-w-0 space-y-3 sm:col-span-2">
               <div className="space-y-1">
-                <h1 className="font-display text-display-xs font-bold">{profile.fullName}</h1>
+                <h1 className="font-display text-display-sm font-bold tracking-tight">{profile.fullName}</h1>
                 {profile.preferredName ? (
                   <p className="text-sm text-secondary">Goes by {profile.preferredName}</p>
                 ) : null}
@@ -239,12 +244,11 @@ export default async function ProfilePage() {
       {editable && score < 100 && missing.length ? (
         <section
           aria-label="Profile completeness"
-          className="flex flex-col gap-3 rounded-lg border border-line bg-surface-raised px-4 py-3 sm:flex-row sm:items-center sm:gap-5"
+          className="flex flex-col gap-2 rounded-lg border border-line bg-surface-raised px-4 py-3 sm:flex-row sm:items-center sm:gap-4"
         >
-          <div className="flex shrink-0 items-center gap-3">
-            <span className="font-display text-lg font-semibold tabular">{score}%</span>
-            <Progress value={score} label={`Profile ${score} per cent complete`} className="w-28 sm:w-36" />
-          </div>
+          <p className="shrink-0 font-display text-md font-semibold">
+            <span className="tabular">{score}%</span> complete
+          </p>
           <p className="min-w-0 text-sm text-secondary">
             <span className="font-medium text-primary">To finish: </span>
             {missing.map((c, i) => (

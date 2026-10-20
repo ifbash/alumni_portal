@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import type * as React from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { ArrowRight, GraduationCap } from 'lucide-react';
@@ -14,6 +15,7 @@ import { ButtonLink } from '@/components/ui';
 import { Crest } from '@/components/brand/Crest';
 import { HeroMedia } from '@/components/marketing/HeroMedia';
 import { BatchCard } from '@/components/marketing/BatchCard';
+import { BatchMarquee } from '@/components/marketing/BatchMarquee';
 import { EventRows } from '@/components/marketing/EventRows';
 import { Announcements } from '@/components/marketing/Announcements';
 import { CampusPhotos } from '@/components/marketing/CampusPhotos';
@@ -35,7 +37,8 @@ import type { BrandPack } from '@/lib/branding/pack';
  * Register and Sign in, all above the fold.
  *
  * It must look as deliberate for a college with no photographs (DIET
- * today: a solid band in the college colour) as for one that supplies a
+ * today: a generative band, with aurora, grain, a ribbon of batch years
+ * and the year picker as its signature) as for one that supplies a
  * hero photo, a desktop video loop and campus pictures. Every media slot
  * renders nothing when absent.
  *
@@ -161,42 +164,57 @@ export default async function LandingPage() {
     />
   );
 
+  // Entrance order for the hero's children: each takes the next 70ms step.
+  const step = (n: number) => ({ '--i': n }) as React.CSSProperties;
+
   const text = (
-    <div className={cn(photo ? 'lg:w-1/2' : !showCard && 'max-w-3xl')}>
-      <Crest pack={pack} size={56} className="mb-5" />
-      <p className={cn('text-sm font-semibold text-band-accent', P('lg:text-band-fg'))}>{copy.institutionName}</p>
+    <div className={cn('stagger', photo ? 'lg:w-1/2' : !showCard && 'max-w-3xl')}>
+      <div style={step(0)}>
+        <Crest pack={pack} size={56} className="mb-5" />
+      </div>
+      <p className={cn('text-sm font-semibold text-band-accent', P('lg:text-band-fg'))} style={step(1)}>
+        {copy.institutionName}
+      </p>
       {copy.tagline ? (
-        <p className={cn('mt-1 text-sm text-band-muted', P('lg:text-band-fg'))}>{copy.tagline}</p>
+        <p className={cn('mt-1 text-sm text-band-muted', P('lg:text-band-fg'))} style={step(1)}>
+          {copy.tagline}
+        </p>
       ) : null}
 
-      <h1 id="hero-title" className="mt-5 max-w-[20ch] font-display text-display-lg font-bold text-band-fg">
+      <h1
+        id="hero-title"
+        className="mt-5 max-w-[15ch] font-display text-display-xl font-bold tracking-tight text-band-fg"
+        style={step(2)}
+      >
         <Headline
           text={headline}
           emphasis={emphasis}
           className={cn(
             'text-band-accent',
             P(
-              'lg:text-band-fg lg:underline lg:decoration-band-accent lg:decoration-2 lg:underline-offset-[0.16em]',
+              'lg:text-band-fg lg:underline lg:decoration-band-accent lg:decoration-[3px] lg:underline-offset-[0.16em]',
             ),
           )}
         />
       </h1>
 
-      <p className={cn('mt-4 max-w-prose text-md text-band-muted', P('lg:text-band-fg'))}>{subhead}</p>
+      <p className={cn('mt-5 max-w-prose text-md text-band-muted', P('lg:text-band-fg'))} style={step(3)}>
+        {subhead}
+      </p>
 
-      <div className="mt-7 grid grid-cols-2 gap-3 sm:flex sm:flex-wrap">
+      <div className="mt-7 grid grid-cols-2 gap-3 sm:flex sm:flex-wrap" style={step(4)}>
         {signedIn ? (
-          <ButtonLink href="/dashboard" variant="band" size="lg" className="col-span-2 min-h-11">
+          <ButtonLink href="/dashboard" variant="band" size="lg" className="col-span-2 min-h-12">
             Go to the portal
             <ArrowRight className="size-4" aria-hidden="true" />
           </ButtonLink>
         ) : (
           <>
-            <ButtonLink href="/claim" variant="band" size="lg" className="min-h-11">
+            <ButtonLink href="/claim" variant="band" size="lg" className="min-h-12">
               Register
               <ArrowRight className="size-4" aria-hidden="true" />
             </ButtonLink>
-            <ButtonLink href="/login" variant="band-outline" size="lg" className="min-h-11">
+            <ButtonLink href="/login" variant="band-outline" size="lg" className="min-h-12">
               Sign in
             </ButtonLink>
           </>
@@ -204,7 +222,7 @@ export default async function LandingPage() {
       </div>
 
       {!signedIn ? (
-        <p className={cn('mt-4 flex items-start gap-2 text-sm text-band-muted', P('lg:text-band-fg'))}>
+        <p className={cn('mt-4 flex items-start gap-2 text-sm text-band-muted', P('lg:text-band-fg'))} style={step(5)}>
           <GraduationCap className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           <span>Final-year student? The placement cell invites you by email — you do not need to register.</span>
         </p>
@@ -213,7 +231,8 @@ export default async function LandingPage() {
       {lead ? (
         <Link
           href={`/campus-events#event-${lead.event.slug}`}
-          className="group mt-8 flex min-h-11 max-w-md items-center gap-3 border-t border-band-rule pt-4"
+          className="group mt-6 flex min-h-11 max-w-md items-center gap-3 border-t border-band-rule pt-4 lg:mt-8"
+          style={step(6)}
         >
           <span className="min-w-0">
             <span
@@ -229,7 +248,10 @@ export default async function LandingPage() {
             </span>
           </span>
           <span className="sr-only"> — see the event</span>
-          <ArrowRight className="ml-auto size-4 shrink-0" aria-hidden="true" />
+          <ArrowRight
+            className="ml-auto size-4 shrink-0 transition-transform duration-fast ease-brand group-hover:translate-x-1"
+            aria-hidden="true"
+          />
         </Link>
       ) : null}
     </div>
@@ -238,51 +260,59 @@ export default async function LandingPage() {
   return (
     <>
       {/* ---------------------------------------------------------- Hero */}
-      <section aria-labelledby="hero-title" className="band-surface relative isolate overflow-hidden">
+      <section aria-labelledby="hero-title" className="band-surface grain relative isolate overflow-hidden">
         {photo ? <HeroMedia pack={pack} /> : null}
+        {/* Light behind the words. Over the desktop photo the scrim owns the contrast, so the aurora steps back. */}
+        <div className={cn('aurora', photo && 'lg:hidden')} aria-hidden="true" />
+        {!photo ? <BatchMarquee years={years} /> : null}
 
         <div
           className={cn(
-            'page-shell relative pt-8 lg:pt-20',
+            'page-shell relative z-10 pt-8 lg:pt-20',
             photo
               ? cn(showCard ? 'pb-20 lg:pb-28' : 'pb-12 lg:pb-20', 'lg:flex lg:min-h-[34rem] lg:items-center')
               : cn(
-                  'pb-10 lg:pb-20',
+                  years.length ? 'pb-16 lg:pb-32' : 'pb-10 lg:pb-20',
                   showCard && 'lg:grid lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] lg:items-center lg:gap-12',
                 ),
           )}
         >
           {text}
-          {!photo && showCard ? batchCard('column', 'mt-10 lg:mt-0') : null}
+          {!photo && showCard
+            ? batchCard('column', 'animate-fade-up mt-8 [animation-delay:420ms] lg:mt-0')
+            : null}
         </div>
       </section>
 
       {photo && showCard ? (
-        <section className="page-shell relative z-10 -mt-12 lg:-mt-16" aria-labelledby="batch-title">
-          {batchCard('wide')}
+        <section className="page-shell relative z-10 -mt-14 lg:-mt-16" aria-labelledby="batch-title">
+          {batchCard('wide', 'animate-fade-up [animation-delay:420ms]')}
         </section>
       ) : null}
 
-      <EventRows upcoming={upcoming} past={past} shortName={copy.shortName} locale={locale} />
-      <Announcements items={copy.announcements} locale={locale} />
-      <CampusPhotos photos={assets.campusPhotos} />
-      <GetInvolved
-        features={features}
-        session={session}
-        shortName={copy.shortName}
-        office={copy.officeName}
-        firstBatch={firstBatch}
-        rollMid={roll.mid}
-      />
-      <CollegeMessage message={copy.collegeMessage} />
-      <ShareBand
-        shareText={copy.shareText}
-        origin={origin}
-        portalName={copy.portalName}
-        institutionName={copy.institutionName}
-        rollMid={roll.mid}
-      />
-      <QuickLinks copy={copy} signedIn={signedIn} rollMid={roll.mid} />
+      {/* Section numbers are a CSS counter: an absent section does not leave a gap. */}
+      <div className="[counter-reset:sec]">
+        <EventRows upcoming={upcoming} past={past} shortName={copy.shortName} locale={locale} />
+        <Announcements items={copy.announcements} locale={locale} />
+        <CampusPhotos photos={assets.campusPhotos} />
+        <GetInvolved
+          features={features}
+          session={session}
+          shortName={copy.shortName}
+          office={copy.officeName}
+          firstBatch={firstBatch}
+          rollMid={roll.mid}
+        />
+        <CollegeMessage message={copy.collegeMessage} />
+        <ShareBand
+          shareText={copy.shareText}
+          origin={origin}
+          portalName={copy.portalName}
+          institutionName={copy.institutionName}
+          rollMid={roll.mid}
+        />
+        <QuickLinks copy={copy} signedIn={signedIn} rollMid={roll.mid} />
+      </div>
     </>
   );
 }
