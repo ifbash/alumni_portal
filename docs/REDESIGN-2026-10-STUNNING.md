@@ -40,15 +40,16 @@ after the hero changed.
 | `vitest run` | 519/519 | 519/519 |
 | `brand:check` | 0 errors | 0 errors |
 | `next build` | ok | compiled successfully |
-| Playwright full sweep (prod build) | 238 passed, 2 skipped (OTP spec skips on prod by design) | **NOT RUN.** See below. |
+| Playwright full sweep (prod build) | 238 passed, 2 skipped (OTP spec skips on prod by design) | 239 passed, 2 skipped (run 21 Oct, `next start` on :3401) |
+| OTP sign-in spec (dev server, `OTP_ECHO`) | n/a | 2 passed (21 Oct, dev on :3300) |
 
-The round-2 sweep failed only because the production server could not start:
-running `npm run dev` rewrote `.next`, removing `BUILD_ID`. Dev and build share
-`.next`; never run both at once.
+The first round-2 attempt failed only because the production server could not
+start: running `npm run dev` rewrote `.next`, removing `BUILD_ID`. Dev and build
+share `.next`; never run both at once. Step 1 below is now done.
 
 ## Continue from here (in this order)
 
-1. Stop any dev server. `npm run build && npm start -- --port 3401`, then
+1. **DONE 21 Oct 2026** (results in the table above). Stop any dev server. `npm run build && npm start -- --port 3401`, then
    `E2E_REFRESH_FIXTURES=1 E2E_BASE_URL=http://localhost:3401 npx playwright test`.
    Expect 238 passed, 2 skipped. Fix anything real. Then, on a dev server
    (`E2E_BASE_URL=http://localhost:3300 npx playwright test otp-signin`),
@@ -59,6 +60,19 @@ running `npm run dev` rewrote `.next`, removing `BUILD_ID`. Dev and build share
    final version; rollover danger panel, dry-run preview and the member
    History timeline (need clicks); northgate and dark mode on most round-2
    pages; 390px pass on mentorship, connections, jobs board.
+   **Looked at 21 Oct 2026 (Playwright screenshots on dev, DIET, minted
+   sessions from `e2e/.state/fixtures.json`):** `/admin/giving` and
+   `/admin/settings` render cleanly in light, giving also in dark (foreign and
+   domestic ledgers clearly separate, FCRA state visible); `/admin/verification`
+   and `/admin/rollover` in dark; the rollover dry run end to end (44 would
+   move, branch bars, request-limit change, "no undo" panel behind a checkbox;
+   the Roll button was not clicked); `/mentorship`, `/connections` and `/jobs`
+   at 390px in light (`/mentorship` and `/jobs` also in dark): no horizontal
+   overflow on any. Only blemish: the "Dry run complete" toast covers part of a
+   bullet while it is up. **Still unseen:** pages with real photos (fixtures have
+   none), northgate staff/member screens (sessions are tenant-bound, so it needs
+   an OTP sign-in on that host; the DIET session is correctly refused there),
+   the member History timeline, `CompletenessRing` final version.
 3. **Decision for the owner:** the platform console no longer shows any member
    counts (the agent read "the vendor cannot read customer data" strictly;
    DIET's counts came from `SEED.members.length`). The "First members" set-up
