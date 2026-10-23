@@ -69,6 +69,26 @@ export const CAPABILITIES = [
   'comms.send.segment',
   'comms.send.all',
 
+  /**
+   * The community modules.
+   *
+   * Four are member capabilities (posting, proposing an event, listing a
+   * business, submitting an achievement) and six are staff ones. None is
+   * held by `platform_admin`: a group roster, a help-desk ticket and a
+   * business owner's contact details all name members, and the vendor
+   * reads none of that. `tests/vendor-boundary.test.ts` pins the list.
+   */
+  'group.manage',                  // create, edit and archive groups; appoint leads
+  'post.create',                   // write on the community feed
+  'post.moderate',                 // hide and restore posts
+  'event.propose',                 // put an event forward for the alumni cell to approve
+  'business.list',                 // list one's own business
+  'business.moderate',             // approve or refuse listings
+  'showcase.submit',               // put one's own achievement forward
+  'showcase.manage',               // curate the showcase and decide submissions
+  'helpdesk.manage',               // read and answer help-desk tickets
+  'page.manage',                   // edit the college's own pages
+
   // admin
   'member.export',                 // bulk contact export
   'role.manage',
@@ -124,6 +144,14 @@ const GRANTS: Record<Role, Capability[]> = {
     'job.post',
     'job.apply',
     'donation.give',
+    // Alumni write on the feed, put events and their own business and
+    // achievements forward. Students read all of it and write none: a
+    // final-year posting to eight thousand alumni is the failure the
+    // connection quotas exist to prevent, in another form.
+    'post.create',
+    'event.propose',
+    'business.list',
+    'showcase.submit',
   ],
 
   faculty: [
@@ -136,6 +164,8 @@ const GRANTS: Record<Role, Capability[]> = {
     'event.register',
     'job.post',
     'donation.give',
+    'post.create',
+    'event.propose',
   ],
 
   hod: [
@@ -164,6 +194,12 @@ const GRANTS: Record<Role, Capability[]> = {
     'event.create.any',
     'event.checkin',
     'comms.send.segment',
+    'group.manage',
+    'post.moderate',
+    'business.moderate',
+    'showcase.manage',
+    'helpdesk.manage',
+    'page.manage',
   ],
 
   finance: [
@@ -201,6 +237,12 @@ const GRANTS: Record<Role, Capability[]> = {
     'audit.read',
     'rollover.execute',
     'data_request.manage',
+    'group.manage',
+    'post.moderate',
+    'business.moderate',
+    'showcase.manage',
+    'helpdesk.manage',
+    'page.manage',
   ],
 
   /**

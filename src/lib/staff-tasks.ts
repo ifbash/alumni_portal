@@ -1,6 +1,11 @@
 import { can, type Session } from './auth/guard';
 import type { BrandPack } from './branding/pack';
-import { getDataRequests, getDonations, getJobs, getVerificationClaims } from './data/repo';
+import { getDataRequests, getDonations, getJobs, getPendingEventProposals, getVerificationClaims } from './data/repo';
+import { getGroups } from './data/groups';
+import { countReportedPosts } from './data/feed';
+import { countPendingBusinesses } from './data/businesses';
+import { countPendingShowcase } from './data/showcase';
+import { countOpenTickets } from './data/helpdesk';
 import { daysUntil, formatRelative } from './format';
 import type { TaskItem } from '@/components/ui/tasks';
 
@@ -61,6 +66,69 @@ export function staffTasks(session: Session, pack: BrandPack): TaskItem[] {
         href: '/admin/jobs',
         action: 'Moderate',
       });
+    }
+  }
+
+  // ---- The community modules ------------------------------------------
+  //
+  // Each behind its own capability and the module switch, and each count
+  // function returns 0 to anyone without the capability, so a number never
+  // reaches somebody who could not open the queue behind it.
+
+  if (pack.features.events && can(session, 'event.create.any')) {
+    const proposals = getPendingEventProposals(session);
+    if (proposals.length) {
+      tasks.push({
+        key: 'event-proposals',
+        count: proposals.length,
+        label: plural(proposals.length, 'event proposed by a member', 'events proposed by members'),
+        detail: `next starts ${formatRelative(proposals[0]!.startsAt, fmt)}`,
+        href: '/admin/events#proposals',
+        action: 'Decide',
+      });
+    }
+  }
+
+  if (pack.features.helpdesk) {
+    const { open, oldestAt } = countOpenTickets(session);
+    if (open) {
+      tasks.push({
+        key: 'helpdesk',
+        count: open,
+        label: plural(open, 'question waiting for an answer', 'questions waiting for an answer'),
+        detail: oldestAt ? `oldest ${formatRelative(oldestAt, fmt)}` : undefined,
+        href: '/admin/helpdesk',
+        action: 'Answer',
+        tone: oldestAt && daysUntil(oldestAt, tz) < -7 ? 'attention' : 'default',
+      });
+    }
+  }
+
+  if (pack.features.businesses) {
+    const n = countPendingBusinesses(session);
+    if (n) {
+      tasks.push({ key: 'businesses', count: n, label: plural(n, 'business listing to review', 'business listings to review'), href: '/admin/businesses', action: 'Review' });
+    }
+  }
+
+  if (pack.features.showcase) {
+    const n = countPendingShowcase(session);
+    if (n) {
+      tasks.push({ key: 'showcase', count: n, label: plural(n, 'achievement to review', 'achievements to review'), href: '/admin/showcase', action: 'Review' });
+    }
+  }
+
+  if (pack.features.feed) {
+    const n = countReportedPosts(session);
+    if (n) {
+      tasks.push({ key: 'reports', count: n, label: plural(n, 'reported post still live', 'reported posts still live'), href: '/admin/community', action: 'Moderate', tone: 'attention' });
+    }
+  }
+
+  if (pack.features.groups && can(session, 'group.manage')) {
+    const unled = getGroups(session).filter((g) => g.leads.length === 0 && !g.archived).length;
+    if (unled) {
+      tasks.push({ key: 'groups', count: unled, label: plural(unled, 'group with no lead', 'groups with no lead'), href: '/admin/groups', action: 'Appoint' });
     }
   }
 

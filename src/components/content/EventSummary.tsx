@@ -5,6 +5,7 @@ import { Badge, DateTile, MediaFrame } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import { formatCurrency, formatDateRange, formatTimeZoneLabel } from '@/lib/format';
 import { isOnlineVenue, seatStatus } from '@/lib/event-status';
+import { eventKindLabel } from '@/lib/community';
 import type { LocaleSpec } from '@/lib/branding/pack';
 import type { EventItem } from '@/lib/data/types';
 
@@ -32,7 +33,14 @@ export type EventSummaryData = Pick<
   | 'coverImage'
   | 'capacity'
   | 'registeredCount'
->;
+> &
+  // Optional so a preview or a public row that carries neither still draws.
+  Partial<Pick<EventItem, 'kind' | 'mode'>>;
+
+/** Held online, from what the event says, else from the venue as it always was. */
+function heldOnline(event: Pick<EventItem, 'venue'> & Partial<Pick<EventItem, 'mode'>>): boolean {
+  return event.mode ? event.mode === 'online' : isOnlineVenue(event.venue);
+}
 
 function fmtOf(locale: LocaleSpec) {
   return { locale: locale.locale, currency: locale.currency, timeZone: locale.timeZone };
@@ -103,8 +111,8 @@ function whenText(event: EventSummaryData, locale: LocaleSpec): string {
 }
 
 function EventFacts({ event, locale }: { event: EventSummaryData; locale: LocaleSpec }) {
-  const online = isOnlineVenue(event.venue);
-  const Where = online ? Video : MapPin;
+  const online = heldOnline(event);
+  const Where = online || event.mode === 'hybrid' ? Video : MapPin;
   return (
     <dl className="space-y-1 text-sm text-secondary">
       <div className="flex items-start gap-2">
@@ -119,7 +127,10 @@ function EventFacts({ event, locale }: { event: EventSummaryData; locale: Locale
           <Where className="size-3.5" aria-hidden="true" />
           <span className="sr-only">Where</span>
         </dt>
-        <dd className="min-w-0 line-clamp-1">{online ? 'Online' : (event.venue ?? 'Venue to be announced')}</dd>
+        <dd className="min-w-0 line-clamp-1">
+          {online ? 'Online' : (event.venue ?? 'Venue to be announced')}
+          {event.mode === 'hybrid' ? ' · also online' : ''}
+        </dd>
       </div>
     </dl>
   );
@@ -128,6 +139,7 @@ function EventFacts({ event, locale }: { event: EventSummaryData; locale: Locale
 function EventBadges({ event, locale }: { event: EventSummaryData; locale: LocaleSpec }) {
   return (
     <>
+      {event.kind && event.kind !== 'other' ? <Badge tone="outline">{eventKindLabel(event.kind)}</Badge> : null}
       {event.alumniOnly ? <Badge tone="accent">Alumni only</Badge> : null}
       {event.ticketPrice > 0 ? (
         <Badge tone="neutral">{formatCurrency(event.ticketPrice, fmtOf(locale))}</Badge>

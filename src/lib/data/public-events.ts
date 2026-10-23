@@ -61,6 +61,10 @@ function toPublic(e: EventItem): PublicEvent {
 export function getPublicEvents(when: 'upcoming' | 'past'): PublicEvent[] {
   return getEvents(null, { when })
     .filter((e) => !e.alumniOnly)
+    // A chapter's or a group's own event is for its members and the portal's
+    // other signed-in members, not for the open internet: its address and
+    // its turnout belong with the group that hosts it.
+    .filter((e) => e.groupSlug === null)
     .map(toPublic);
 }
 

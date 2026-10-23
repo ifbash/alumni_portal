@@ -406,6 +406,24 @@ export const FeatureSpec = z.object({
   news: z.boolean().default(true),
   whatsapp: z.boolean().default(false),
   publicLanding: z.boolean().default(true),
+
+  // The community modules. Each is opt-in per college: a group, a feed or
+  // a business listing is somebody to moderate, and a college that has not
+  // named who that is should not be handed a board that nobody watches.
+  /** Chapters (by city or country) and interest groups, with a noticeboard each. */
+  groups: z.boolean().default(false),
+  /** The community feed: short posts from alumni, filtered by type, tag and group. */
+  feed: z.boolean().default(false),
+  /** The alumni business directory. */
+  businesses: z.boolean().default(false),
+  /** Prominent alumni, achievements and success stories. */
+  showcase: z.boolean().default(false),
+  /** Help desk and the feedback button. */
+  helpdesk: z.boolean().default(false),
+  /** Pages the college edits itself: About, a director's message, and so on. */
+  pages: z.boolean().default(false),
+  /** Members inviting batchmates who have not registered. */
+  invites: z.boolean().default(false),
 });
 
 export const LocaleSpec = z.object({

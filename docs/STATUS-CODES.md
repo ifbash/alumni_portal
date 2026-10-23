@@ -521,6 +521,13 @@ authorisation refusals land in exactly that boundary, and nothing says 403.
 Rows 1–3 make the sentence true by routing refusals past this boundary
 entirely; until they land, the sentence should go.
 
+**The member portal behaves the same way.** `src/app/(app)/error.tsx` is the
+twin of the console's, so a member page that calls `require()` (the listing,
+showcase and proposal forms) answers `200` with the refusal card for a caller
+without the capability. The community rows in `e2e/lib/routes.ts` tag those
+cells `KW-CONSOLE-SCREEN` for that reason, and `e2e/community-leaks.spec.ts`
+asserts that the form is not in the body.
+
 ### 5.2 Tenant feature gates
 
 **Symptom.** `/campus-events` on the `northgate` pack (`publicLanding: false`)
@@ -549,6 +556,15 @@ file alone.
 This class is genuinely cheaper than 5.1: a page that already calls
 `notFound()` needs no new signalling, so 5.4 really is the whole fix. That is
 not true of 5.1, where 5.4 alone produces `500`s.
+
+**A record the viewer may not know exists is the same case.** A page that calls
+`notFound()` because the *record* is not the viewer's (a chapter, to a student;
+someone else's ticket or listing editor; an unpublished page, to a signed-in
+member) is a `200` carrying the `404` sentinel, for the same reason as a feature
+gate. Those cells are tagged `KW-FEATURE-FLAG`. Anonymous callers on `/p/[slug]`
+get a redirect delivered inside a `200` instead, which `/welcome` documents; it
+is the same for an unknown address, a draft and a members-only page, so it is
+not an oracle for which of the three it is.
 
 ### 5.3 A deleted member with a still-valid cookie, on a non-console route
 

@@ -430,9 +430,11 @@ repository is where the next class of bugs lives:
   `getDataRequests()`, `getEventRegistrations()`, `getJobApplications()` and
   `getTenants()` take no session and trust the calling page to have guarded.
   `getNotifications(session)` ignores its session.
-- **Cross-tenant foreign keys are not composite**, so a row's `tenant_id` can
-  differ from its parent's and FK checks ignore RLS. Add `(id, tenant_id)`
-  uniqueness and composite FKs.
+- **Cross-tenant foreign keys are not composite** on the `0001` tables, so a row's
+  `tenant_id` can differ from its parent's and FK checks ignore RLS. Add
+  `(id, tenant_id)` uniqueness and composite FKs. The `0002` tables already use
+  them and `tests/rls-community.test.ts` proves a cross-college reference is
+  refused; retrofitting `0001` is the same change on a larger set of tables.
 - **Erasure vs the audit trail.** `consent_records.member_id` cascades on delete,
   and `audit_log.actor_id` has no `ON DELETE` rule. The application role cannot
   delete consent history, so erasure must anonymise the member row rather than

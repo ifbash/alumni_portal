@@ -5,7 +5,8 @@ import { ArrowRight, Building2, GraduationCap, MapPin } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap, can } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
-import { searchDirectory } from '@/lib/data/repo';
+import { getEvents, searchDirectory } from '@/lib/data/repo';
+import { reunionMilestone } from '@/lib/community';
 import type { MemberSummary } from '@/lib/data/types';
 import { displayNow, formatNumber, yearIn } from '@/lib/format';
 import { joinList } from '@/lib/branding/copy';
@@ -27,6 +28,7 @@ import {
 import { BandChip, PageBand } from '@/components/brand/PageBand';
 import { BarList } from '@/components/charts';
 import { MemberCard } from '@/components/members/MemberCard';
+import { ReunionPanel } from '@/components/community/ReunionPanel';
 import { OutlineNumeral } from '../OutlineNumeral';
 
 /**
@@ -154,7 +156,16 @@ export default async function BatchPage({
   const shareText = batchShareText(pack, year);
   const whatsappHref = whatsappShareUrl(shareText, registrationUrl);
 
-  const since = yearIn(pack.locale.timeZone, displayNow()) - year;
+  const currentYear = yearIn(pack.locale.timeZone, displayNow());
+  const since = currentYear - year;
+
+  // Reunions for this batch, and the milestone it is about to reach. The
+  // repository already hides what the viewer may not see (an alumni-only
+  // reunion is not addressable by a student).
+  const reunions = pack.features.events
+    ? getEvents(session, { when: 'upcoming', kind: 'reunion', batchYear: year })
+    : [];
+  const milestone = pack.features.events ? (reunionMilestone(year, currentYear) ?? reunionMilestone(year, currentYear + 1)) : null;
   const lead =
     since > 1
       ? `${since} years since graduation`
@@ -290,6 +301,18 @@ export default async function BatchPage({
           <FacePile people={shown.slice(0, 5)} />
           <p className="min-w-0 text-md text-primary sm:flex-1">{summary.join(' · ')}</p>
         </div>
+      ) : null}
+
+      {pack.features.events ? (
+        <ReunionPanel
+          year={year}
+          currentYear={currentYear}
+          locale={pack.locale}
+          events={reunions}
+          milestone={milestone}
+          canPropose={pack.features.events && can(session, 'event.propose')}
+          officeName={pack.copy.officeName}
+        />
       ) : null}
 
       {facets.departments.length > 1 ? (

@@ -67,7 +67,14 @@
     "gallery": false,
     "news": false,
     "whatsapp": false,
-    "publicLanding": false
+    "publicLanding": false,
+    "groups": true,
+    "feed": false,
+    "businesses": false,
+    "showcase": true,
+    "helpdesk": true,
+    "pages": false,
+    "invites": false
   },
 
   "locale": {

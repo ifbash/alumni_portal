@@ -27,6 +27,12 @@ import {
   useToast,
 } from '@/components/ui';
 import { EventSummary, type EventSummaryData } from '@/components/content';
+import {
+  EMPTY_EVENT_KIND,
+  EventKindFields,
+  type EventKindErrors,
+  type EventKindValue,
+} from '@/components/community/EventKindFields';
 import { api, outcomeToast } from '@/lib/client/api';
 import { eventShareText } from '@/lib/share-text';
 import type { BrandPack } from '@/lib/branding/pack';
@@ -91,6 +97,8 @@ export function EventForm({
   timeZoneLabel,
   canInvite,
   canAlbum,
+  groups,
+  years,
 }: {
   options: Array<{ value: string; label: string }>;
   locked: boolean;
@@ -101,6 +109,10 @@ export function EventForm({
   timeZoneLabel: string;
   canInvite: boolean;
   canAlbum: boolean;
+  /** Groups an organiser may host an event for; empty when the module is off. */
+  groups: Array<{ slug: string; name: string }>;
+  /** Batch years on the register, for a reunion. */
+  years: number[];
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -116,6 +128,8 @@ export function EventForm({
   const [audience, setAudience] = React.useState<Audience>('both');
   const [capacity, setCapacity] = React.useState('');
   const [price, setPrice] = React.useState('0');
+  const [kindValue, setKindValue] = React.useState<EventKindValue>(EMPTY_EVENT_KIND);
+  const [kindErrors, setKindErrors] = React.useState<EventKindErrors>({});
 
   const [errors, setErrors] = React.useState<Errors>({});
   const [confirming, setConfirming] = React.useState(false);
@@ -165,10 +179,20 @@ export function EventForm({
     return e;
   };
 
+  const validateKind = (): EventKindErrors => {
+    const k: EventKindErrors = {};
+    const online = kindValue.mode !== 'in_person';
+    if (online && !kindValue.meetingUrl.trim()) k.meetingUrl = 'An online event needs the link people join with.';
+    else if (online && !/^https:\/\//i.test(kindValue.meetingUrl.trim())) k.meetingUrl = 'Use an https link.';
+    return k;
+  };
+
   const submit = (publish: boolean) => {
     const found = validate();
+    const foundKind = validateKind();
     setErrors(found);
-    if (Object.keys(found).length > 0) {
+    setKindErrors(foundKind);
+    if (Object.keys(found).length > 0 || Object.keys(foundKind).length > 0) {
       toast.error('Some details are missing', 'The fields marked in red need attention before this can be saved.');
       return;
     }
@@ -206,6 +230,11 @@ export function EventForm({
       // cannot both be true of the same event.
       ticketed: rupees > 0,
       ticketPrice: rupees,
+      kind: kindValue.kind,
+      mode: kindValue.mode,
+      meetingUrl: kindValue.mode === 'in_person' ? undefined : kindValue.meetingUrl.trim(),
+      groupSlug: kindValue.groupSlug || undefined,
+      batchYear: kindValue.kind === 'reunion' && kindValue.batchYear ? Number(kindValue.batchYear) : undefined,
       publish,
     });
 
@@ -231,14 +260,19 @@ export function EventForm({
 
     if (outcome.status === 'invalid') {
       const mapped: Errors = {};
+      const mappedKind: EventKindErrors = {};
       for (const [key, message] of Object.entries(outcome.fieldErrors)) {
         const slot = FIELD_MAP[key];
         if (slot) mapped[slot] = message;
+        else if (key === 'kind' || key === 'mode' || key === 'meetingUrl' || key === 'groupSlug' || key === 'batchYear') {
+          mappedKind[key] = message;
+        }
       }
       setErrors((cur) => ({ ...cur, ...mapped }));
+      setKindErrors((cur) => ({ ...cur, ...mappedKind }));
       // A 422 on a field this form has no control for would otherwise
       // disappear entirely.
-      if (Object.keys(mapped).length === 0) setRefusal(outcome.message);
+      if (Object.keys(mapped).length === 0 && Object.keys(mappedKind).length === 0) setRefusal(outcome.message);
       return;
     }
 
@@ -268,6 +302,8 @@ export function EventForm({
         ticketPrice: rupees,
         coverImage: null,
         capacity: capacity && /^\d+$/.test(capacity) ? Number(capacity) : null,
+        kind: kindValue.kind,
+        mode: kindValue.mode,
         registeredCount: 0,
       }
     : null;
@@ -455,6 +491,15 @@ export function EventForm({
                   aria-describedby={describedBy('evt-venue', { hint: true, error: Boolean(errors.venue) })}
                 />
               </Field>
+
+              <EventKindFields
+                idPrefix="evt"
+                value={kindValue}
+                onChange={setKindValue}
+                errors={kindErrors}
+                groups={groups}
+                years={years}
+              />
             </CardBody>
           </Card>
 

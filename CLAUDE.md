@@ -90,6 +90,16 @@ columns in this serializer".
   the DPDP queue was gated on `tenant.configure`, which the vendor holds.
 - **The directory is never anonymous.** See `requireDirectoryAccess()`.
 - **Students never see the donations module.**
+- **Students never see a chapter.** A chapter is alumni in one place; a student
+  who can walk into one can read an alumni roster, which is the directory's
+  student tier by another door. They get interest groups only.
+- **Nothing about a named person is published without a basis**: a member's
+  agreement on record, or for somebody who is not a member a public source.
+  Enforced in the read layer and as a constraint on `showcase_entries`.
+- **A proposal is never published by the route that receives it**, and an online
+  event's join link reaches only people who registered, and organisers.
+- **Business contact needs the same two gates as the directory**: not a student,
+  *and* the owner chose to share. A role alone is never enough.
 - **CGPA and placement status are placement-side only.** Never exposed to
   alumni — they post jobs here.
 - **Donations carry `source_country` and `is_foreign_contribution` from day
@@ -155,7 +165,13 @@ fixture mode. See `buildSeed()` in `src/lib/data/seed.ts`.
     src/components/ui/                the kit — nothing in it holds a colour
     src/components/charts/            server-rendered SVG, token-coloured
     src/app/                          the full portal, admin console and API
+    prisma/migrations/0002_community/ 11 tables, composite tenant FKs, RLS on all
+    src/lib/data/{groups,feed,businesses,showcase,invites,helpdesk,pages}.ts
+                                      the community read layers — every rule lives here
+    src/lib/schemas/                  Zod schemas shared by the community routes and tests
+    src/lib/content/markdown.ts       the safe Markdown subset (AST, no raw HTML)
     docs/DESIGN-SYSTEM.md             the binding contract for any new screen
+    docs/COMMUNITY.md                 the community modules, their rules, and what proves each
 
 Matcher thresholds (`AUTO_APPROVE_AT`, `REVIEW_AT`) are provisional.
 Retune against the real degree register when it arrives;
@@ -166,8 +182,12 @@ Retune against the real degree register when it arrives;
 Real persistence behind the mutation endpoints (they validate, guard,
 rate-limit and audit, then return `persisted: false` in fixture mode).
 Email provider and bounce webhooks. S3 upload. Razorpay. WhatsApp Business
-API. The Playwright permission suite. RLS integration tests. Hoopstr
-migration.
+API. Hoopstr migration. Notifications for community decisions (a proposal
+approved, a join request, a ticket answered). Comments on posts. Custom-domain
+tenant mapping. A Prisma implementation of the read layer: the schema is
+tested for isolation (`tests/rls*.test.ts`, on PGlite) but nothing yet
+exercises RLS through the application. The permission suite exists (`e2e/`,
+run it against a production build; see `playwright.config.ts`).
 
 ## Blocked on the college
 

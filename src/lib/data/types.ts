@@ -1,5 +1,10 @@
 import type { Role } from '../auth/permissions';
 import type { MemberStatus } from '../auth/guard';
+import type { EventKind, EventMode, EventReviewState } from './community-types';
+
+// The community modules keep their shapes in one file of their own; screens
+// still import every DTO from here.
+export type * from './community-types';
 
 /**
  * The shapes the UI consumes.
@@ -198,6 +203,30 @@ export interface EventItem {
   ticketPrice: number;
   published: boolean;
   coverImage: string | null;
+  /** What sort of gathering it is. Drives the filter tabs and the reunion tools. */
+  kind: EventKind;
+  mode: EventMode;
+  /**
+   * The join link for an online or hybrid event. The repository returns it
+   * only to a viewer who is registered, and to the people who run events;
+   * for everyone else it is null, because a link in a list is a link that
+   * gets forwarded.
+   */
+  meetingUrl: string | null;
+  /** The batch a reunion is for; null for every other event. */
+  batchYear: number | null;
+  /** The chapter or interest group hosting it, by slug. */
+  groupSlug: string | null;
+  /**
+   * Where a member's proposal stands. Staff-created events are `approved`.
+   * `published` stays false until the alumni cell approves, so a proposal is
+   * hidden from every list that already filters on it.
+   */
+  reviewState: EventReviewState;
+  /** Who put it forward, when a member did. Narrowed to the viewer's tier. */
+  proposedBy: MemberSummary | null;
+  /** The reason a proposal was declined. Staff and the proposer only. */
+  moderationNote: string | null;
   /** Set when the viewer has a registration. */
   viewerRegistration: { id: string; guests: number; checkedIn: boolean } | null;
 }

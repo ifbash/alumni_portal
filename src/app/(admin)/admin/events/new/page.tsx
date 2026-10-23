@@ -3,7 +3,8 @@ import { redirect, notFound } from 'next/navigation';
 import { getSession } from '@/lib/auth/session';
 import { can, require as requireCap } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
-import { getDepartments } from '@/lib/data/repo';
+import { getDegreeRegisterStats, getDepartments } from '@/lib/data/repo';
+import { getGroups } from '@/lib/data/groups';
 import { PageHeader, Breadcrumbs, Alert } from '@/components/ui';
 import { formatTimeZoneLabel } from '@/lib/format';
 import { siteOrigin } from '@/lib/share';
@@ -79,6 +80,8 @@ export default async function NewEventPage() {
             can(session, 'comms.send.all') || can(session, 'comms.send.segment') || can(session, 'comms.send.department')
           }
           canAlbum={pack.features.gallery && wide}
+          groups={pack.features.groups ? getGroups(session).map((g) => ({ slug: g.slug, name: g.name })) : []}
+          years={getDegreeRegisterStats().byYear.map((y) => y.year).sort((a, b) => b - a)}
         />
       )}
     </div>

@@ -113,7 +113,7 @@ afterAll(async () => {
 
 describe('the migrations apply', () => {
   it('creates every table', async () => {
-    expect(await count(`select count(*)::int n from information_schema.tables where table_schema = 'public'`)).toBe(19);
+    expect(await count(`select count(*)::int n from information_schema.tables where table_schema = 'public'`)).toBe(30);
   });
 
   it('forces row-level security on every tenant table, owners included', async () => {
@@ -123,7 +123,7 @@ describe('the migrations apply', () => {
       `select relname, relrowsecurity, relforcerowsecurity from pg_class
         where relnamespace = 'public'::regnamespace and relkind = 'r' and relname <> 'tenants'`,
     );
-    expect(rows.rows.length).toBe(18);
+    expect(rows.rows.length).toBe(29);
     for (const r of rows.rows) {
       expect(r.relrowsecurity, `${r.relname}: RLS not enabled`).toBe(true);
       expect(r.relforcerowsecurity, `${r.relname}: RLS not forced`).toBe(true);

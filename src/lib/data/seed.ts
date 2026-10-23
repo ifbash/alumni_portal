@@ -811,7 +811,43 @@ export const VERIFICATION_CLAIMS: VerificationClaim[] = (() => {
 // Events
 // ---------------------------------------------------------------
 
-export const EVENTS: EventItem[] = [
+/**
+ * The fields added for webinars, reunions and chapter meetups. Kept out of
+ * the literals below so the original seven read as they always did, and so
+ * adding a field here never means touching every event.
+ */
+type EventExtras = Pick<
+  EventItem,
+  'kind' | 'mode' | 'meetingUrl' | 'batchYear' | 'groupSlug' | 'reviewState' | 'proposedBy' | 'moderationNote'
+>;
+
+const EVENT_DEFAULTS: EventExtras = {
+  kind: 'other',
+  mode: 'in_person',
+  meetingUrl: null,
+  batchYear: null,
+  groupSlug: null,
+  reviewState: 'approved',
+  proposedBy: null,
+  moderationNote: null,
+};
+
+const EVENT_EXTRAS: Record<string, Partial<EventExtras>> = {
+  'alumni-meet-2026': { kind: 'reunion' },
+  'cse-industry-connect': { kind: 'workshop' },
+  'women-in-tech-panel': {
+    kind: 'webinar',
+    mode: 'online',
+    meetingUrl: 'https://meet.example.com/women-in-engineering-panel',
+    groupSlug: 'women-in-engineering',
+  },
+  'batch-2015-decade-reunion': { kind: 'reunion', batchYear: 2015 },
+  'ece-vlsi-workshop': { kind: 'workshop' },
+  'convocation-2026': { kind: 'campus' },
+  'mech-alumni-lecture': { kind: 'campus' },
+};
+
+const BASE_EVENTS: Array<Omit<EventItem, keyof EventExtras>> = [
   {
     id: 'evt-1', slug: 'alumni-meet-2026', title: 'Annual Alumni Meet 2026',
     description:
@@ -881,6 +917,12 @@ export const EVENTS: EventItem[] = [
   },
 ];
 
+export const EVENTS: EventItem[] = BASE_EVENTS.map((e) => ({
+  ...EVENT_DEFAULTS,
+  ...EVENT_EXTRAS[e.slug],
+  ...e,
+}));
+
 /**
  * End times on the quarter hour. Fractional day offsets put the reunion's
  * end at "7:06 pm" and a panel's at "11:54 am", which reads as generated.
@@ -914,6 +956,108 @@ export const EVENT_REGISTRATIONS: EventRegistration[] = (() => {
   }
   return out;
 })();
+
+/**
+ * Events added with the community modules: a chapter meetup, a webinar, a
+ * hybrid hackathon, and two proposals a member put forward (one waiting,
+ * one declined with a reason).
+ *
+ * Appended *after* the registrations above are drawn, and registered here
+ * without drawing, so the seeded random sequence that jobs, connections and
+ * everything below this point depend on does not move.
+ */
+const quarterHour = (iso: string) => new Date(Math.round(new Date(iso).getTime() / QUARTER_HOUR) * QUARTER_HOUR).toISOString();
+const at = (days: number) => quarterHour(daysFromNow(days));
+
+const proposer2016 = SEED.alumni.find((m) => m.batchYear === 2016 && m.status === 'active_alumni') ?? SEED.alumni[30]!;
+const proposerOuting = SEED.alumni[44]!;
+
+const COMMUNITY_EVENTS: EventItem[] = [
+  {
+    id: 'evt-8', slug: 'hyderabad-chapter-meetup', title: 'Hyderabad Chapter — Monthly Meetup',
+    description:
+      'Alumni working in Hyderabad meet over dinner: who is hiring, who has moved, and who needs a flatmate. Open to every batch. The venue is shared with registered members.',
+    venue: 'Shared with registered members',
+    startsAt: at(16.3), endsAt: at(16.45),
+    departmentCode: null, studentEligible: false, alumniOnly: false,
+    capacity: 60, registeredCount: 23, ticketPrice: 0, published: true,
+    coverImage: null, viewerRegistration: null,
+    kind: 'meetup', mode: 'in_person', meetingUrl: null, batchYear: null, groupSlug: 'hyderabad-chapter',
+    reviewState: 'approved', proposedBy: null, moderationNote: null,
+  },
+  {
+    id: 'evt-9', slug: 'founders-fireside-webinar', title: 'Founders’ Fireside — From Campus Project to Company',
+    description:
+      'Three alumni who started companies talk about the first year: the first customer, the first hire, and the month they nearly stopped. Questions from the floor; the recording goes to registered members.',
+    venue: 'Online — link shown to registered members',
+    startsAt: at(9.4), endsAt: at(9.5),
+    departmentCode: null, studentEligible: true, alumniOnly: false,
+    capacity: null, registeredCount: 41, ticketPrice: 0, published: true,
+    coverImage: null, viewerRegistration: null,
+    kind: 'webinar', mode: 'online', meetingUrl: 'https://meet.example.com/founders-fireside', batchYear: null,
+    groupSlug: 'startups-and-founders', reviewState: 'approved', proposedBy: null, moderationNote: null,
+  },
+  {
+    id: 'evt-10', slug: 'batch-2016-decade-reunion', title: 'Batch of 2016 — Ten Year Reunion',
+    description:
+      'A weekend in Hyderabad for the 2016 batch and families: Saturday dinner, Sunday brunch, and a walk through the old photographs. Proposed by a batchmate; the alumni cell is checking dates and the venue.',
+    venue: 'Hyderabad — venue to be confirmed',
+    startsAt: at(90.4), endsAt: at(90.8),
+    departmentCode: null, studentEligible: false, alumniOnly: true,
+    capacity: 120, registeredCount: 0, ticketPrice: 1500, published: false,
+    coverImage: null, viewerRegistration: null,
+    kind: 'reunion', mode: 'in_person', meetingUrl: null, batchYear: 2016, groupSlug: null,
+    reviewState: 'pending', proposedBy: toSummary(proposer2016), moderationNote: null,
+  },
+  {
+    id: 'evt-11', slug: 'code-clash-hackathon', title: 'Code Clash — Alumni and Students Hackathon',
+    description:
+      'An online qualifying round, then a day on campus. Teams mix final-years with alumni mentors; the problem statements come from the companies the mentors work at.',
+    venue: 'Innovation Lab, with an online qualifying round',
+    startsAt: at(30.4), endsAt: at(30.8),
+    departmentCode: null, studentEligible: true, alumniOnly: false,
+    capacity: 150, registeredCount: 64, ticketPrice: 0, published: true,
+    coverImage: null, viewerRegistration: null,
+    kind: 'hackathon', mode: 'hybrid', meetingUrl: 'https://meet.example.com/code-clash-qualifier', batchYear: null,
+    groupSlug: null, reviewState: 'approved', proposedBy: null, moderationNote: null,
+  },
+  {
+    id: 'evt-12', slug: 'araku-trek-weekend', title: 'Araku Valley Weekend Trek',
+    description: 'A weekend outing for alumni who like to walk. Overnight stay, shared costs.',
+    venue: 'Araku Valley',
+    startsAt: at(52.2), endsAt: at(53.5),
+    departmentCode: null, studentEligible: false, alumniOnly: true,
+    capacity: 30, registeredCount: 0, ticketPrice: 0, published: false,
+    coverImage: null, viewerRegistration: null,
+    kind: 'other', mode: 'in_person', meetingUrl: null, batchYear: null, groupSlug: null,
+    reviewState: 'rejected', proposedBy: toSummary(proposerOuting),
+    moderationNote:
+      'This is a group outing rather than an alumni cell event, and the cell cannot take responsibility for an overnight trip. Post it on the community feed and tag a chapter instead.',
+  },
+];
+EVENTS.push(...COMMUNITY_EVENTS);
+
+for (const [eventId, members] of [
+  ['evt-8', SEED.alumni.slice(60, 68)],
+  ['evt-9', [...SEED.alumni.slice(70, 75), ...SEED.students.slice(0, 3)]],
+  ['evt-11', [...SEED.alumni.slice(80, 83), ...SEED.students.slice(3, 8)]],
+] as const) {
+  const evt = COMMUNITY_EVENTS.find((e) => e.id === eventId)!;
+  members.forEach((m, i) => {
+    EVENT_REGISTRATIONS.push({
+      id: `reg-${eventId}-${i}`,
+      eventId,
+      eventTitle: evt.title,
+      memberId: m.id,
+      memberName: m.fullName,
+      batchYear: m.batchYear,
+      guests: 0,
+      amountPaid: evt.ticketPrice,
+      checkedInAt: null,
+      createdAt: daysFromNow(-(2 + (i % 5))),
+    });
+  });
+}
 
 // ---------------------------------------------------------------
 // Jobs

@@ -6,7 +6,7 @@ import { CalendarDays, CalendarPlus, ChevronRight, ClipboardList, DoorOpen, Send
 import { getSession } from '@/lib/auth/session';
 import { can, canInDepartment, require as requireCap } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
-import { getEvents, getDepartments, getEventRegistrations } from '@/lib/data/repo';
+import { getEvents, getDepartments, getEventRegistrations, getPendingEventProposals } from '@/lib/data/repo';
 import type { EventItem } from '@/lib/data/types';
 import type { LocaleSpec } from '@/lib/branding/pack';
 import {
@@ -23,6 +23,8 @@ import {
   TrustChip,
 } from '@/components/ui';
 import { EventSummary, SeatBadge, eventMetaLine } from '@/components/content';
+import { DecisionActions } from '@/components/community/DecisionActions';
+import { eventKindLabel } from '@/lib/community';
 import { daysUntil } from '@/lib/format';
 import { isOnlineVenue, seatStatus } from '@/lib/event-status';
 import { eventShareText } from '@/lib/share-text';
@@ -66,7 +68,11 @@ export default async function AdminEventsPage({
   const past = getEvents(session, { when: 'past', includeDrafts: true }).filter((e) => e.published);
   // `getEvents` only surfaces unpublished rows to `event.create.any`, so an
   // HOD never sees another department's half-written draft.
-  const drafts = wide ? getEvents(session, { when: 'all', includeDrafts: true }).filter((e) => !e.published) : [];
+  const drafts = wide
+    ? getEvents(session, { when: 'all', includeDrafts: true }).filter((e) => !e.published && e.reviewState === 'approved')
+    : [];
+  // What members have put forward, waiting on the alumni cell. Behind `event.create.any`.
+  const proposals = wide ? getPendingEventProposals(session) : [];
 
   const pack = brand.pack;
   const locale = pack.locale;
@@ -175,10 +181,67 @@ export default async function AdminEventsPage({
             value: upcoming.reduce((n, e) => n + e.registeredCount, 0).toLocaleString('en-IN'),
             label: 'registered across them',
           },
+          ...(proposals.length > 0
+            ? [{ value: proposals.length, label: proposals.length === 1 ? 'proposed by a member' : 'proposed by members', href: '#proposals', tone: 'attention' as const }]
+            : []),
           { value: drafts.length, label: drafts.length === 1 ? 'draft waiting' : 'drafts waiting', href: '/admin/events?view=drafts' },
           { value: attention.length, label: 'to look at', tone: 'attention' },
         ]}
       />
+
+      {proposals.length > 0 ? (
+        <section id="proposals" aria-labelledby="proposals-heading" className="scroll-mt-20 space-y-3">
+          <h2 id="proposals-heading" className="font-display text-xl font-semibold">
+            Proposed by members
+          </h2>
+          {proposals.map((e) => (
+            <Card key={e.id} id={`proposal-${e.id}`}>
+              <div className="space-y-4 p-card">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone="outline">{eventKindLabel(e.kind)}</Badge>
+                  {e.alumniOnly ? <Badge tone="accent">Alumni only</Badge> : null}
+                  {e.batchYear ? <Badge tone="brand">Batch of {e.batchYear}</Badge> : null}
+                </div>
+                <div className="min-w-0 space-y-1.5">
+                  <h3 className="font-display text-lg font-semibold leading-snug">{e.title}</h3>
+                  <p className="text-sm text-secondary">{eventMetaLine(e, locale)}</p>
+                  {e.proposedBy ? (
+                    <p className="text-sm text-primary">
+                      Proposed by <span className="font-medium">{e.proposedBy.fullName}</span>
+                      {e.proposedBy.batchYear ? ` · batch of ${e.proposedBy.batchYear}` : ''}
+                      {e.proposedBy.departmentCode ? ` · ${e.proposedBy.departmentCode}` : ''}
+                    </p>
+                  ) : null}
+                  {e.description ? <p className="max-w-prose text-sm text-secondary">{e.description}</p> : null}
+                </div>
+                <DecisionActions
+                  endpoint={`/api/admin/events/${e.id}`}
+                  subject={e.title}
+                  recipient={e.proposedBy?.fullName.split(/\s+/)[0] ?? 'the proposer'}
+                  approveLabel="Approve and publish"
+                  declineLabel="Decline"
+                  approveConfirm={
+                    <div className="space-y-2">
+                      <p>
+                        <strong className="text-primary">{e.title}</strong> becomes visible to every member its audience
+                        allows, and registration opens straight away.
+                      </p>
+                      {e.ticketPrice > 0 ? (
+                        <p>It carries a ticket price, so check the amount and the venue with the proposer before you publish.</p>
+                      ) : null}
+                    </div>
+                  }
+                  quickReasons={[
+                    { label: 'Clashes with another event', text: 'This date clashes with another event the alumni cell is already running. Pick a different weekend and put it forward again.' },
+                    { label: 'Needs a venue', text: 'We cannot approve this without a confirmed venue. Once you have one, put it forward again with the address.' },
+                    { label: 'Not an alumni cell event', text: 'This is a private gathering rather than an alumni cell event. Post it on the community feed and tag the right chapter instead.' },
+                  ]}
+                />
+              </div>
+            </Card>
+          ))}
+        </section>
+      ) : null}
 
       {view === 'upcoming' && next ? (
         <UpNext

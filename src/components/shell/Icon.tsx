@@ -2,7 +2,8 @@ import {
   Home, Users, Handshake, Calendar, Briefcase, Heart, User, Settings,
   Shield, Upload, Megaphone, Palette, ScrollText, Building2, GraduationCap,
   RefreshCw, FileCheck2, BarChart3, Newspaper, Image as ImageIcon, Bell,
-  ClipboardList, type LucideIcon,
+  ClipboardList, UsersRound, MessagesSquare, Store, Award, LifeBuoy, MailPlus, FileText,
+  type LucideIcon,
 } from 'lucide-react';
 import type { IconName } from '@/lib/navigation';
 
@@ -37,6 +38,13 @@ const ICONS: Record<IconName, LucideIcon> = {
   image: ImageIcon,
   bell: Bell,
   clipboard: ClipboardList,
+  'users-round': UsersRound,
+  messages: MessagesSquare,
+  store: Store,
+  award: Award,
+  'life-buoy': LifeBuoy,
+  'mail-plus': MailPlus,
+  'file-text': FileText,
 };
 
 export function NavIcon({ name, className }: { name: IconName; className?: string }) {

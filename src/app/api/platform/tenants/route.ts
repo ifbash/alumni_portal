@@ -95,6 +95,13 @@ const Features = z.object({
   news: z.boolean(),
   whatsapp: z.boolean(),
   publicLanding: z.boolean(),
+  groups: z.boolean(),
+  feed: z.boolean(),
+  businesses: z.boolean(),
+  showcase: z.boolean(),
+  helpdesk: z.boolean(),
+  pages: z.boolean(),
+  invites: z.boolean(),
 });
 
 const PLANS = ['trial', 'standard', 'institution'] as const;

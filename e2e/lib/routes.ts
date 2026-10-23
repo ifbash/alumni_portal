@@ -111,6 +111,22 @@ function communityPageAt(build: (ids: Ids) => string, holds: string, overrides: 
 }
 
 /**
+ * A member page whose own capability check refuses everyone but `holders`.
+ *
+ * The page calls `require()`, which throws an AuthzError that
+ * `src/app/(app)/error.tsx` catches. That is the same mechanism, and the same
+ * wrong-but-harmless 200, as the console's per-screen refusal
+ * (KW-CONSOLE-SCREEN): the content is withheld, only the status line lies.
+ */
+function refusedExcept(holders: Caller[]): Overrides {
+  const everyone: Caller[] = [...COHORT, ...STAFF];
+  return fill(
+    everyone.filter((c) => !holders.includes(c)),
+    CONSOLE_SCREEN_REFUSAL,
+  );
+}
+
+/**
  * A staff console screen.
  *
  * `holders` is the set of demo roles that hold the capability the screen
@@ -266,6 +282,73 @@ export const ROUTES: RouteRow[] = [
   memberPage('/settings/privacy', 'the contact visibility setting — the owner half of the two-gate release'),
   memberPage('/settings/security', 'sessions and sign-in history'),
 
+  // ---- The community modules -------------------------------------
+  //
+  // DIET has all seven switched on, so every page below answers for a member.
+  // A 200 in this block is not always a page: a refusal the page makes itself
+  // is delivered inside the stream, which is why these rows carry the two
+  // known-wrong tags and not a 403 or a 404.
+  //
+  //   FEATURE_OFF           the page called notFound(): a record the viewer may not
+  //                         know exists. KW-FEATURE-FLAG is the same mechanism.
+  //   CONSOLE_SCREEN_REFUSAL  the page's capability check threw. KW-CONSOLE-SCREEN.
+  //
+  // The bodies were checked as well as the statuses, because for these cells
+  // the status proves nothing: a refused caller's response contains none of
+  // the withheld text (see community-leaks.spec.ts).
+  communityPage('/community', 'the community feed — posts by named alumni; a group post only for the group it was written in'),
+  communityPage('/groups', 'chapters and interest groups, with member counts and leads. A student is shown interest groups only'),
+  communityPage(
+    '/groups/hyderabad-chapter',
+    'one chapter, with its noticeboard and, for its members, its roster. A student has no chapter to visit: for them it does not exist',
+    { student: FEATURE_OFF },
+  ),
+  communityPage('/groups/ai-and-ml', 'one interest group, open to students'),
+  communityPage('/businesses', 'the alumni business directory — live listings, with contact only where the owner chose to share it'),
+  communityPage('/businesses/new', 'the listing form. Listing a business needs business.list, which alumni hold and students do not', {
+    ...refusedExcept(['alumni', 'operator', 'admin']),
+  }),
+  communityPage('/businesses/nimbus-cloud-labs', 'one live listing, with its owner’s contact details for those entitled to them'),
+  communityPage(
+    '/businesses/nimbus-cloud-labs/edit',
+    'the owner’s edit form for one listing. Holding business.list is not enough: a listing that is not yours does not exist',
+    { ...refusedExcept(['alumni', 'operator', 'admin']), operator: FEATURE_OFF, admin: FEATURE_OFF },
+  ),
+  communityPage('/showcase', 'prominent alumni, achievements and success stories — published entries only'),
+  communityPage('/showcase/managing-director-semiconductor', 'one published entry about a named alumnus who agreed to be featured'),
+  communityPage('/showcase/submit', 'a member putting their own achievement forward. Needs showcase.submit', {
+    ...refusedExcept(['alumni', 'operator', 'admin']),
+  }),
+  communityPage('/events/propose', 'a member proposing an event. Needs event.propose, which alumni and faculty hold and students do not', {
+    ...refusedExcept(['alumni', 'faculty', 'hod', 'tpo', 'operator', 'admin']),
+  }),
+  communityPage('/invite', 'inviting a batchmate — the inviter’s own list, which nobody else can read'),
+  communityPage('/help', 'the help desk — the viewer’s own questions'),
+  communityPage(
+    '/help/tickets/HD-1041',
+    'one member’s own ticket. It belongs to the demo alumnus; to anyone else, staff included, it does not exist on this door ' +
+      '(staff read tickets in the console)',
+    { ...fill(['student', 'faculty', 'hod', 'tpo', 'operator', 'finance', 'admin'], FEATURE_OFF) },
+  ),
+
+  // The college's own pages. /p is public by design, so there is no sign-in gate to
+  // measure; what varies is what the page decides. NOTE: an anonymous caller who is
+  // not allowed to read a page is sent to sign in by a redirect delivered inside a
+  // 200, the same behaviour /welcome documents. Anonymous callers get that same answer
+  // for an unknown address, a draft and a members-only page, so the answer is not an
+  // oracle for which of the three it is.
+  publicPage('/p/about-the-alumni-network', 'a published public page, readable by anyone and linked from the footer'),
+  publicPage(
+    '/p/community-guidelines',
+    'a published members-only page. NOTE: anonymous callers get a 200 carrying a redirect to sign in, not a 307',
+  ),
+  publicPage(
+    '/p/message-from-the-director',
+    'an UNPUBLISHED draft. Only the people who edit pages can read it; everyone signed in who cannot gets a not-found, ' +
+      'and anonymous callers the same redirect to sign in as for any page they may not read',
+    { ...fill(['student', 'alumni', 'faculty', 'hod', 'tpo', 'finance', 'platform'], FEATURE_OFF) },
+  ),
+
   // ---- The staff console -----------------------------------------
   //
   // `holders` is read off `src/lib/auth/permissions.ts` for the demo role
@@ -341,6 +424,23 @@ export const ROUTES: RouteRow[] = [
     'operator',
     'admin',
   ]),
+
+  // ---- The community console -------------------------------------
+  //
+  // The six staff capabilities these screens guard on go to the alumni cell
+  // and the college admin and to nobody else. None to the vendor.
+  consolePage('/admin/community', 'the moderation queue — reported posts, with who posted them and why they were hidden', ['operator', 'admin']),
+  consolePage('/admin/groups', 'every chapter and interest group, with leads and waiting requests', ['operator', 'admin']),
+  consolePage('/admin/groups/new', 'the group creation form', ['operator', 'admin']),
+  consolePage('/admin/groups/hyderabad-chapter', 'one group: edit, archive, appoint leads', ['operator', 'admin']),
+  consolePage('/admin/businesses', 'the business listing review queue — owners’ details beside what they submitted', ['operator', 'admin']),
+  consolePage('/admin/showcase', 'showcase submissions and every entry, with the consent or source each rests on', ['operator', 'admin']),
+  consolePage('/admin/showcase/new', 'adding a showcase entry about a named person', ['operator', 'admin']),
+  consolePage('/admin/helpdesk', 'the help desk queue — members’ questions about their own accounts, in their own words', ['operator', 'admin']),
+  consolePage('/admin/helpdesk/tkt-1041', 'one ticket and its thread. The vendor holds no helpdesk.manage and cannot read it', ['operator', 'admin']),
+  consolePage('/admin/pages', 'the college’s editable pages, drafts included', ['operator', 'admin']),
+  consolePage('/admin/pages/new', 'the page composer', ['operator', 'admin']),
+  consolePage('/admin/pages/about-the-alumni-network', 'one page, editable, with a live preview', ['operator', 'admin']),
 
   // ---- The vendor console ----------------------------------------
   platformPage('/platform', 'every tenant ifBash hosts'),
@@ -638,4 +738,166 @@ export const ROUTES: RouteRow[] = [
     default: FORBIDDEN,
     platform: ADMITTED_THEN_INVALID,
   }),
+
+  // ---- The community modules -------------------------------------
+  //
+  // Same shape as above: the vendor is refused at the route gate, and a 422
+  // means admitted. Where a handler checks something finer than the
+  // capability (membership of a group, authorship, ownership), it does so
+  // after the body, so an empty probe reaches 422 for everyone the coarse
+  // guard admits. tests/community.routes.test.ts proves the finer checks.
+
+  api('GET', '/api/posts', 'the community feed as JSON — authors named, group posts only for the group', {
+    default: OK,
+    platform: FORBIDDEN,
+  }),
+  api('POST', '/api/posts', 'writing a post. Needs post.create, which alumni and faculty hold and students do not', {
+    default: ADMITTED_THEN_INVALID,
+    student: FORBIDDEN,
+    finance: FORBIDDEN,
+    platform: FORBIDDEN,
+  }),
+  api('PATCH', '/api/posts/post-14', 'hiding or restoring a post, with a reason the author reads', {
+    default: FORBIDDEN,
+    operator: ADMITTED_THEN_INVALID,
+    admin: ADMITTED_THEN_INVALID,
+  }),
+  api(
+    'DELETE',
+    '/api/posts/post-14',
+    'removing a post. A member may remove their own and a moderator any; post-14 is neither of the demo members’, ' +
+      'so only the people who moderate get through',
+    { default: FORBIDDEN, operator: OK, admin: OK },
+  ),
+  api('POST', '/api/posts/post-14/like', 'liking a post', { default: ADMITTED_THEN_INVALID, platform: FORBIDDEN }),
+  api('POST', '/api/posts/post-14/report', 'reporting a post. The author never learns who did', {
+    default: ADMITTED_THEN_INVALID,
+    platform: FORBIDDEN,
+  }),
+
+  api('GET', '/api/businesses', 'live business listings, with contact only where both gates pass', {
+    default: OK,
+    platform: FORBIDDEN,
+  }),
+  api('POST', '/api/businesses', 'listing a business. Needs business.list; it always lands in review', {
+    default: FORBIDDEN,
+    alumni: ADMITTED_THEN_INVALID,
+    operator: ADMITTED_THEN_INVALID,
+    admin: ADMITTED_THEN_INVALID,
+  }),
+  api('PATCH', '/api/businesses/nimbus-cloud-labs', 'an owner closing or resubmitting their listing. Only the owner: ownership is checked after the body', {
+    default: FORBIDDEN,
+    alumni: ADMITTED_THEN_INVALID,
+    operator: ADMITTED_THEN_INVALID,
+    admin: ADMITTED_THEN_INVALID,
+  }),
+  api('PATCH', '/api/admin/businesses/nimbus-cloud-labs', 'approving or declining a listing, with a reason the owner reads', {
+    default: FORBIDDEN,
+    operator: ADMITTED_THEN_INVALID,
+    admin: ADMITTED_THEN_INVALID,
+  }),
+
+  api('POST', '/api/events/propose', 'a member proposing an event. It is never published by this route', {
+    default: ADMITTED_THEN_INVALID,
+    student: FORBIDDEN,
+    finance: FORBIDDEN,
+    platform: FORBIDDEN,
+  }),
+  api('PATCH', '/api/admin/events/evt-10', 'approving or declining a member’s proposal. Approving publishes', {
+    default: FORBIDDEN,
+    operator: ADMITTED_THEN_INVALID,
+    admin: ADMITTED_THEN_INVALID,
+  }),
+
+  api('POST', '/api/groups/hyderabad-chapter/membership', 'joining or leaving a group. A chapter is not open to a student: that is checked after the body', {
+    default: ADMITTED_THEN_INVALID,
+    platform: FORBIDDEN,
+  }),
+  api('PATCH', '/api/groups/hyderabad-chapter/requests', 'deciding a join request. Leads and group staff only: that is checked after the body', {
+    default: ADMITTED_THEN_INVALID,
+    platform: FORBIDDEN,
+  }),
+  api('POST', '/api/admin/groups', 'creating a group', {
+    default: FORBIDDEN,
+    operator: ADMITTED_THEN_INVALID,
+    admin: ADMITTED_THEN_INVALID,
+  }),
+  api('PATCH', '/api/admin/groups/hyderabad-chapter', 'editing or archiving a group', {
+    default: FORBIDDEN,
+    operator: ADMITTED_THEN_INVALID,
+    admin: ADMITTED_THEN_INVALID,
+  }),
+  api('PATCH', '/api/admin/groups/hyderabad-chapter/leads', 'appointing or removing a group’s leads', {
+    default: FORBIDDEN,
+    operator: ADMITTED_THEN_INVALID,
+    admin: ADMITTED_THEN_INVALID,
+  }),
+
+  api('POST', '/api/showcase', 'a member putting themselves forward. Needs showcase.submit; it always lands in review', {
+    default: FORBIDDEN,
+    alumni: ADMITTED_THEN_INVALID,
+    operator: ADMITTED_THEN_INVALID,
+    admin: ADMITTED_THEN_INVALID,
+  }),
+  api('POST', '/api/admin/showcase', 'adding an entry about a named person. Needs their agreement on record, or a public source', {
+    default: FORBIDDEN,
+    operator: ADMITTED_THEN_INVALID,
+    admin: ADMITTED_THEN_INVALID,
+  }),
+  api('PATCH', '/api/admin/showcase/managing-director-semiconductor', 'approving, declining or taking down a showcase entry', {
+    default: FORBIDDEN,
+    operator: ADMITTED_THEN_INVALID,
+    admin: ADMITTED_THEN_INVALID,
+  }),
+
+  api('GET', '/api/invitations', 'the caller’s own invitations and weekly allowance — nobody else’s', {
+    default: OK,
+    platform: FORBIDDEN,
+  }),
+  api('POST', '/api/invitations', 'inviting batchmates. The reply is the same whether or not an address is a member', {
+    default: ADMITTED_THEN_INVALID,
+    platform: FORBIDDEN,
+  }),
+
+  api('GET', '/api/helpdesk', 'the caller’s own questions', { default: OK, platform: FORBIDDEN }),
+  api('POST', '/api/helpdesk', 'asking the alumni office a question', { default: ADMITTED_THEN_INVALID, platform: FORBIDDEN }),
+  api(
+    'POST',
+    '/api/helpdesk/tkt-1041',
+    'adding to a question. Only the member who asked: to anyone else, staff included, it does not exist on this door',
+    { default: NOT_FOUND, alumni: ADMITTED_THEN_INVALID, platform: FORBIDDEN },
+  ),
+  api(
+    'PATCH',
+    '/api/helpdesk/tkt-1041',
+    'closing a question. Only the member who asked',
+    { default: NOT_FOUND, alumni: ADMITTED_THEN_INVALID, platform: FORBIDDEN },
+  ),
+  api('POST', '/api/feedback', 'the feedback button — any signed-in member, with the page it was pressed on', {
+    default: ADMITTED_THEN_INVALID,
+    platform: FORBIDDEN,
+  }),
+  api('POST', '/api/admin/helpdesk/tkt-1041', 'answering a ticket. Needs helpdesk.manage, which the vendor does not hold', {
+    default: FORBIDDEN,
+    operator: ADMITTED_THEN_INVALID,
+    admin: ADMITTED_THEN_INVALID,
+  }),
+
+  api('POST', '/api/admin/pages', 'creating a page the college edits itself', {
+    default: FORBIDDEN,
+    operator: ADMITTED_THEN_INVALID,
+    admin: ADMITTED_THEN_INVALID,
+  }),
+  api('PATCH', '/api/admin/pages/about-the-alumni-network', 'editing or publishing a page', {
+    default: FORBIDDEN,
+    operator: ADMITTED_THEN_INVALID,
+    admin: ADMITTED_THEN_INVALID,
+  }),
+  api(
+    'DELETE',
+    '/api/admin/pages/no-such-page',
+    'deleting a page. Probed with an address that does not exist so this row can never delete a real one: ' +
+      '404 means admitted and found nothing, and the capability gate ran first, which is why the rest get 403',
+    { default: FORBIDDEN, operator: NOT_FOUND, admin: NOT_FOUND },
+  ),
 ];

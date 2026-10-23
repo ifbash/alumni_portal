@@ -27,6 +27,8 @@ enum MemberStatus {
   rejected
   lapsed
   deceased
+
+  @@map("member_status")
 }
 
 enum MemberRole {
@@ -39,6 +41,8 @@ enum MemberRole {
   finance
   college_admin
   platform_admin
+
+  @@map("member_role")
 }
 
 enum VerificationMethod {
@@ -47,6 +51,8 @@ enum VerificationMethod {
   hod_manual
   bulk_import
   placement_cell_import
+
+  @@map("verification_method")
 }
 
 enum ConnectionState {
@@ -56,6 +62,8 @@ enum ConnectionState {
   expired
   withdrawn
   blocked
+
+  @@map("connection_state")
 }
 
 enum ConnectionKind {
@@ -63,6 +71,8 @@ enum ConnectionKind {
   referral
   introduction
   speaking
+
+  @@map("connection_kind")
 }
 
 enum JobState {
@@ -71,6 +81,8 @@ enum JobState {
   live
   rejected
   closed
+
+  @@map("job_state")
 }
 
 enum DonationState {
@@ -78,6 +90,8 @@ enum DonationState {
   succeeded
   failed
   refunded
+
+  @@map("donation_state")
 }
 
 enum ContactVisibility {
@@ -85,6 +99,8 @@ enum ContactVisibility {
   on_accept
   alumni_only
   all_members
+
+  @@map("contact_visibility")
 }
 
 model Tenant {
@@ -341,6 +357,19 @@ model Event {
   createdBy       String?  @map("created_by") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
 
+  kind           EventKind        @default(other)
+  mode           EventMode        @default(in_person)
+  /// Shown only to people who are registered. Never in a list.
+  meetingUrl     String?          @map("meeting_url")
+  /// Reunions only: which batch it is for.
+  batchYear      Int?             @map("batch_year")
+  groupId        String?          @map("group_id") @db.Uuid
+  /// A proposal is never published; approving flips both together.
+  reviewState    EventReviewState @default(approved) @map("review_state")
+  proposedBy     String?          @map("proposed_by") @db.Uuid
+  moderationNote String?          @map("moderation_note")
+
+  group         Group?              @relation(fields: [groupId, tenantId], references: [id, tenantId])
   registrations EventRegistration[]
 
   @@unique([tenantId, slug])
@@ -496,4 +525,403 @@ model AuditLog {
   @@index([actorId, createdAt])
   @@index([tenantId, action, createdAt])
   @@map("audit_log")
+}
+
+// ---------------------------------------------------------------
+// Community modules — mirrors prisma/migrations/0002_community.
+//
+// The SQL is the source of truth for the composite tenant foreign keys,
+// the CHECK constraints (the showcase consent rule, "contact only if the
+// owner shared it", "a proposal is never published") and the grants.
+// References to members are plain uuid columns here: Prisma would need a
+// back-relation on Member for each, and the database enforces them anyway.
+// ---------------------------------------------------------------
+
+enum GroupKind {
+  chapter
+  interest
+
+  @@map("group_kind")
+}
+
+enum GroupJoinPolicy {
+  open
+  approval
+
+  @@map("group_join_policy")
+}
+
+enum GroupMemberRole {
+  member
+  lead
+
+  @@map("group_member_role")
+}
+
+enum GroupMemberState {
+  active
+  requested
+
+  @@map("group_member_state")
+}
+
+enum PostKind {
+  update
+  achievement
+  question
+  opportunity
+
+  @@map("post_kind")
+}
+
+enum PostState {
+  published
+  hidden
+
+  @@map("post_state")
+}
+
+enum BusinessState {
+  pending_moderation
+  live
+  rejected
+  closed
+
+  @@map("business_state")
+}
+
+enum ShowcaseKind {
+  prominent
+  achievement
+  story
+
+  @@map("showcase_kind")
+}
+
+enum ShowcaseCategory {
+  leadership
+  entrepreneur
+  civil_services
+  academia
+  public_sector
+  defence_space
+  research
+  arts_sports
+  social_impact
+
+  @@map("showcase_category")
+}
+
+enum ShowcaseState {
+  pending_moderation
+  published
+  rejected
+
+  @@map("showcase_state")
+}
+
+enum InvitationState {
+  sent
+  joined
+  expired
+
+  @@map("invitation_state")
+}
+
+enum TicketKind {
+  help
+  feedback
+  bug
+
+  @@map("ticket_kind")
+}
+
+enum TicketCategory {
+  account
+  verification
+  profile
+  privacy
+  events
+  jobs
+  other
+
+  @@map("ticket_category")
+}
+
+enum TicketState {
+  open
+  answered
+  closed
+
+  @@map("ticket_state")
+}
+
+enum PageAudience {
+  public
+  members
+
+  @@map("page_audience")
+}
+
+enum EventKind {
+  reunion
+  meetup
+  webinar
+  workshop
+  hackathon
+  campus
+  other
+
+  @@map("event_kind")
+}
+
+enum EventMode {
+  in_person
+  online
+  hybrid
+
+  @@map("event_mode")
+}
+
+enum EventReviewState {
+  approved
+  pending
+  rejected
+
+  @@map("event_review_state")
+}
+
+model Group {
+  id          String          @id @default(uuid()) @db.Uuid
+  tenantId    String          @map("tenant_id") @db.Uuid
+  slug        String
+  name        String
+  kind        GroupKind
+  description String
+  /// Chapters only: where the chapter is.
+  city        String?
+  country     String?         @db.Char(2)
+  joinPolicy  GroupJoinPolicy @default(open) @map("join_policy")
+  /// Archived, never deleted: the application role has no DELETE on this table.
+  archived    Boolean         @default(false)
+  createdBy   String?         @map("created_by") @db.Uuid
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime        @default(now()) @map("updated_at") @db.Timestamptz
+
+  members GroupMember[]
+  posts   Post[]
+  events  Event[]
+
+  @@unique([tenantId, slug])
+  @@unique([id, tenantId])
+  @@map("groups")
+}
+
+model GroupMember {
+  tenantId String           @map("tenant_id") @db.Uuid
+  groupId  String           @map("group_id") @db.Uuid
+  memberId String           @map("member_id") @db.Uuid
+  role     GroupMemberRole  @default(member)
+  state    GroupMemberState @default(active)
+  joinedAt DateTime         @default(now()) @map("joined_at") @db.Timestamptz
+
+  group Group @relation(fields: [groupId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  @@id([groupId, memberId])
+  @@index([memberId, state])
+  @@map("group_members")
+}
+
+model Post {
+  id           String    @id @default(uuid()) @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  authorId     String    @map("author_id") @db.Uuid
+  /// Null is the open feed; a group's id is its noticeboard.
+  groupId      String?   @map("group_id") @db.Uuid
+  kind         PostKind
+  body         String
+  tags         String[]  @default([])
+  state        PostState @default(published)
+  hiddenReason String?   @map("hidden_reason")
+  hiddenBy     String?   @map("hidden_by") @db.Uuid
+  hiddenAt     DateTime? @map("hidden_at") @db.Timestamptz
+  /// The author taking their own post down. A flag, not a DELETE.
+  removedAt    DateTime? @map("removed_at") @db.Timestamptz
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  group   Group?       @relation(fields: [groupId, tenantId], references: [id, tenantId])
+  likes   PostLike[]
+  reports PostReport[]
+
+  @@unique([id, tenantId])
+  @@index([groupId, createdAt(sort: Desc)])
+  @@map("posts")
+}
+
+model PostLike {
+  tenantId  String   @map("tenant_id") @db.Uuid
+  postId    String   @map("post_id") @db.Uuid
+  memberId  String   @map("member_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  post Post @relation(fields: [postId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  @@id([postId, memberId])
+  @@map("post_likes")
+}
+
+model PostReport {
+  id         String    @id @default(uuid()) @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  postId     String    @map("post_id") @db.Uuid
+  reporterId String    @map("reporter_id") @db.Uuid
+  reason     String
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz
+
+  post Post @relation(fields: [postId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  /// One report per person per post: a count of two means two people.
+  @@unique([postId, reporterId])
+  @@map("post_reports")
+}
+
+model Business {
+  id             String        @id @default(uuid()) @db.Uuid
+  tenantId       String        @map("tenant_id") @db.Uuid
+  ownerId        String        @map("owner_id") @db.Uuid
+  slug           String
+  name           String
+  industry       String
+  description    String
+  city           String?
+  region         String?
+  country        String?       @db.Char(2)
+  website        String?
+  products       String[]      @default([])
+  services       String[]      @default([])
+  status         BusinessState @default(pending_moderation)
+  moderationNote String?       @map("moderation_note")
+  moderatedBy    String?       @map("moderated_by") @db.Uuid
+  moderatedAt    DateTime?     @map("moderated_at") @db.Timestamptz
+  /// First gate of the two-gate release. Contact columns are null unless true.
+  showContact    Boolean       @default(false) @map("show_contact")
+  contactEmail   String?       @map("contact_email")
+  contactPhone   String?       @map("contact_phone")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime      @default(now()) @map("updated_at") @db.Timestamptz
+
+  @@unique([tenantId, slug])
+  @@index([ownerId])
+  @@map("businesses")
+}
+
+/// An entry is about a named person. The database refuses `published` unless
+/// a member has consented, or a non-member has a public source.
+model ShowcaseEntry {
+  id                 String           @id @default(uuid()) @db.Uuid
+  tenantId           String           @map("tenant_id") @db.Uuid
+  slug               String
+  kind               ShowcaseKind
+  category           ShowcaseCategory
+  headline           String
+  summary            String
+  story              String?
+  displayName        String           @map("display_name")
+  memberId           String?          @map("member_id") @db.Uuid
+  batchYear          Int?             @map("batch_year")
+  departmentId       String?          @map("department_id") @db.Uuid
+  achievedOn         DateTime?        @map("achieved_on") @db.Date
+  sourceUrl          String?          @map("source_url")
+  featured           Boolean          @default(false)
+  source             String           @default("curated")
+  submittedBy        String?          @map("submitted_by") @db.Uuid
+  state              ShowcaseState    @default(pending_moderation)
+  moderationNote     String?          @map("moderation_note")
+  consentRecordedAt  DateTime?        @map("consent_recorded_at") @db.Timestamptz
+  consentConfirmedBy String?          @map("consent_confirmed_by") @db.Uuid
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime         @default(now()) @map("updated_at") @db.Timestamptz
+
+  @@unique([tenantId, slug])
+  @@map("showcase_entries")
+}
+
+/// A name and an address supplied by a third party who has agreed to nothing.
+/// Read only by the inviter; the college never queries this table.
+model Invitation {
+  id              String          @id @default(uuid()) @db.Uuid
+  tenantId        String          @map("tenant_id") @db.Uuid
+  inviterId       String          @map("inviter_id") @db.Uuid
+  email           String         
+  name            String?
+  batchYear       Int?            @map("batch_year")
+  message         String?
+  state           InvitationState @default(sent)
+  claimedMemberId String?         @map("claimed_member_id") @db.Uuid
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  expiresAt       DateTime        @default(dbgenerated("(now() + interval '30 days')")) @map("expires_at") @db.Timestamptz
+
+  @@unique([inviterId, email])
+  @@index([inviterId, createdAt(sort: Desc)])
+  @@map("invitations")
+}
+
+model SupportTicket {
+  id        String         @id @default(uuid()) @db.Uuid
+  tenantId  String         @map("tenant_id") @db.Uuid
+  /// What the member quotes: HD-1042. Numbered by the application, per college.
+  reference String
+  memberId  String         @map("member_id") @db.Uuid
+  kind      TicketKind     @default(help)
+  category  TicketCategory @default(other)
+  subject   String
+  /// The page the feedback button was pressed on. A path, never a query string.
+  pagePath  String?        @map("page_path")
+  state     TicketState    @default(open)
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime       @default(now()) @map("updated_at") @db.Timestamptz
+
+  messages TicketMessage[]
+
+  @@unique([tenantId, reference])
+  @@unique([id, tenantId])
+  @@index([tenantId, state, createdAt])
+  @@index([memberId, updatedAt(sort: Desc)])
+  @@map("support_tickets")
+}
+
+/// Append-only, like audit_log: the application role cannot edit or delete.
+model TicketMessage {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  ticketId  String   @map("ticket_id") @db.Uuid
+  authorId  String   @map("author_id") @db.Uuid
+  fromStaff Boolean  @default(false) @map("from_staff")
+  body      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  ticket SupportTicket @relation(fields: [ticketId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  @@index([ticketId, createdAt])
+  @@map("ticket_messages")
+}
+
+model CmsPage {
+  id           String       @id @default(uuid()) @db.Uuid
+  tenantId     String       @map("tenant_id") @db.Uuid
+  slug         String
+  title        String
+  /// A small, safe Markdown subset (src/lib/content/markdown.ts), stored as written.
+  body         String
+  audience     PageAudience @default(public)
+  published    Boolean      @default(false)
+  showInFooter Boolean      @default(false) @map("show_in_footer")
+  sortOrder    Int          @default(100) @map("sort_order")
+  updatedBy    String?      @map("updated_by") @db.Uuid
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime     @default(now()) @map("updated_at") @db.Timestamptz
+
+  @@unique([tenantId, slug])
+  @@map("cms_pages")
 }

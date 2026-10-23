@@ -117,6 +117,13 @@ const FEATURE_LIST: Array<{ key: Exclude<Feature, 'donations'>; label: string; h
   { key: 'gallery', label: 'Gallery', hint: 'Photo albums from events and batches.' },
   { key: 'publicLanding', label: 'Public front page', hint: 'A signed-out page on the college’s address. The directory stays behind sign-in either way.' },
   { key: 'whatsapp', label: 'WhatsApp messages', hint: 'A WhatsApp channel for staff messages. The college’s Business account is connected separately.' },
+  { key: 'groups', label: 'Groups and chapters', hint: 'Chapters by city and interest groups, each with a noticeboard and leads.' },
+  { key: 'feed', label: 'Community feed', hint: 'Short posts from alumni. Needs someone at the college to look at reports.' },
+  { key: 'businesses', label: 'Business directory', hint: 'Alumni businesses, reviewed before they appear.' },
+  { key: 'showcase', label: 'Showcase', hint: 'Prominent alumni, achievements and success stories, with the featured person’s agreement.' },
+  { key: 'helpdesk', label: 'Help desk', hint: 'A place for members to ask and give feedback. Read only by the college.' },
+  { key: 'pages', label: 'College pages', hint: 'About, a director’s message and other pages the college edits itself.' },
+  { key: 'invites', label: 'Invitations', hint: 'Members invite batchmates who have not registered, within a weekly limit.' },
 ];
 
 const LABEL: Record<Feature, string> = {
@@ -151,14 +158,22 @@ const ENVELOPE: Record<Plan, Record<Feature, boolean>> = {
   trial: {
     directory: true, connections: true, events: true, jobs: true, mentorship: true,
     donations: false, gallery: true, news: true, whatsapp: false, publicLanding: true,
+    // The light community modules: nothing here needs a moderator to be
+    // appointed before it is safe to switch on.
+    groups: false, feed: false, businesses: false, showcase: false,
+    helpdesk: true, pages: true, invites: true,
   },
   standard: {
     directory: true, connections: true, events: true, jobs: true, mentorship: true,
     donations: false, gallery: false, news: false, whatsapp: false, publicLanding: true,
+    groups: true, feed: false, businesses: false, showcase: false,
+    helpdesk: true, pages: true, invites: true,
   },
   institution: {
     directory: true, connections: true, events: true, jobs: true, mentorship: true,
     donations: true, gallery: true, news: true, whatsapp: true, publicLanding: true,
+    groups: true, feed: true, businesses: true, showcase: true,
+    helpdesk: true, pages: true, invites: true,
   },
 };
 

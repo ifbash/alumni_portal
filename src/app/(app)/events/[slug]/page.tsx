@@ -1,13 +1,16 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { Clock, Images, MapPin, Ticket, Video } from 'lucide-react';
+import { Clock, Images, Info, MapPin, Ticket, Users, Video } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap, can } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
 import { getDepartments, getEventBySlug, getEvents } from '@/lib/data/repo';
 import { getAlbumPhotos, getAlbums } from '@/lib/data/content';
+import { getGroupBySlug } from '@/lib/data/groups';
+import { eventKindLabel } from '@/lib/community';
 import {
+  Alert,
   Breadcrumbs,
   ButtonLink,
   Card,
@@ -95,7 +98,13 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
     : null;
 
   const seats = seatStatus(event);
-  const online = isOnlineVenue(event.venue);
+  // An event states how it is held; older rows that do not are read from the venue, as before.
+  const online = event.mode ? event.mode === 'online' : isOnlineVenue(event.venue);
+  const hybrid = event.mode === 'hybrid';
+  const heldOnline = online || hybrid;
+  const group = event.groupSlug && pack.features.groups ? getGroupBySlug(session, event.groupSlug) : null;
+  const batchPage =
+    event.kind === 'reunion' && event.batchYear && pack.features.directory ? `/directory/batch/${event.batchYear}` : null;
   const paragraphs = (event.description ?? '').split(/\n{2,}/).filter(Boolean);
   const when = whenLine(event, locale, timeZone);
   const where = event.venue ?? 'Venue to be announced';
@@ -132,10 +141,15 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
   const albumCover = album ? (album.coverImage ?? albumPhotos[0]?.url ?? null) : null;
   const heroImage = isPast ? (albumCover ?? event.coverImage) : event.coverImage;
 
-  type State = 'past' | 'draft' | 'organiser' | 'registered' | 'full' | 'open';
+  type State = 'past' | 'draft' | 'proposal' | 'organiser' | 'registered' | 'full' | 'open';
+  // A proposal is not a draft the organisers are holding: it is something a
+  // member sent in and is waiting to hear about.
+  const proposal = !canManage && event.reviewState !== 'approved';
   const state: State = isPast
     ? 'past'
-    : !event.published
+    : proposal
+      ? 'proposal'
+      : !event.published
       ? 'draft'
       : !canRegister
         ? 'organiser'
@@ -165,7 +179,8 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
         <BandChip>{event.studentEligible ? 'Alumni and final-year students' : 'Alumni and faculty'}</BandChip>
       )}
       {isPast ? null : <BandChip>{event.ticketPrice > 0 ? `${money(event.ticketPrice)} per person` : 'Free'}</BandChip>}
-      {online ? <BandChip>Online</BandChip> : null}
+      {event.kind !== 'other' ? <BandChip>{eventKindLabel(event.kind)}</BandChip> : null}
+      {online ? <BandChip>Online</BandChip> : hybrid ? <BandChip>In person and online</BandChip> : null}
     </>
   );
 
@@ -250,6 +265,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
   const cardTitle: Record<State, string> = {
     past: pastLine,
     draft: 'Draft',
+    proposal: 'Your proposal',
     organiser: 'Organiser view',
     registered: 'You are going',
     full: 'Register',
@@ -297,6 +313,12 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
               Photos from the day appear here when the {office} files them.
             </p>
           )
+        ) : state === 'proposal' ? (
+          <p className="text-sm text-secondary">
+            {event.reviewState === 'pending'
+              ? `The ${office} will decide, and you are told either way. Until then only you and the people who run events can see it.`
+              : 'This was not approved. The note below says why; you can put a changed version forward.'}
+          </p>
         ) : state === 'draft' ? (
           <div className="space-y-3">
             <p className="text-sm text-secondary">Draft — only organisers can see this. Publish it from Manage events.</p>
@@ -360,6 +382,20 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
 
       {hero}
 
+      {proposal ? (
+        <Alert
+          tone={event.reviewState === 'rejected' ? 'warning' : 'neutral'}
+          icon={<Info className="size-4 text-brand-fg" />}
+          title={event.reviewState === 'rejected' ? 'This proposal was not approved' : `Waiting for the ${office}`}
+        >
+          {event.reviewState === 'rejected' && event.moderationNote ? (
+            <p>{event.moderationNote}</p>
+          ) : (
+            <p>You put this forward. It appears for other members once it is approved.</p>
+          )}
+        </Alert>
+      ) : null}
+
       <div className="grid grid-cols-1 gap-gutter lg:grid-cols-[minmax(0,1fr)_22rem]">
         <aside
           aria-label={state === 'past' ? 'After the event' : 'Registration'}
@@ -388,6 +424,27 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
         </aside>
 
         <div className="min-w-0 space-y-8 lg:col-start-1 lg:row-start-1">
+          {group || batchPage ? (
+            <ul className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+              {group ? (
+                <li>
+                  <Link href={`/groups/${group.slug}`} className="link inline-flex min-h-11 items-center gap-2">
+                    <Users className="size-4 text-muted" aria-hidden="true" />
+                    Hosted by {group.name}
+                  </Link>
+                </li>
+              ) : null}
+              {batchPage ? (
+                <li>
+                  <Link href={batchPage} className="link inline-flex min-h-11 items-center gap-2">
+                    <Users className="size-4 text-muted" aria-hidden="true" />
+                    See the batch of {event.batchYear}
+                  </Link>
+                </li>
+              ) : null}
+            </ul>
+          ) : null}
+
           {paragraphs.length ? (
             <Section title="About this event">
               <div className="max-w-prose space-y-4 text-md leading-relaxed text-secondary">
@@ -464,6 +521,21 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
                       </ButtonLink>
                     ) : null}
                   </div>
+
+                  {heldOnline ? (
+                    <div className="space-y-2 border-t border-line pt-4">
+                      <p className="text-sm font-medium">Joining online</p>
+                      {event.meetingUrl ? (
+                        <ButtonLink href={event.meetingUrl} target="_blank" rel="noreferrer noopener" className="min-h-11">
+                          <Video className="size-4" aria-hidden="true" />
+                          Open the meeting link
+                          <span className="sr-only"> (opens in a new tab)</span>
+                        </ButtonLink>
+                      ) : (
+                        <p className="text-sm text-secondary">The link is shown here once you have registered.</p>
+                      )}
+                    </div>
+                  ) : null}
 
                   {event.published ? (
                     <div className="space-y-2 border-t border-line pt-4">

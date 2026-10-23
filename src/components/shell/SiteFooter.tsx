@@ -5,6 +5,7 @@ import { Logo } from '@/components/brand/Logo';
 import { PoweredBy } from './PoweredBy';
 import { hasGetInvolved } from './SiteHeader';
 import { rollNumber } from '@/lib/branding/copy';
+import { getFooterPages } from '@/lib/data/pages';
 import { yearIn } from '@/lib/format';
 import type { BrandPack } from '@/lib/branding/pack';
 
@@ -53,6 +54,8 @@ export function SiteFooter({ pack }: { pack: BrandPack }) {
     ...(features.events && features.publicLanding ? [{ label: 'Events', href: '/campus-events' }] : []),
     ...(hasGetInvolved(features) ? [{ label: 'Get involved', href: '/#get-involved' }] : []),
     { label: 'About the portal', href: '/about' },
+    // Public pages the college wrote itself and flagged for the footer.
+    ...(features.pages ? getFooterPages().map((p) => ({ label: p.title, href: `/p/${p.slug}` })) : []),
   ];
 
   const help: Array<{ label: string; href: string }> = [

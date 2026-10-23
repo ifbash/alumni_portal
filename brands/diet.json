@@ -94,7 +94,14 @@
     "gallery": true,
     "news": true,
     "whatsapp": false,
-    "publicLanding": true
+    "publicLanding": true,
+    "groups": true,
+    "feed": true,
+    "businesses": true,
+    "showcase": true,
+    "helpdesk": true,
+    "pages": true,
+    "invites": true
   },
 
   "locale": {

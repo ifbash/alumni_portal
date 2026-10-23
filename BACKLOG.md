@@ -7,8 +7,8 @@ only "what's next", and it changes weekly. Keep them separate.
 
 **Where the project actually is.** The schema, the isolation model, the
 capability matrix, the projection layer, the verification matcher, the branding
-engine and the design system are written. The front end is finished: 78 pages,
-39 route handlers, every interactive control wired to a guarded endpoint. What
+engine and the design system are written. The front end is finished: 105 pages,
+64 route files, every interactive control wired to a guarded endpoint. What
 is missing is everything between those endpoints and a real database — plus the
 tests that would prove any of it holds.
 
@@ -201,21 +201,22 @@ reads it.
 
 ## Test debt
 
-Cross-cutting and overdue. Vitest is installed with **zero test files**;
-`npm test` currently exits non-zero because there is nothing to run. Playwright
-is not installed.
+Cross-cutting. Vitest runs 22 files and over 800 tests (permissions, projection,
+the matcher, branding, route policy, the community modules, and RLS against
+PGlite). Playwright runs the permission matrix and the body-level leak specs
+against a production build. What is left is below.
 
-- [ ] **Playwright permission suite.** For each of the nine roles, assert the
+- [x] **Playwright permission suite.** For each of the nine roles, assert the
       expected status on every route and every API. This is the regression net
       that stops a refactor quietly widening access, and it is the only thing
       that would catch a page which forgot to guard itself.
-- [ ] **Unit tests for `permissions.ts` and `guard.ts`** — the grant union, the
+- [x] **Unit tests for `permissions.ts` and `guard.ts`** — the grant union, the
       inactive-status refusal, and department scoping. Cheap, fast, and they
       pin the matrix against accidental edits.
-- [ ] **Unit tests for `projection.ts`** — that no tier below `privileged` can
+- [x] **Unit tests for `projection.ts`** — that no tier below `privileged` can
       emit `cgpa`, `placementStatus` or `rollNumber`, and that
       `releaseContact()` refuses on each of the four visibility settings.
-- [ ] **Convert the two manual harnesses to assertions.**
+- [x] **Convert the two manual harnesses to assertions.**
       `tests/matcher.manual.ts` and `tests/branding.manual.ts` print output a
       human reads. Their expectations should fail a build.
 - [ ] **Wire `npm run brand:check` into CI.** A customer's colours are data, and
@@ -249,6 +250,41 @@ The API and resolver are built (`src/app/api/admin/branding/route.ts`,
       `--button-primary-fg`.
 
 ---
+
+## Community modules
+
+Built and tested; see `docs/COMMUNITY.md`. What is left, in the order it matters.
+
+- [ ] **Persistence behind the community writes.** Posts, likes and reports; group
+      membership and join requests; event proposals and decisions; business
+      listings; showcase entries; invitations; tickets and their messages; pages.
+      The tables, constraints and grants are in `0002_community`; every handler
+      already validates, guards, limits and audits. Honour the grants: ticket
+      messages are insert-only, and groups, posts, businesses and showcase entries
+      are archived or declined, never deleted.
+- [ ] **Notifications for decisions.** A proposal approved or declined, a listing or
+      showcase entry decided, a join request waiting on a lead, a ticket answered.
+      Today each is visible on the member's own screens and nowhere else. Send them
+      through the queue to WhatsApp first, then email.
+- [ ] **Send invitations.** The row is recorded and capped at ten a week; the
+      message waits on the email provider, and the invitee needs a link that opens
+      `/claim` with their batch filled in.
+- [ ] **Decide whether staff may attest a member's consent to be featured.** The
+      curation form does, and the audit entry records who. A stricter reading of
+      DPDP purpose limitation requires the member to confirm in the portal.
+- [ ] **Comments on posts.** The feed has posts, likes and reports only.
+- [ ] **Custom-domain tenant mapping** (`alumni.diet.ac.in`). A `domains` list on the
+      brand pack and a base-domain check in `src/lib/host.ts`; today an unrecognised
+      custom host resolves to no tenant in database mode and 404s.
+- [ ] **Retrofit composite tenant foreign keys onto the `0001` tables**
+      (`docs/SECURITY.md`). The `0002` tables already have them.
+- [ ] **Retire or fix `scripts/smoke.ts`.** It judges by status alone, so it reports
+      thirteen "LEAK"s that are the documented `200` refusals (`STATUS-CODES.md`
+      §5.1, §5.2) and that `e2e/console-refusals.spec.ts` proves withhold their
+      content. It also needs a dev server for the OTP echo. The Playwright suite
+      covers everything it does.
+- [ ] **Staff tables on a phone.** At 390px a console table scrolls inside its card
+      and hides its right-hand columns. Low priority for a console.
 
 ## Blocked on the college
 

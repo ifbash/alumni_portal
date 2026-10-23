@@ -6,6 +6,7 @@ import { getTenantBrand } from '@/lib/tenant';
 import { StudentHome } from './StudentHome';
 import { MemberHome } from './MemberHome';
 import { PendingHome } from './PendingHome';
+import { CommunityStrip } from '@/components/community/CommunityStrip';
 
 /**
  * The portal home.
@@ -42,6 +43,13 @@ export default async function DashboardPage() {
   const isStudent = session.roles.some((r) => r.role === 'student');
 
   if (session.roles.length === 0) return <PendingHome session={session} pack={pack} />;
-  if (isStudent) return <StudentHome session={session} pack={pack} />;
-  return <MemberHome session={session} pack={pack} />;
+  // The home for the cohort, then a short strip of what is happening in the
+  // community. The strip draws nothing when the college has the modules off
+  // or has nothing to show, so it never leaves an empty box.
+  return (
+    <>
+      {isStudent ? <StudentHome session={session} pack={pack} /> : <MemberHome session={session} pack={pack} />}
+      <CommunityStrip session={session} pack={pack} />
+    </>
+  );
 }

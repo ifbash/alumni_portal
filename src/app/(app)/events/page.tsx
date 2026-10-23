@@ -1,19 +1,20 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { CalendarDays, Ticket } from 'lucide-react';
+import { CalendarDays, CalendarPlus, Ticket } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
 import { require as requireCap, can } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
-import { getDepartments, getEvents } from '@/lib/data/repo';
+import { getDepartments, getEvents, getMyEventProposals } from '@/lib/data/repo';
 import { getAlbumPhotos, getAlbums } from '@/lib/data/content';
-import { ButtonLink, ChipNav, EmptyState, PageHeader, Tabs, type TabItem } from '@/components/ui';
+import { Badge, ButtonLink, ChipNav, EmptyState, PageHeader, Tabs, type TabItem } from '@/components/ui';
+import { EVENT_KINDS, EVENT_KIND_VALUES, REVIEW_STATE_LABELS } from '@/lib/community';
 import { isContributed } from '@/components/content';
 import { isOnlineVenue } from '@/lib/event-status';
 import { displayNow } from '@/lib/format';
 import { viewerBatchYear, viewerBranch } from '@/lib/identity';
 import { mailto } from '@/lib/mailto';
-import type { EventItem } from '@/lib/data/types';
+import type { EventItem, EventKind } from '@/lib/data/types';
 import { EventCard, NextUpCard, PastEventCard, eventAction, type PastAlbum } from './EventCard';
 import { dayLabel, whenLine } from './calendar';
 
@@ -32,10 +33,11 @@ export const metadata: Metadata = { title: 'Events' };
 
 type When = 'upcoming' | 'past';
 
-function eventsHref(when: When, branch: string | null): string {
+function eventsHref(when: When, branch: string | null, kind: EventKind | null = null): string {
   const q = new URLSearchParams();
   if (when === 'past') q.set('when', 'past');
   if (branch) q.set('branch', branch);
+  if (kind) q.set('type', kind);
   const s = q.toString();
   return s ? `/events?${s}` : '/events';
 }
@@ -106,11 +108,14 @@ export default async function EventsPage({
   const codes = getDepartments().map((d) => d.code);
   const rawBranch = (Array.isArray(params.branch) ? params.branch[0] : params.branch)?.trim().toUpperCase() ?? '';
   const branch = codes.includes(rawBranch) ? rawBranch : null;
-  const list = branch
-    ? getEvents(session, { when, includeDrafts: canManage, department: branch })
-    : when === 'past'
-      ? past
-      : upcoming;
+  const rawKind = (Array.isArray(params.type) ? params.type[0] : params.type)?.trim().toLowerCase() ?? '';
+  const kind = (EVENT_KIND_VALUES as readonly string[]).includes(rawKind) ? (rawKind as EventKind) : null;
+  const list =
+    branch || kind
+      ? getEvents(session, { when, includeDrafts: canManage, department: branch ?? undefined, kind: kind ?? undefined })
+      : when === 'past'
+        ? past
+        : upcoming;
 
   const locale = pack.locale;
   const office = pack.copy.officeName;
@@ -119,8 +124,8 @@ export default async function EventsPage({
   const tickets = upcoming.filter((e) => e.viewerRegistration && e.published);
 
   const tabs: TabItem[] = [
-    { label: 'Upcoming', href: eventsHref('upcoming', branch), count: upcoming.length, active: when === 'upcoming' },
-    { label: 'Past', href: eventsHref('past', branch), count: past.length, active: when === 'past' },
+    { label: 'Upcoming', href: eventsHref('upcoming', branch, kind), count: upcoming.length, active: when === 'upcoming' },
+    { label: 'Past', href: eventsHref('past', branch, kind), count: past.length, active: when === 'past' },
   ];
 
   // "All · Mine: CSE · ECE …" — only branches that have an event in this tab.
@@ -128,11 +133,23 @@ export default async function EventsPage({
   const tabList = when === 'past' ? past : upcoming;
   const withEvents = codes.filter((c) => c !== mine && tabList.some((e) => e.departmentCode === c));
   const chips = [
-    { label: 'All', href: eventsHref(when, null), active: branch === null },
-    ...(mine ? [{ label: `Mine: ${mine}`, href: eventsHref(when, mine), active: branch === mine }] : []),
-    ...withEvents.map((c) => ({ label: c, href: eventsHref(when, c), active: branch === c })),
+    { label: 'All', href: eventsHref(when, null, kind), active: branch === null },
+    ...(mine ? [{ label: `Mine: ${mine}`, href: eventsHref(when, mine, kind), active: branch === mine }] : []),
+    ...withEvents.map((c) => ({ label: c, href: eventsHref(when, c, kind), active: branch === c })),
   ];
   const showChips = chips.length > 2 || branch !== null;
+
+  // Reunions, meetups, webinars: only the kinds this tab has an event of.
+  const kindsPresent = EVENT_KINDS.filter((k) => tabList.some((e) => e.kind === k.value));
+  const kindChips = [
+    { label: 'Every type', href: eventsHref(when, branch, null), active: kind === null },
+    ...kindsPresent.map((k) => ({ label: k.plural, href: eventsHref(when, branch, k.value), active: kind === k.value })),
+  ];
+  const showKindChips = kindsPresent.length > 1 || kind !== null;
+
+  // Members who can put an event forward, and what they have already put forward.
+  const canPropose = can(session, 'event.propose');
+  const proposals = canPropose ? getMyEventProposals(session) : [];
 
   const lead = when === 'upcoming' ? leadEvent(list) : null;
   const rest = lead ? list.filter((e) => e.id !== lead.id) : list;
@@ -167,7 +184,15 @@ export default async function EventsPage({
       <PageHeader
         eyebrow="Events"
         title="Events"
-        description={`Reunions, department sessions and talks from ${pack.copy.shortName}.`}
+        description={`Reunions, meetups, webinars and talks from ${pack.copy.shortName}.`}
+        actions={
+          canPropose ? (
+            <ButtonLink href="/events/propose" variant="secondary">
+              <CalendarPlus className="size-4" aria-hidden="true" />
+              Propose an event
+            </ButtonLink>
+          ) : undefined
+        }
       />
 
       {canManage ? (
@@ -207,6 +232,24 @@ export default async function EventsPage({
         </section>
       ) : null}
 
+      {proposals.length > 0 ? (
+        <section aria-labelledby="your-proposals" className="space-y-2">
+          <h2 id="your-proposals" className="text-sm font-semibold">
+            Events you put forward
+          </h2>
+          <ul className="divide-y divide-line rounded-lg border border-line bg-surface-raised">
+            {proposals.map((e) => (
+              <li key={e.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2.5">
+                <Link href={`/events/${e.slug}`} className="link-quiet min-h-11 min-w-0 flex-1 py-2 font-medium">
+                  {e.title}
+                </Link>
+                <Badge tone={e.reviewState === 'rejected' ? 'warning' : 'neutral'}>{REVIEW_STATE_LABELS[e.reviewState]}</Badge>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       {lead ? (
         <NextUpCard
           event={lead}
@@ -219,6 +262,7 @@ export default async function EventsPage({
 
       <div className="space-y-3">
         <Tabs items={tabs} ariaLabel="Event periods" />
+        {showKindChips ? <ChipNav items={kindChips} ariaLabel="Type of event" /> : null}
         {showChips ? <ChipNav items={chips} ariaLabel="Branch" /> : null}
       </div>
 

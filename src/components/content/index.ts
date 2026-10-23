@@ -14,3 +14,4 @@ export { EventSummary, EventDateBlock, SeatBadge, eventMetaLine, type EventSumma
 export { StoryCard, type StoryCardData } from './StoryCard';
 export { AlbumCard, parseContributor, isContributed, type AlbumCardData } from './AlbumCard';
 export { JobSummary, closesLabel, posterLine, type JobSummaryData } from './JobSummary';
+export { RichText } from './RichText';

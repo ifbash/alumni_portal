@@ -34,7 +34,16 @@ export interface NavItem {
   feature?: Feature;
   /** Hard exclusions that no capability can override. See CLAUDE.md. */
   hideForStudents?: boolean;
-  badge?: 'connections' | 'verification' | 'notifications';
+  badge?:
+    | 'connections'
+    | 'verification'
+    | 'notifications'
+    | 'helpdesk'
+    | 'reports'
+    | 'businesses'
+    | 'showcase'
+    | 'proposals'
+    | 'group-requests';
   description?: string;
   /** A short qualifier rendered after the label, e.g. "Members off". */
   tag?: string;
@@ -44,7 +53,8 @@ export type IconName =
   | 'home' | 'users' | 'handshake' | 'calendar' | 'briefcase' | 'heart'
   | 'user' | 'settings' | 'shield' | 'upload' | 'megaphone' | 'palette'
   | 'scroll' | 'building' | 'graduation' | 'refresh' | 'file-check' | 'chart'
-  | 'newspaper' | 'image' | 'bell' | 'clipboard';
+  | 'newspaper' | 'image' | 'bell' | 'clipboard'
+  | 'users-round' | 'messages' | 'store' | 'award' | 'life-buoy' | 'mail-plus' | 'file-text';
 
 export interface NavGroup {
   label: string;
@@ -87,10 +97,36 @@ const MEMBER_NAV: NavGroup[] = [
     ],
   },
   {
+    // Where members meet each other beyond the directory. Each is a module
+    // the college switches on; a college with none of them has no group.
+    label: 'Network',
+    items: [
+      {
+        label: 'Groups',
+        href: '/groups',
+        icon: 'users-round',
+        feature: 'groups',
+        badge: 'group-requests',
+        description: 'Chapters by city and groups by interest',
+      },
+      {
+        label: 'Community',
+        href: '/community',
+        icon: 'messages',
+        feature: 'feed',
+        description: 'Updates, questions and opportunities from alumni',
+      },
+      { label: 'Businesses', href: '/businesses', icon: 'store', feature: 'businesses', description: 'Businesses run by alumni' },
+      { label: 'Showcase', href: '/showcase', icon: 'award', feature: 'showcase', description: 'Prominent alumni, achievements and stories' },
+    ],
+  },
+  {
     label: 'Your account',
     items: [
       { label: 'My profile', href: '/profile', icon: 'user' },
       { label: 'Notifications', href: '/notifications', icon: 'bell', badge: 'notifications' },
+      { label: 'Invite batchmates', href: '/invite', icon: 'mail-plus', feature: 'invites', description: 'Bring in people who have not registered' },
+      { label: 'Help and feedback', href: '/help', icon: 'life-buoy', feature: 'helpdesk' },
       { label: 'Settings', href: '/settings', icon: 'settings' },
     ],
   },
@@ -141,8 +177,13 @@ const ADMIN_NAV: NavGroup[] = [
         // Mirrors `events/page.tsx`: college-wide or department organisers.
         anyOf: ['event.create.any', 'event.create.department'],
         feature: 'events',
+        badge: 'proposals',
       },
       { label: 'Jobs', href: '/admin/jobs', icon: 'briefcase', capability: 'job.moderate', feature: 'jobs' },
+      { label: 'Groups', href: '/admin/groups', icon: 'users-round', capability: 'group.manage', feature: 'groups' },
+      { label: 'Community', href: '/admin/community', icon: 'messages', capability: 'post.moderate', feature: 'feed', badge: 'reports' },
+      { label: 'Businesses', href: '/admin/businesses', icon: 'store', capability: 'business.moderate', feature: 'businesses', badge: 'businesses' },
+      { label: 'Showcase', href: '/admin/showcase', icon: 'award', capability: 'showcase.manage', feature: 'showcase', badge: 'showcase' },
       {
         label: 'Messages',
         href: '/admin/comms',
@@ -176,6 +217,8 @@ const ADMIN_NAV: NavGroup[] = [
     items: [
       { label: 'Audit log', href: '/admin/audit', icon: 'scroll', capability: 'audit.read' },
       { label: 'Data requests', href: '/admin/data-requests', icon: 'file-check', capability: 'data_request.manage' },
+      { label: 'Help desk', href: '/admin/helpdesk', icon: 'life-buoy', capability: 'helpdesk.manage', feature: 'helpdesk', badge: 'helpdesk' },
+      { label: 'Pages', href: '/admin/pages', icon: 'file-text', capability: 'page.manage', feature: 'pages' },
       { label: 'Branding', href: '/admin/branding', icon: 'palette', capability: 'tenant.configure' },
       { label: 'Settings', href: '/admin/settings', icon: 'settings', capability: 'tenant.configure' },
     ],

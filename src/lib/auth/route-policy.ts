@@ -220,6 +220,12 @@ export const ROUTE_POLICY: readonly RouteRule[] = [
   { prefix: '/about', requiresSession: false, refuse: 'redirect', why: 'Public.' },
   { prefix: '/privacy', requiresSession: false, refuse: 'redirect', why: 'The DPDP notice has to be readable before anyone signs up.' },
   { prefix: '/terms', requiresSession: false, refuse: 'redirect', why: 'Public.' },
+  {
+    prefix: '/p',
+    requiresSession: false,
+    refuse: 'redirect',
+    why: "Pages the college edits itself. A page marked members-only checks the session itself and sends an anonymous visitor to sign in; a public page (About, a director's message) is readable by anyone.",
+  },
 
   // ---- Public: the front door ------------------------------------
   { prefix: '/login', requiresSession: false, refuse: 'redirect', why: 'The sign-in screen. Gating it is a redirect loop.' },
@@ -250,6 +256,12 @@ export const ROUTE_POLICY: readonly RouteRule[] = [
   { prefix: '/gallery', requiresSession: true, refuseVendorOnly: true, refuse: 'redirect', why: 'Photographs of identifiable students and alumni, credited to named contributors.' },
   { prefix: '/giving', requiresSession: true, refuseVendorOnly: true, refuse: 'redirect', why: 'Donations. Students never see it at all; the page enforces that.' },
   { prefix: '/notifications', requiresSession: true, refuseVendorOnly: true, refuse: 'redirect', why: 'Member-to-member notifications — requests and replies that name the sender.' },
+  { prefix: '/groups', requiresSession: true, refuseVendorOnly: true, refuse: 'redirect', why: 'Chapters and interest groups list their members and carry their own noticeboard.' },
+  { prefix: '/community', requiresSession: true, refuseVendorOnly: true, refuse: 'redirect', why: 'The feed: posts by named alumni, some written inside a group.' },
+  { prefix: '/businesses', requiresSession: true, refuseVendorOnly: true, refuse: 'redirect', why: "Alumni businesses, each naming its owner and, with the owner's say-so, a way to reach them." },
+  { prefix: '/showcase', requiresSession: true, refuseVendorOnly: true, refuse: 'redirect', why: 'Prominent alumni, achievements and success stories — named people and their work.' },
+  { prefix: '/help', requiresSession: true, refuseVendorOnly: true, refuse: 'redirect', why: "The help desk. A member's own tickets describe their own account, and the vendor reads none of them." },
+  { prefix: '/invite', requiresSession: true, refuseVendorOnly: true, refuse: 'redirect', why: "Inviting batchmates by name and address — a list of people who have not agreed to anything yet." },
   { prefix: '/profile', requiresSession: true, refuse: 'redirect', why: "The viewer's own record. Open to the vendor: it is theirs, and shows nobody else." },
   { prefix: '/settings', requiresSession: true, refuse: 'redirect', why: 'Privacy, consent, sign-out and the DPDP export/deletion controls. Open to the vendor for the same reason as /profile.' },
 
@@ -309,6 +321,13 @@ export const ROUTE_POLICY: readonly RouteRule[] = [
   { prefix: '/api/gallery', requiresSession: true, refuseVendorOnly: true, refuse: 'json', why: 'No handler yet. Ruled so the first one is born refusing the vendor.' },
   { prefix: '/api/donations', requiresSession: true, refuseVendorOnly: true, refuse: 'json', why: "The /giving module's handler." },
   { prefix: '/api/notifications', requiresSession: true, refuseVendorOnly: true, refuse: 'json', why: 'Member-to-member notifications as JSON.' },
+  { prefix: '/api/groups', requiresSession: true, refuseVendorOnly: true, refuse: 'json', why: 'Joining and leaving groups, and what is posted inside them.' },
+  { prefix: '/api/posts', requiresSession: true, refuseVendorOnly: true, refuse: 'json', why: 'The community feed as JSON.' },
+  { prefix: '/api/businesses', requiresSession: true, refuseVendorOnly: true, refuse: 'json', why: 'The business directory as JSON.' },
+  { prefix: '/api/showcase', requiresSession: true, refuseVendorOnly: true, refuse: 'json', why: 'Achievement submissions as JSON.' },
+  { prefix: '/api/helpdesk', requiresSession: true, refuseVendorOnly: true, refuse: 'json', why: "A member's own tickets as JSON." },
+  { prefix: '/api/feedback', requiresSession: true, refuseVendorOnly: true, refuse: 'json', why: 'The feedback button. Filed as a help-desk ticket, which the vendor does not read.' },
+  { prefix: '/api/invitations', requiresSession: true, refuseVendorOnly: true, refuse: 'json', why: 'Invitations by address.' },
 ];
 
 /** What an unmatched path resolves to. See the note on ROUTE_POLICY. */

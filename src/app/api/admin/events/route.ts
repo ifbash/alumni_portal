@@ -3,6 +3,8 @@ import { getSession } from '@/lib/auth/session';
 import { AuthzError, can, canInDepartment, require as requireCap, requireSession } from '@/lib/auth/guard';
 import { getTenantBrand } from '@/lib/tenant';
 import { getDepartments, getEvents } from '@/lib/data/repo';
+import { getGroupBySlug } from '@/lib/data/groups';
+import { checkEventKindFields, eventKindShape } from '@/lib/schemas/events';
 import { logAudit } from '@/lib/audit/log';
 import { clientIp, draftId, fail, fixtureWrite, HttpError, json, limit, readJson } from '../../_lib/http';
 
@@ -75,6 +77,7 @@ const Body = z
       .optional(),
     /** Absent means college-wide — and only `event.create.any` may mean it. */
     departmentCode: z.string().trim().max(12).optional(),
+    ...eventKindShape,
     startsAt: instant('That start date and time could not be read.'),
     endsAt: instant('That end date and time could not be read.').optional(),
     audience: z.enum(['both', 'alumni_only']).default('both'),
@@ -99,6 +102,8 @@ const Body = z
     }),
   })
   .superRefine((value, ctx) => {
+    checkEventKindFields(value, ctx);
+
     if (value.endsAt && Date.parse(value.endsAt) <= Date.parse(value.startsAt)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -212,6 +217,13 @@ export async function POST(request: Request) {
       });
     }
 
+    // A group an organiser names has to exist and be one they may see.
+    if (body.groupSlug && !getGroupBySlug(session, body.groupSlug)) {
+      throw new HttpError(422, 'invalid_input', 'That group does not exist.', {
+        fieldErrors: { groupSlug: 'Pick a group from the list, or leave it blank.' },
+      });
+    }
+
     const slug = body.slug ?? slugify(body.title);
 
     // Drafts included where the viewer can see them. A published event and
@@ -247,6 +259,13 @@ export async function POST(request: Request) {
       ticketPrice: body.ticketed ? body.ticketPrice : 0,
       published: body.publish,
       registeredCount: 0,
+      kind: body.kind,
+      mode: body.mode,
+      meetingUrl: body.meetingUrl ?? null,
+      batchYear: body.batchYear ?? null,
+      groupSlug: body.groupSlug ?? null,
+      // Staff-created events are approved from the start; only a member's proposal waits.
+      reviewState: 'approved' as const,
     };
 
     await logAudit({

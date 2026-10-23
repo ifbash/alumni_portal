@@ -473,26 +473,32 @@ export function getConnectionQuota(session: Session): ConnectionQuota {
 
 export function getEvents(
   session: Session | null,
-  opts: { when?: 'upcoming' | 'past' | 'all'; department?: string; includeDrafts?: boolean } = {},
+  opts: {
+    when?: 'upcoming' | 'past' | 'all';
+    department?: string;
+    includeDrafts?: boolean;
+    kind?: EventItem['kind'];
+    /** One chapter's or group's events, by slug. */
+    group?: string;
+    /** A reunion's batch. */
+    batchYear?: number;
+  } = {},
 ): EventItem[] {
   const now = SEED_NOW.toISOString();
   const canSeeDrafts = Boolean(opts.includeDrafts && session && can(session, 'event.create.any'));
 
   return EVENTS.filter((e) => {
-    if (!e.published && !canSeeDrafts) return false;
+    if (!eventVisibleTo(e, session, canSeeDrafts)) return false;
 
-    // An alumni-only event is not merely hidden from students in the
-    // list — it is not addressable by them anywhere.
-    const isStudent = session?.roles.some((r) => r.role === 'student') ?? false;
-    if (e.alumniOnly && isStudent) return false;
-    if (isStudent && !e.studentEligible) return false;
-
+    if (opts.kind && e.kind !== opts.kind) return false;
+    if (opts.group && e.groupSlug !== opts.group) return false;
+    if (opts.batchYear && e.batchYear !== opts.batchYear) return false;
     if (opts.department && e.departmentCode && e.departmentCode !== opts.department) return false;
     if (opts.when === 'upcoming') return e.startsAt >= now;
     if (opts.when === 'past') return e.startsAt < now;
     return true;
   })
-    .map((e) => withViewerRegistration(e, session))
+    .map((e) => shapeEvent(e, session))
     .sort((a, b) =>
       opts.when === 'past' ? b.startsAt.localeCompare(a.startsAt) : a.startsAt.localeCompare(b.startsAt),
     );
@@ -501,22 +507,65 @@ export function getEvents(
 export function getEventBySlug(session: Session | null, slug: string): EventItem | null {
   const e = EVENTS.find((x) => x.slug === slug);
   if (!e) return null;
-  const isStudent = session?.roles.some((r) => r.role === 'student') ?? false;
-  if (e.alumniOnly && isStudent) return null;
-  // Same rule as the list: an event not open to students is not addressable
-  // by one, by slug or any other way.
-  if (isStudent && !e.studentEligible) return null;
-  if (!e.published && !(session && can(session, 'event.create.any'))) return null;
-  return withViewerRegistration(e, session);
+  const canSeeDrafts = Boolean(session && can(session, 'event.create.any'));
+  if (!eventVisibleTo(e, session, canSeeDrafts)) return null;
+  return shapeEvent(e, session);
 }
 
-function withViewerRegistration(e: EventItem, session: Session | null): EventItem {
-  if (!session) return { ...e, viewerRegistration: null };
-  const reg = EVENT_REGISTRATIONS.find((r) => r.eventId === e.id && r.memberId === session.memberId);
+/**
+ * Whether a viewer may know an event exists.
+ *
+ * An alumni-only event is not merely hidden from students in the list — it
+ * is not addressable by them anywhere. An event not open to students is not
+ * addressable by one either, by slug or any other way. And a member's
+ * proposal that nobody has approved is visible to the people who run events
+ * and to the member who proposed it: without the second, a proposal looks
+ * like it vanished the moment it was sent.
+ */
+function eventVisibleTo(e: EventItem, session: Session | null, canSeeDrafts: boolean): boolean {
+  const isStudent = session?.roles.some((r) => r.role === 'student') ?? false;
+  if (e.alumniOnly && isStudent) return false;
+  if (isStudent && !e.studentEligible) return false;
+  if (e.published) return true;
+  if (canSeeDrafts) return true;
+  return Boolean(session && e.proposedBy && e.proposedBy.id === session.memberId);
+}
+
+/**
+ * The event as this viewer is allowed to read it: their own registration,
+ * the join link only if they are registered (or run events), and the
+ * proposer re-narrowed to the viewer's tier rather than the seed's copy.
+ */
+function shapeEvent(e: EventItem, session: Session | null): EventItem {
+  const reg = session
+    ? EVENT_REGISTRATIONS.find((r) => r.eventId === e.id && r.memberId === session.memberId)
+    : undefined;
+  const organiser = Boolean(session && can(session, 'event.create.any'));
+  const proposer = e.proposedBy ? byId.get(e.proposedBy.id) : undefined;
+  const mayReadProposal = organiser || Boolean(session && e.proposedBy && e.proposedBy.id === session.memberId);
+
   return {
     ...e,
+    meetingUrl: reg || organiser ? e.meetingUrl : null,
+    proposedBy: mayReadProposal && proposer ? projectMemberSummary(proposer, session) : null,
+    moderationNote: mayReadProposal ? e.moderationNote : null,
     viewerRegistration: reg ? { id: reg.id, guests: reg.guests, checkedIn: Boolean(reg.checkedInAt) } : null,
   };
+}
+
+/** Proposals the viewer put forward and has not seen approved. */
+export function getMyEventProposals(session: Session): EventItem[] {
+  return EVENTS.filter((e) => e.proposedBy?.id === session.memberId && e.reviewState !== 'approved')
+    .map((e) => shapeEvent(e, session))
+    .sort((a, b) => b.startsAt.localeCompare(a.startsAt));
+}
+
+/** Proposals waiting on the alumni cell. Behind `event.create.any`. */
+export function getPendingEventProposals(session: Session): EventItem[] {
+  if (!can(session, 'event.create.any')) return [];
+  return EVENTS.filter((e) => e.reviewState === 'pending')
+    .map((e) => shapeEvent(e, session))
+    .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
 }
 
 export function getEventRegistrations(eventId: string): EventRegistration[] {

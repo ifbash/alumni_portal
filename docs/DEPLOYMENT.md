@@ -119,6 +119,16 @@ against `schema.prisma` — the generated column and the RLS policies have
 no Prisma representation. That drift is expected and is not a signal to
 run `migrate dev`.
 
+**`0002_community`** adds the community modules (eleven tables, the new event
+columns, row-level security on every new table, grants to `alumni_app`). It is
+applied after `0001` by `migrate deploy` with nothing extra to do, and it is
+tested on top of `0001` in `tests/rls-community.test.ts`. Two things differ
+from `0001` and are deliberate: its foreign keys to `members` and `groups` are
+composite `(id, tenant_id)` (so `members` gains `UNIQUE (id, tenant_id)`), and
+it grants no `DELETE` on groups, posts, businesses, showcase entries or
+tickets, and only `SELECT`/`INSERT` on ticket messages. Do not widen those
+grants to make a handler easier to write.
+
 ---
 
 ## 3. Environment

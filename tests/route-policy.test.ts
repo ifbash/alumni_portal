@@ -111,7 +111,11 @@ describe('the policy table', () => {
     // consoles; it is now also the member-community surfaces and their
     // API twins, a decision argued at the top of route-policy.ts. The
     // list is pinned exactly: if it grows again, the growth has to be a
-    // decision somebody took, not a line somebody added.
+    // decision somebody took, not a line somebody added. It grew once more
+    // with the community modules (groups, the feed, businesses, the
+    // showcase, the help desk and invitations): each names members to
+    // members or is a member's own correspondence, which is the same
+    // argument the rest of the list rests on.
     const paying = ROUTE_POLICY.filter(needsViewer).map((r) => r.prefix);
     expect(paying.sort()).toEqual(
       [
@@ -127,6 +131,12 @@ describe('the policy table', () => {
         '/gallery',
         '/giving',
         '/notifications',
+        '/groups',
+        '/community',
+        '/businesses',
+        '/showcase',
+        '/help',
+        '/invite',
         '/api/directory',
         '/api/members',
         '/api/connections',
@@ -136,6 +146,13 @@ describe('the policy table', () => {
         '/api/gallery',
         '/api/donations',
         '/api/notifications',
+        '/api/groups',
+        '/api/posts',
+        '/api/businesses',
+        '/api/showcase',
+        '/api/helpdesk',
+        '/api/feedback',
+        '/api/invitations',
       ].sort(),
     );
 
@@ -650,6 +667,12 @@ const MEMBER_COMMUNITY_PAGES = [
   '/gallery',
   '/giving',
   '/notifications',
+  '/groups',
+  '/community',
+  '/businesses',
+  '/showcase',
+  '/help',
+  '/invite',
 ] as const;
 
 /** Deeper paths under them, including the three that leaked by name. */
@@ -666,6 +689,10 @@ const MEMBER_COMMUNITY_DEEP = [
   '/news/in-memoriam-prof-narasimha-rao',
   '/gallery/cse-block-then-and-now',
   '/giving/library-modernisation',
+  '/groups/hyderabad-chapter',
+  '/businesses/nimbus-cloud-labs',
+  '/showcase/managing-director-semiconductor',
+  '/help/tickets/HD-1041',
 ] as const;
 
 /** The same content as JSON. `/api/news` and `/api/gallery` have no handler yet. */
@@ -684,6 +711,13 @@ const MEMBER_COMMUNITY_API = [
   '/api/gallery',
   '/api/donations',
   '/api/notifications',
+  '/api/groups',
+  '/api/posts',
+  '/api/businesses',
+  '/api/showcase',
+  '/api/helpdesk',
+  '/api/feedback',
+  '/api/invitations',
 ] as const;
 
 /** The account itself. Open to the vendor, and costing no lookup. */

@@ -40,6 +40,18 @@ const MEMBER_DATA: Capability[] = [
   'verification.review.department',
   'verification.override',
   'job.applicants.export',
+  // The community modules. Group rosters, help-desk tickets, business
+  // owners' contact details and moderation queues all name members.
+  'group.manage',
+  'post.create',
+  'post.moderate',
+  'event.propose',
+  'business.list',
+  'business.moderate',
+  'showcase.submit',
+  'showcase.manage',
+  'helpdesk.manage',
+  'page.manage',
 ];
 
 describe('platform_admin cannot reach member data', () => {

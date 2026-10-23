@@ -4,20 +4,27 @@ import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import {
+  Award,
   Briefcase,
   CalendarDays,
   Check,
   FileLock2,
+  FileText,
   HandHeart,
   Image as ImageIcon,
   Landmark,
+  LifeBuoy,
+  MailPlus,
   MessageCircle,
+  MessagesSquare,
   Newspaper,
   Palette,
   Search,
   Server,
+  Store,
   UserPlus,
   Users,
+  UsersRound,
   Globe,
 } from 'lucide-react';
 import { getSession } from '@/lib/auth/session';
@@ -112,6 +119,48 @@ function moduleCopy(pack: BrandPack): Record<Feature, { label: string; icon: Rea
       icon: <Globe className="size-4" />,
       on: 'A public page introduces the portal to visitors. It shows no member data.',
       off: 'Visitors go straight to sign-in.',
+    },
+    groups: {
+      label: 'Groups and chapters',
+      icon: <UsersRound className="size-4" />,
+      on: `Chapters by city and interest groups, each with a noticeboard. The ${office} appoints leads; students join interest groups only.`,
+      off: 'No groups or chapters are shown to members.',
+    },
+    feed: {
+      label: 'Community feed',
+      icon: <MessagesSquare className="size-4" />,
+      on: `Alumni post short updates, questions and opportunities. Anyone can report a post, and the ${office} can hide it.`,
+      off: 'No community feed is shown to members.',
+    },
+    businesses: {
+      label: 'Business directory',
+      icon: <Store className="size-4" />,
+      on: 'Alumni list their businesses. Each listing is reviewed before it is shown, and contact details appear only if the owner chose to share them.',
+      off: 'No business directory is shown to members.',
+    },
+    showcase: {
+      label: 'Showcase',
+      icon: <Award className="size-4" />,
+      on: `Prominent alumni, achievements and success stories. Entries about a member need their agreement, recorded by the ${office}.`,
+      off: 'No showcase is shown to members.',
+    },
+    helpdesk: {
+      label: 'Help desk',
+      icon: <LifeBuoy className="size-4" />,
+      on: `Members ask questions and send feedback. Only the ${office} reads tickets.`,
+      off: 'Members are pointed to the contact page instead.',
+    },
+    pages: {
+      label: 'College pages',
+      icon: <FileText className="size-4" />,
+      on: `The ${office} edits pages such as About and a director’s message, public or for members only.`,
+      off: 'No pages of the college’s own are shown.',
+    },
+    invites: {
+      label: 'Invitations',
+      icon: <MailPlus className="size-4" />,
+      on: 'Members invite batchmates who have not registered, up to ten a week.',
+      off: 'Members cannot send invitations.',
     },
   };
 }

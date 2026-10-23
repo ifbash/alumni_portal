@@ -22,8 +22,14 @@ import {
   findMemberById,
   getDepartments,
   getEvents,
+  getPendingEventProposals,
   getStats,
 } from '@/lib/data/repo';
+import { countGroupRequests } from '@/lib/data/groups';
+import { countReportedPosts } from '@/lib/data/feed';
+import { countPendingBusinesses } from '@/lib/data/businesses';
+import { countPendingShowcase } from '@/lib/data/showcase';
+import { countOpenTickets } from '@/lib/data/helpdesk';
 import { PaletteMount } from '@/components/directory/PaletteMount';
 import { dueStatus } from '@/app/(admin)/admin/data-requests/dpdp';
 import { can } from '@/lib/auth/guard';
@@ -38,6 +44,7 @@ import { ShellIdentity, TopBar } from './TopBar';
 import { MobileTabBar, type MobileTab } from './MobileTabBar';
 import { DemoRibbon } from './DemoRibbon';
 import { PoweredBy } from './PoweredBy';
+import { FeedbackButton } from '@/components/community/FeedbackButton';
 
 /**
  * The signed-in frame.
@@ -129,6 +136,20 @@ export async function AppShell({
   if (variant === 'admin' && can(session, 'data_request.manage')) {
     badges['overdue:/admin/data-requests'] = getDataRequests().filter((r) => dueStatus(r).overdue).length;
   }
+  // The community modules' queues, each behind its own capability and
+  // module switch. The count functions return 0 to anyone without the
+  // capability, so this is a second lock rather than the only one.
+  if (variant === 'admin') {
+    if (pack.features.helpdesk) badges.helpdesk = countOpenTickets(session).open;
+    if (pack.features.feed) badges.reports = countReportedPosts(session);
+    if (pack.features.businesses) badges.businesses = countPendingBusinesses(session);
+    if (pack.features.showcase) badges.showcase = countPendingShowcase(session);
+    if (pack.features.events) badges.proposals = getPendingEventProposals(session).length;
+  }
+  // Join requests waiting on the groups this member leads.
+  if (variant === 'member' && !vendorOnly && pack.features.groups) {
+    badges['group-requests'] = countGroupRequests(session);
+  }
 
   const departments = getDepartments();
   const branch = viewerBranch(session);
@@ -204,10 +225,19 @@ export async function AppShell({
 
   const poweredBy = <PoweredBy pack={identityPack} />;
 
-  // Sidebar foot: one way out, then the vendor credit.
+  // The feedback button: any member of the college, never the vendor (feedback names its sender,
+  // and the vendor does not read member correspondence).
+  const feedbackButton =
+    variant === 'member' && !vendorOnly && pack.features.helpdesk ? (
+      <FeedbackButton officeName={pack.copy.officeName} />
+    ) : null;
+
+  // Sidebar foot: feedback, one way out, then the vendor credit.
   const foot =
     variant === 'member' ? (
-      pack.copy.websiteUrl ? (
+      <>
+        {feedbackButton}
+        {pack.copy.websiteUrl ? (
         <a
           href={pack.copy.websiteUrl}
           target="_blank"
@@ -218,7 +248,8 @@ export async function AppShell({
           <span>{pack.copy.shortName} website</span>
           <span className="sr-only">(opens in a new tab)</span>
         </a>
-      ) : null
+        ) : null}
+      </>
     ) : variant === 'admin' ? (
       <Link href={vendorOnly ? '/platform' : '/dashboard'} className={FOOT_LINK}>
         <ArrowLeft className="size-4 shrink-0 text-muted" aria-hidden="true" />
